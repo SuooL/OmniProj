@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Task, type TaskStatus } from "../api";
+import { GitGraph } from "./GitGraph";
+import { Decisions } from "./Decisions";
 
 // Record layer (M2): the project's next-action list (intent) beside its git commit
 // timeline (actual). User ground truth — every edit is an explicit action the backend
@@ -27,7 +29,7 @@ export function ProjectDetail({
   const qc = useQueryClient();
   const tasksKey = ["tasks", hash];
   const tasksQ = useQuery({ queryKey: tasksKey, queryFn: () => api.tasks(hash) });
-  const commitsQ = useQuery({ queryKey: ["commits", hash], queryFn: () => api.commits(hash, 30) });
+  const graphQ = useQuery({ queryKey: ["graph", hash], queryFn: () => api.graph(hash, 40) });
   const [draft, setDraft] = useState("");
   const [unclear, setUnclear] = useState(false);
   const refreshTasks = () => qc.invalidateQueries({ queryKey: tasksKey });
@@ -79,8 +81,30 @@ export function ProjectDetail({
     },
   });
 
+  // Advance extensions (M5): clarify (FR-V3 adversarial questioning) and refine (FR-V2
+  // repo-grounded spec). Both are proposals in auto/ — the conclusion/spec is the user's.
+  const [assist, setAssist] = useState<{ id: string; kind: "clarify" | "refine" } | null>(null);
+  const [thought, setThought] = useState("");
+  const [spec, setSpec] = useState<string | null>(null);
+  const clarifyQ = useQuery({
+    queryKey: ["clarify", hash, assist?.id],
+    queryFn: () => api.getClarify(hash, assist!.id),
+    enabled: !!assist && assist.kind === "clarify",
+  });
+  const clarify = useMutation({
+    mutationFn: (v: { id: string; message?: string }) => api.clarifyTask(hash, v.id, v.message),
+    onSuccess: (_r, v) => {
+      setThought("");
+      qc.invalidateQueries({ queryKey: ["clarify", hash, v.id] });
+    },
+  });
+  const refine = useMutation({
+    mutationFn: (id: string) => api.refineTask(hash, id),
+    onMutate: () => setSpec(null),
+    onSuccess: (s) => setSpec(s),
+  });
+
   const tasks = (tasksQ.data ?? []).filter((t) => t.id);
-  const commits = commitsQ.data ?? [];
 
   return (
     <div className="min-h-full max-w-5xl mx-auto px-6 py-6">
@@ -166,10 +190,35 @@ export function ProjectDetail({
                 <button
                   onClick={() => advance.mutate(t.id!)}
                   disabled={advance.isPending}
-                  title="Advance: let the agent break this into concrete steps (a proposal)"
-                  className="text-sm text-[var(--color-accent)] hover:text-[var(--color-fg)] px-1 disabled:opacity-50"
+                  title="Advance: break this into concrete steps (a proposal)"
+                  className="px-1 text-sm text-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:opacity-50"
                 >
                   {advance.isPending && advance.variables === t.id ? "…" : "✨"}
+                </button>
+                <button
+                  onClick={() =>
+                    setAssist(
+                      assist?.id === t.id && assist.kind === "clarify"
+                        ? null
+                        : { id: t.id!, kind: "clarify" },
+                    )
+                  }
+                  title="Clarify: adversarial questions to think it through"
+                  className="px-1 text-sm hover:text-[var(--color-fg)] text-[var(--color-muted)]"
+                >
+                  💬
+                </button>
+                <button
+                  onClick={() => {
+                    setAssist({ id: t.id!, kind: "refine" });
+                    setSpec(null);
+                    refine.mutate(t.id!);
+                  }}
+                  disabled={refine.isPending}
+                  title="Refine: draft a grounded spec from this idea"
+                  className="px-1 text-sm hover:text-[var(--color-fg)] text-[var(--color-muted)] disabled:opacity-50"
+                >
+                  📋
                 </button>
                 <button
                   onClick={() => remove.mutate(t.id!)}
@@ -221,6 +270,62 @@ export function ProjectDetail({
                    </div>
                  </div>
                )}
+
+               {assist?.id === t.id && assist.kind === "clarify" && (
+                 <div className="border-t border-[var(--color-edge)] px-3 py-2 text-xs">
+                   <div className="mb-1.5 text-[11px] text-[var(--color-muted)]">
+                     clarify — questions to think it through, not answers. The conclusion is yours to write.
+                   </div>
+                   {clarify.isError && (
+                     <p className="mb-1 text-[var(--color-flag)]">{String(clarify.error)}</p>
+                   )}
+                   <div className="max-h-56 overflow-auto whitespace-pre-wrap text-[var(--color-fg)]">
+                     {clarifyQ.data?.trim() || "no rounds yet — ask one."}
+                   </div>
+                   <div className="mt-2 flex gap-2">
+                     <input
+                       value={thought}
+                       onChange={(e) => setThought(e.target.value)}
+                       placeholder="a thought to add (optional)…"
+                       className="flex-1 rounded border border-[var(--color-edge)] bg-[var(--color-ink)] px-2 py-1 text-[var(--color-fg)] placeholder:text-[var(--color-muted)]"
+                     />
+                     <button
+                       onClick={() => clarify.mutate({ id: t.id!, message: thought || undefined })}
+                       disabled={clarify.isPending}
+                       className="rounded border border-[var(--color-edge)] px-2 py-1 text-[11px] text-[var(--color-fg)] hover:bg-[var(--color-raised)] disabled:opacity-50"
+                     >
+                       {clarify.isPending ? "…" : "ask a round"}
+                     </button>
+                     <button
+                       onClick={() => setAssist(null)}
+                       className="px-2 py-1 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+                     >
+                       close
+                     </button>
+                   </div>
+                 </div>
+               )}
+
+               {assist?.id === t.id && assist.kind === "refine" && (
+                 <div className="border-t border-[var(--color-edge)] px-3 py-2 text-xs">
+                   <div className="mb-1.5 text-[11px] text-[var(--color-muted)]">
+                     refined spec (a proposal saved to auto/, grounded in the repo — not web).
+                   </div>
+                   {refine.isPending && <p className="text-[var(--color-muted)]">refining…</p>}
+                   {refine.isError && <p className="text-[var(--color-flag)]">{String(refine.error)}</p>}
+                   {spec && (
+                     <pre className="max-h-72 overflow-auto whitespace-pre-wrap font-sans text-[var(--color-fg)]">
+                       {spec}
+                     </pre>
+                   )}
+                   <button
+                     onClick={() => setAssist(null)}
+                     className="mt-2 px-2 py-1 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+                   >
+                     close
+                   </button>
+                 </div>
+               )}
               </li>
             ))}
             {tasksQ.data && tasks.length === 0 && (
@@ -255,44 +360,21 @@ export function ProjectDetail({
           {add.isError && <p className="text-[var(--color-flag)] text-xs mt-1">{String(add.error)}</p>}
         </section>
 
-        {/* Actual: the git commit timeline */}
+        {/* Actual: the branch-aware git flow graph (the reconciliation canvas) */}
         <section>
-          <h2 className="text-xs uppercase tracking-wide text-[var(--color-muted)] mb-2">git timeline (actual)</h2>
-          {commitsQ.isLoading && <p className="text-[var(--color-muted)] text-sm">reading git log…</p>}
-          <ul className="flex flex-col gap-1.5">
-            {commits.map((c) => (
-              <li key={c.hash} className="rounded border border-[var(--color-edge)] bg-[var(--color-panel)] px-2.5 py-1.5">
-                <div className="flex items-baseline gap-2">
-                  <span className="font-mono text-[11px] text-[var(--color-accent)]">{c.short}</span>
-                  <span className="text-[10px] text-[var(--color-muted)]">{c.date}</span>
-                </div>
-                <div className="text-xs text-[var(--color-fg)] truncate" title={c.subject}>
-                  {c.subject}
-                </div>
-                {tasks.length > 0 && (
-                  <select
-                    value=""
-                    onChange={(e) => {
-                      if (e.target.value) attribute.mutate({ id: e.target.value, sha: c.short });
-                    }}
-                    className="mt-1 w-full text-[10px] bg-[var(--color-ink)] border border-[var(--color-edge)] rounded px-1 py-0.5 text-[var(--color-muted)]"
-                  >
-                    <option value="">attribute to task…</option>
-                    {tasks.map((t) => (
-                      <option key={t.id} value={t.id!}>
-                        {t.text.slice(0, 40)}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </li>
-            ))}
-            {commitsQ.data && commits.length === 0 && (
-              <li className="text-[var(--color-muted)] text-sm">no commits (or not a git repo).</li>
-            )}
-          </ul>
+          <h2 className="mb-2 text-xs uppercase tracking-wide text-[var(--color-muted)]">git flow graph (actual)</h2>
+          {graphQ.isLoading && <p className="text-sm text-[var(--color-muted)]">reading git graph…</p>}
+          {graphQ.data && (
+            <GitGraph
+              commits={graphQ.data}
+              tasks={tasks}
+              onAttribute={(id, sha) => attribute.mutate({ id, sha })}
+            />
+          )}
         </section>
       </div>
+
+      <Decisions hash={hash} />
     </div>
   );
 }

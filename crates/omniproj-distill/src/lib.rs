@@ -6,6 +6,7 @@ pub mod clarify;
 pub mod config;
 pub mod prompt;
 pub mod provider;
+pub mod refine;
 pub mod verify;
 
 pub use breakdown::{breakdown, parse_steps};
@@ -16,6 +17,7 @@ pub use config::{
     CONFIG_TEMPLATE,
 };
 pub use provider::{AnyProvider, LlmProvider};
+pub use refine::refine;
 pub use verify::VerifyReport;
 
 use omniproj_core::FactSheet;

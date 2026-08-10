@@ -7,6 +7,7 @@ pub mod factsheet;
 pub mod model;
 pub mod notes;
 pub mod paths;
+pub mod plan;
 pub mod privacy;
 pub mod project;
 pub mod store;
@@ -19,6 +20,7 @@ pub use paths::{
     auto_dir, cache_dir, content_hash, learned_path, notes_dir, omniproj_home, project_dir,
     project_hash,
 };
+pub use plan::{plan_path, PlanDoc, PlanEntry, PlanStatus};
 pub use privacy::{default_deny_globs, redact_secrets, PrivacyPolicy};
 pub use project::{
     find_by_cwd, list_projects, load_meta, register, remove_project, set_last_distilled, Cadence,

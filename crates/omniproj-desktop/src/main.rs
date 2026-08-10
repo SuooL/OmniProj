@@ -122,6 +122,39 @@ fn get_commits(hash: String, limit: usize) -> Vec<CommitDto> {
         .collect()
 }
 
+/// One commit on the branch-aware flow graph (M4).
+#[derive(Serialize)]
+struct GraphCommitDto {
+    hash: String,
+    short: String,
+    parents: Vec<String>,
+    refs: Vec<String>,
+    date: String,
+    author: String,
+    subject: String,
+}
+
+/// IPC command: a project's commit DAG (newest first) with parents + refs, for the flow
+/// graph the user attributes tasks against (M4, the reconciliation canvas). Read-only.
+#[tauri::command]
+fn get_graph(hash: String, limit: usize) -> Vec<GraphCommitDto> {
+    let Some(meta) = omniproj_core::load_meta(&hash) else {
+        return Vec::new();
+    };
+    omniproj_capture::git::commit_graph(Path::new(&meta.path), limit)
+        .into_iter()
+        .map(|c| GraphCommitDto {
+            hash: c.hash,
+            short: c.short,
+            parents: c.parents,
+            refs: c.refs,
+            date: c.date,
+            author: c.author,
+            subject: c.subject,
+        })
+        .collect()
+}
+
 /// IPC command: attribute a commit (abbreviated SHA) to a task (FR-R2, many-to-one).
 #[tauri::command]
 fn attribute_commit(hash: String, id: String, sha: String) -> Result<(), String> {
@@ -266,6 +299,189 @@ fn adopt_subtasks(hash: String, texts: Vec<String>) -> Result<Vec<String>, Strin
             .filter(|t| !t.is_empty())
             .map(|t| doc.add(t, false))
             .collect::<Vec<_>>())
+    })
+}
+
+/// `auto/clarify/<id>.md` — the AI-written discussion for one task (derivative, revertable;
+/// never `notes/`). The conclusion is the user's to transcribe (charter §6 例外 guardrail).
+fn clarify_file(hash: &str, id: &str) -> std::path::PathBuf {
+    omniproj_core::auto_dir(hash)
+        .join("clarify")
+        .join(format!("{id}.md"))
+}
+
+/// IPC command: the accumulated clarify discussion for a task (read-only).
+#[tauri::command]
+fn get_clarify(hash: String, id: String) -> String {
+    std::fs::read_to_string(clarify_file(&hash, &id)).unwrap_or_default()
+}
+
+/// IPC command (Advance / FR-V3): run one bounded adversarial-questioning round on a task —
+/// the model returns 标记+理由 (unstated premises, contradictions, missing criteria), never
+/// a recommendation. Appended to the discussion; the CONCLUSION is never auto-written to
+/// `notes/` (charter §6). Async. Returns this round's text.
+#[tauri::command]
+async fn clarify_task(hash: String, id: String, message: Option<String>) -> Result<String, String> {
+    let item_text = {
+        let doc = omniproj_core::NextDoc::load(&hash);
+        let found = doc
+            .items()
+            .find(|t| t.id.as_deref() == Some(id.as_str()))
+            .map(|t| t.text.clone());
+        found.ok_or_else(|| format!("unknown task #{id}"))?
+    };
+    let resolved = omniproj_distill::resolve_clarify()
+        .map_err(|e| format!("no LLM provider — run `omniproj init` and set an API key ({e})"))?;
+    let file = clarify_file(&hash, &id);
+    let prior = std::fs::read_to_string(&file).unwrap_or_default();
+    let round =
+        omniproj_distill::clarify_round(&item_text, &prior, message.as_deref(), &resolved.provider)
+            .await
+            .map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let rendered = omniproj_distill::render_round(&now, message.as_deref(), &round);
+    let updated = format!("{prior}{rendered}");
+    omniproj_core::ensure_home().map_err(|e| e.to_string())?;
+    let (h, i) = (hash.clone(), id.clone());
+    omniproj_core::store_txn(move || -> std::io::Result<()> {
+        if let Some(p) = file.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        std::fs::write(&file, &updated)?;
+        omniproj_core::commit_all(&format!("clarify {h} #{i}"));
+        Ok(())
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(round)
+}
+
+/// IPC command (Advance / FR-V2): refine a rough task/idea into a clear, testable spec,
+/// grounded in the repo's branch + recent commits. AI derivative → persisted to
+/// `auto/refine/<id>.md` and returned; the user decides what to do with it. Async. (The
+/// charter's web-research half needs a browsing provider and is not wired — repo-grounded.)
+#[tauri::command]
+async fn refine_task(hash: String, id: String) -> Result<String, String> {
+    let (task, note) = {
+        let doc = omniproj_core::NextDoc::load(&hash);
+        let item = doc
+            .items()
+            .find(|t| t.id.as_deref() == Some(id.as_str()))
+            .ok_or_else(|| format!("unknown task #{id}"))?;
+        (item.text.clone(), item.note.clone())
+    };
+    let context = omniproj_core::load_meta(&hash).map(|m| {
+        let path = Path::new(&m.path);
+        let branch = omniproj_capture::git::collect(path)
+            .map(|g| g.branch)
+            .unwrap_or_default();
+        let commits: Vec<String> = omniproj_capture::git::commit_log(path, 12)
+            .into_iter()
+            .map(|c| format!("- {}", c.subject))
+            .collect();
+        let mut s = String::new();
+        if !branch.is_empty() {
+            s.push_str(&format!("branch: {branch}\n"));
+        }
+        if let Some(n) = &note {
+            s.push_str(&format!("problem note: {n}\n"));
+        }
+        if !commits.is_empty() {
+            s.push_str("recent commits:\n");
+            s.push_str(&commits.join("\n"));
+        }
+        s
+    });
+    let resolved = omniproj_distill::resolve(None)
+        .map_err(|e| format!("no LLM provider — run `omniproj init` and set an API key ({e})"))?;
+    let spec = omniproj_distill::refine(&task, context.as_deref(), &resolved.provider)
+        .await
+        .map_err(|e| e.to_string())?;
+    let body = format!("# Refined spec — #{id}: {task}\n\n{spec}\n");
+    omniproj_core::ensure_home().map_err(|e| e.to_string())?;
+    let (h, i) = (hash.clone(), id.clone());
+    omniproj_core::store_txn(move || -> std::io::Result<()> {
+        let dir = omniproj_core::auto_dir(&h).join("refine");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join(format!("{i}.md")), body)?;
+        omniproj_core::commit_all(&format!("refine spec #{i}"));
+        Ok(())
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(spec)
+}
+
+/// One plan/decision-log entry (Record layer, M4).
+#[derive(Serialize)]
+struct PlanEntryDto {
+    id: Option<String>,
+    date: String,
+    title: String,
+    /// "planned" | "doing" | "done" | "abandoned".
+    status: String,
+    commit: Option<String>,
+    body: String,
+}
+
+/// IPC command: the project's plan / decision log (`plan.md`), in document order.
+#[tauri::command]
+fn get_plan(hash: String) -> Vec<PlanEntryDto> {
+    omniproj_core::PlanDoc::load(&hash)
+        .entries()
+        .iter()
+        .map(|e| PlanEntryDto {
+            id: e.id.clone(),
+            date: e.date.clone(),
+            title: e.title.clone(),
+            status: e.status.as_str().to_string(),
+            commit: e.commit.clone(),
+            body: e.body.clone(),
+        })
+        .collect()
+}
+
+/// Load → mutate → version `plan.md` in one revertable store commit (mirrors `mutate`).
+fn plan_mutate<T>(
+    hash: &str,
+    msg: &str,
+    f: impl FnOnce(&mut omniproj_core::PlanDoc) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut doc = omniproj_core::PlanDoc::load(hash);
+    let out = f(&mut doc)?;
+    omniproj_core::ensure_home().map_err(|e| e.to_string())?;
+    let hash = hash.to_string();
+    let msg = msg.to_string();
+    omniproj_core::store_txn(move || -> std::io::Result<()> {
+        doc.save(&hash)?;
+        omniproj_core::commit_all(&format!("{msg} {hash}"));
+        Ok(())
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+/// IPC command: append a decision (status `planned`, dated today). Returns its id.
+#[tauri::command]
+fn add_decision(hash: String, title: String, body: String) -> Result<String, String> {
+    if title.trim().is_empty() {
+        return Err("decision needs a title".into());
+    }
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    plan_mutate(&hash, "decision add", |doc| {
+        Ok(doc.add(&today, &title, &body))
+    })
+}
+
+/// IPC command: set a decision's status ("planned"|"doing"|"done"|"abandoned"). Marking a
+/// decision `abandoned` records "decided not to" — it is never deleted (charter §7).
+#[tauri::command]
+fn set_decision_status(hash: String, id: String, status: String) -> Result<(), String> {
+    let st = omniproj_core::PlanStatus::parse(&status).ok_or("invalid status")?;
+    plan_mutate(&hash, "decision status", |doc| {
+        if doc.set_status(&id, st) {
+            Ok(())
+        } else {
+            Err(format!("unknown decision #{id}"))
+        }
     })
 }
 
@@ -433,6 +649,7 @@ fn main() {
             set_task_note,
             remove_task,
             get_commits,
+            get_graph,
             attribute_commit,
             unattribute_commit,
             get_settings,
@@ -440,7 +657,13 @@ fn main() {
             get_attention,
             test_reminder,
             advance_task,
-            adopt_subtasks
+            adopt_subtasks,
+            get_clarify,
+            clarify_task,
+            refine_task,
+            get_plan,
+            add_decision,
+            set_decision_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running omniproj desktop");
