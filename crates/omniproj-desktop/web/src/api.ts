@@ -24,6 +24,16 @@ export interface Task {
   unclear: boolean;
   /** Expected-completion date `YYYY-MM-DD`, or null. */
   due: string | null;
+  /** Attributed commit SHAs (abbreviated) — the actual side of planned-vs-actual. */
+  commits: string[];
+}
+
+export interface Commit {
+  hash: string;
+  short: string;
+  date: string;
+  author: string;
+  subject: string;
 }
 
 export const api = {
@@ -37,4 +47,10 @@ export const api = {
     invoke<void>("set_task_due", { hash, id, date }),
   removeTask: (hash: string, id: string) =>
     invoke<void>("remove_task", { hash, id }),
+  commits: (hash: string, limit: number) =>
+    invoke<Commit[]>("get_commits", { hash, limit }),
+  attributeCommit: (hash: string, id: string, sha: string) =>
+    invoke<void>("attribute_commit", { hash, id, sha }),
+  unattributeCommit: (hash: string, id: string, sha: string) =>
+    invoke<void>("unattribute_commit", { hash, id, sha }),
 };

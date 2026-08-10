@@ -102,6 +102,57 @@ pub fn collect(path: &Path) -> Option<GitInfo> {
     })
 }
 
+/// One commit for the Record-layer timeline (FR-R2 planned-vs-actual). Structured
+/// (unlike the free-text `recent_commits` digest) so the UI can render a real timeline
+/// and attach `task ↔ commit` attributions.
+#[derive(Debug, Clone)]
+pub struct CommitEntry {
+    /// Full 40-char SHA.
+    pub hash: String,
+    /// Abbreviated SHA as git prints it (`%h`).
+    pub short: String,
+    /// Author date, `YYYY-MM-DD`.
+    pub date: String,
+    pub author: String,
+    pub subject: String,
+}
+
+/// Recent commits (newest first, up to `limit`) as structured entries — the *actual*
+/// line the user attributes tasks against (FR-R2). Empty for non-git dirs. A `0x1f`
+/// field separator keeps subjects with spaces/tabs intact.
+pub fn commit_log(path: &Path, limit: usize) -> Vec<CommitEntry> {
+    if limit == 0 || !is_git_repo(path) {
+        return Vec::new();
+    }
+    let n = format!("-n{limit}");
+    let out = git(
+        path,
+        &[
+            "log",
+            &n,
+            "--date=short",
+            "--pretty=format:%H%x1f%h%x1f%ad%x1f%an%x1f%s",
+        ],
+    )
+    .unwrap_or_default();
+    out.lines()
+        .filter_map(|line| {
+            let mut f = line.split('\u{1f}');
+            let hash = f.next()?.to_string();
+            if hash.is_empty() {
+                return None;
+            }
+            Some(CommitEntry {
+                short: f.next()?.to_string(),
+                date: f.next()?.to_string(),
+                author: f.next()?.to_string(),
+                subject: f.next().unwrap_or("").to_string(),
+                hash,
+            })
+        })
+        .collect()
+}
+
 /// Weekly commit histogram for the last `n_weeks` (oldest → newest), for the portfolio
 /// sparkline (cockpit). Each bucket is a raw count — a neutral activity fact, NOT a
 /// score or ranking (charter §5 原则3). `now_epoch` is passed in so this stays
@@ -301,6 +352,44 @@ mod tests {
         );
         assert_eq!(weeks[..15].iter().sum::<u32>(), 0, "older weeks empty");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn commit_log_returns_structured_entries_newest_first() {
+        let dir = unique_tmpdir("log");
+        init_repo(&dir);
+        write(&dir, "a.txt", "a\n");
+        run_git(&dir, &["add", "-A"]);
+        run_git(&dir, &["commit", "-q", "-m", "first commit"]);
+        write(&dir, "b.txt", "b\n");
+        run_git(&dir, &["add", "-A"]);
+        run_git(
+            &dir,
+            &["commit", "-q", "-m", "second: with a spaced subject"],
+        );
+
+        let log = commit_log(&dir, 10);
+        assert_eq!(log.len(), 2, "two commits");
+        // Newest first.
+        assert_eq!(log[0].subject, "second: with a spaced subject");
+        assert_eq!(log[1].subject, "first commit");
+        // Structured fields are well-formed.
+        assert_eq!(log[0].hash.len(), 40);
+        assert!(log[0].hash.starts_with(&log[0].short));
+        assert_eq!(log[0].author, "omniproj-test");
+        assert_eq!(log[0].date.len(), 10, "YYYY-MM-DD");
+
+        // `limit` caps the result.
+        assert_eq!(commit_log(&dir, 1).len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn commit_log_is_empty_for_non_git_dir() {
+        let dir = unique_tmpdir("logempty");
+        assert!(commit_log(&dir, 10).is_empty());
+        assert!(commit_log(&dir, 0).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

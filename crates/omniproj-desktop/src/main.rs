@@ -58,6 +58,8 @@ struct TaskDto {
     unclear: bool,
     /// Expected-completion date `YYYY-MM-DD`, or null.
     due: Option<String>,
+    /// Attributed commit SHAs (abbreviated) — the *actual* side of FR-R2.
+    commits: Vec<String>,
 }
 
 /// IPC command: a project's next-action list (read-only, no LLM).
@@ -71,8 +73,62 @@ fn get_tasks(hash: String) -> Vec<TaskDto> {
             status: t.status.as_str().to_string(),
             unclear: t.unclear,
             due: t.due.clone(),
+            commits: t.commits.clone(),
         })
         .collect()
+}
+
+/// One commit on the Record-layer timeline (the *actual* line, FR-R2).
+#[derive(Serialize)]
+struct CommitDto {
+    hash: String,
+    short: String,
+    date: String,
+    author: String,
+    subject: String,
+}
+
+/// IPC command: a project's recent git commits (newest first), for the timeline the
+/// user attributes tasks against. Read-only.
+#[tauri::command]
+fn get_commits(hash: String, limit: usize) -> Vec<CommitDto> {
+    let Some(meta) = omniproj_core::load_meta(&hash) else {
+        return Vec::new();
+    };
+    omniproj_capture::git::commit_log(Path::new(&meta.path), limit)
+        .into_iter()
+        .map(|c| CommitDto {
+            hash: c.hash,
+            short: c.short,
+            date: c.date,
+            author: c.author,
+            subject: c.subject,
+        })
+        .collect()
+}
+
+/// IPC command: attribute a commit (abbreviated SHA) to a task (FR-R2, many-to-one).
+#[tauri::command]
+fn attribute_commit(hash: String, id: String, sha: String) -> Result<(), String> {
+    mutate(&hash, "task attribute", |doc| {
+        if doc.attribute_commit(&id, &sha) {
+            Ok(())
+        } else {
+            Err("unknown task id, or invalid commit sha".into())
+        }
+    })
+}
+
+/// IPC command: remove a commit attribution from a task.
+#[tauri::command]
+fn unattribute_commit(hash: String, id: String, sha: String) -> Result<(), String> {
+    mutate(&hash, "task unattribute", |doc| {
+        if doc.unattribute_commit(&id, &sha) {
+            Ok(())
+        } else {
+            Err("commit was not attributed to that task".into())
+        }
+    })
 }
 
 /// Load → mutate → save + version the store in one revertable commit (charter §5:
@@ -151,7 +207,10 @@ fn main() {
             add_task,
             set_task_status,
             set_task_due,
-            remove_task
+            remove_task,
+            get_commits,
+            attribute_commit,
+            unattribute_commit
         ])
         .run(tauri::generate_context!())
         .expect("error while running omniproj desktop");

@@ -98,6 +98,10 @@ pub struct NextItem {
     /// Expected-completion date `YYYY-MM-DD`, stored in the trailing id comment as
     /// `due:<date>`. `None` when unset. Round-trips; invalid dates are dropped on parse.
     pub due: Option<String>,
+    /// Attributed git commit SHAs (abbreviated), the *actual* side of planned-vs-actual
+    /// (FR-R2). Many commits → one task. Stored in the id comment as `commits:h1,h2`;
+    /// insertion order preserved. Non-hex tokens are dropped on parse.
+    pub commits: Vec<String>,
 }
 
 /// A parsed `next.md`. `lines` preserves the full document (tasks + raw passthrough)
@@ -161,8 +165,46 @@ impl NextDoc {
             status: TaskStatus::Open,
             unclear,
             due: None,
+            commits: Vec::new(),
         }));
         id
+    }
+
+    /// Attribute a git commit (abbreviated SHA) to an item (FR-R2). No-op if already
+    /// attributed. The SHA must be hex (4–40 chars). Returns true if the item was found
+    /// and the attribution set is now non-redundant (added), false if not found or the
+    /// SHA was invalid.
+    pub fn attribute_commit(&mut self, id: &str, sha: &str) -> bool {
+        let sha = sha.trim();
+        if sha.len() < 4 || sha.len() > 40 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+            return false;
+        }
+        for l in &mut self.lines {
+            if let Line::Task(t) = l {
+                if t.id.as_deref() == Some(id) {
+                    if !t.commits.iter().any(|c| c.eq_ignore_ascii_case(sha)) {
+                        t.commits.push(sha.to_string());
+                    }
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Remove a commit attribution from an item. Returns true if the item was found and
+    /// the SHA was attributed.
+    pub fn unattribute_commit(&mut self, id: &str, sha: &str) -> bool {
+        for l in &mut self.lines {
+            if let Line::Task(t) = l {
+                if t.id.as_deref() == Some(id) {
+                    let before = t.commits.len();
+                    t.commits.retain(|c| !c.eq_ignore_ascii_case(sha));
+                    return t.commits.len() != before;
+                }
+            }
+        }
+        false
     }
 
     /// Set an item's status by id. Returns true if found.
@@ -271,6 +313,7 @@ fn parse_task_line(raw: &str) -> Option<NextItem> {
     // remaining space-separated tokens are metadata (currently `due:<YYYY-MM-DD>`).
     let mut id = None;
     let mut due = None;
+    let mut commits = Vec::new();
     if let Some(open) = body.rfind("<!--#") {
         if let Some(close_rel) = body[open..].find("-->") {
             let inner = &body[open + 5..open + close_rel];
@@ -282,6 +325,15 @@ fn parse_task_line(raw: &str) -> Option<NextItem> {
                         if let Some(d) = kv.strip_prefix("due:") {
                             if is_ymd(d) {
                                 due = Some(d.to_string());
+                            }
+                        } else if let Some(cs) = kv.strip_prefix("commits:") {
+                            for h in cs.split(',') {
+                                let h = h.trim();
+                                if (4..=40).contains(&h.len())
+                                    && h.chars().all(|c| c.is_ascii_hexdigit())
+                                {
+                                    commits.push(h.to_string());
+                                }
                             }
                         }
                     }
@@ -301,6 +353,7 @@ fn parse_task_line(raw: &str) -> Option<NextItem> {
         status,
         unclear,
         due,
+        commits,
     })
 }
 
@@ -316,7 +369,12 @@ fn render_task_line(t: &NextItem) -> String {
                 .as_ref()
                 .map(|d| format!(" due:{d}"))
                 .unwrap_or_default();
-            format!(" <!--#{id}{due}-->")
+            let commits = if t.commits.is_empty() {
+                String::new()
+            } else {
+                format!(" commits:{}", t.commits.join(","))
+            };
+            format!(" <!--#{id}{due}{commits}-->")
         }
         None => String::new(),
     };
@@ -477,5 +535,49 @@ mod tests {
         assert!(doc.set_due(&id, Some("2026-09-01".to_string())));
         assert!(doc.set_due(&id, None)); // clearing is always allowed
         assert_eq!(doc.items().next().unwrap().due, None);
+    }
+
+    #[test]
+    fn attribute_commits_round_trips_and_dedupes() {
+        let mut doc = NextDoc::default();
+        let id = doc.add("land the sampler", false);
+        assert!(doc.attribute_commit(&id, "abc1234"));
+        assert!(doc.attribute_commit(&id, "def5678"));
+        assert!(doc.attribute_commit(&id, "abc1234")); // dup is a no-op but still true
+        assert_eq!(
+            doc.items().next().unwrap().commits,
+            vec!["abc1234", "def5678"]
+        );
+
+        let rendered = doc.render();
+        assert!(rendered.contains("commits:abc1234,def5678"));
+        // Round-trips back to the same attribution set + order.
+        let re = NextDoc::parse(&rendered);
+        assert_eq!(
+            re.items().next().unwrap().commits,
+            vec!["abc1234", "def5678"]
+        );
+    }
+
+    #[test]
+    fn attribute_rejects_non_hex_and_unattribute_works() {
+        let mut doc = NextDoc::default();
+        let id = doc.add("x", false);
+        assert!(!doc.attribute_commit(&id, "zzz")); // not hex → rejected
+        assert!(!doc.attribute_commit("nope", "abc1234")); // unknown id
+        assert!(doc.attribute_commit(&id, "abc1234"));
+        assert!(doc.unattribute_commit(&id, "ABC1234")); // case-insensitive match
+        assert!(doc.items().next().unwrap().commits.is_empty());
+        assert!(!doc.unattribute_commit(&id, "abc1234")); // already gone
+    }
+
+    #[test]
+    fn commits_and_due_coexist_in_one_comment() {
+        let src = "- [/] task <!--#a1b2 due:2026-08-20 commits:abc1234,def5678-->\n";
+        let doc = NextDoc::parse(src);
+        let it = doc.items().next().unwrap();
+        assert_eq!(it.due.as_deref(), Some("2026-08-20"));
+        assert_eq!(it.commits, vec!["abc1234", "def5678"]);
+        assert_eq!(doc.render(), src);
     }
 }
