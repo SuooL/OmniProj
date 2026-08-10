@@ -153,6 +153,95 @@ pub fn commit_log(path: &Path, limit: usize) -> Vec<CommitEntry> {
         .collect()
 }
 
+/// One commit for the branch-aware flow graph (FR-R2 深化, M4): carries parent SHAs and
+/// ref decorations so the UI can lay out lanes/merges — the git flow graph is the canvas
+/// task↔commit reconciliation happens on (charter §3, NOT a general history browser).
+#[derive(Debug, Clone)]
+pub struct GraphCommit {
+    pub hash: String,
+    pub short: String,
+    /// Full parent SHAs (2+ = a merge; 0 = a root).
+    pub parents: Vec<String>,
+    /// Ref labels pointing here (branch names, `HEAD`, tags) — remotes dropped as noise.
+    pub refs: Vec<String>,
+    pub date: String,
+    pub author: String,
+    pub subject: String,
+}
+
+/// Clean `%D` ref decoration into display labels: unwrap `HEAD -> x`, keep `tag: x` as `x`,
+/// drop `origin/*` remotes (dedupe with their local branch).
+fn parse_refs(d: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for r in d.split(',') {
+        let r = r.trim();
+        if r.is_empty() {
+            continue;
+        }
+        if r == "HEAD" {
+            out.push("HEAD".to_string());
+        } else if let Some(b) = r.strip_prefix("HEAD -> ") {
+            // Detached-less checkout: HEAD and the branch it points at both sit here.
+            out.push("HEAD".to_string());
+            if !b.starts_with("origin/") {
+                out.push(b.to_string());
+            }
+        } else if let Some(t) = r.strip_prefix("tag: ") {
+            out.push(t.to_string());
+        } else if !r.starts_with("origin/") {
+            out.push(r.to_string());
+        }
+    }
+    out
+}
+
+/// Recent commits (newest first, up to `limit`) with parent + ref data for the flow graph.
+/// Merges are included (they're the graph). Empty for non-git dirs.
+pub fn commit_graph(path: &Path, limit: usize) -> Vec<GraphCommit> {
+    if limit == 0 || !is_git_repo(path) {
+        return Vec::new();
+    }
+    let n = format!("-n{limit}");
+    let out = git(
+        path,
+        &[
+            "log",
+            &n,
+            "--date=short",
+            "--pretty=format:%H%x1f%h%x1f%P%x1f%D%x1f%ad%x1f%an%x1f%s",
+        ],
+    )
+    .unwrap_or_default();
+    out.lines()
+        .filter_map(|line| {
+            let mut f = line.split('\u{1f}');
+            let hash = f.next()?.to_string();
+            if hash.is_empty() {
+                return None;
+            }
+            let short = f.next()?.to_string();
+            let parents = f
+                .next()?
+                .split_whitespace()
+                .map(|s| s.to_string())
+                .collect();
+            let refs = parse_refs(f.next()?);
+            let date = f.next()?.to_string();
+            let author = f.next()?.to_string();
+            let subject = f.next().unwrap_or("").to_string();
+            Some(GraphCommit {
+                hash,
+                short,
+                parents,
+                refs,
+                date,
+                author,
+                subject,
+            })
+        })
+        .collect()
+}
+
 /// Weekly commit histogram for the last `n_weeks` (oldest → newest), for the portfolio
 /// sparkline (cockpit). Each bucket is a raw count — a neutral activity fact, NOT a
 /// score or ranking (charter §5 原则3). `now_epoch` is passed in so this stays
@@ -390,6 +479,50 @@ mod tests {
         let dir = unique_tmpdir("logempty");
         assert!(commit_log(&dir, 10).is_empty());
         assert!(commit_log(&dir, 0).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn commit_graph_captures_parents_refs_and_merges() {
+        let dir = unique_tmpdir("graph");
+        init_repo(&dir);
+        write(&dir, "a.txt", "a\n");
+        run_git(&dir, &["add", "-A"]);
+        run_git(&dir, &["commit", "-q", "-m", "root"]);
+        // branch, commit, merge back with a merge commit (--no-ff).
+        run_git(&dir, &["checkout", "-q", "-b", "feature"]);
+        write(&dir, "b.txt", "b\n");
+        run_git(&dir, &["add", "-A"]);
+        run_git(&dir, &["commit", "-q", "-m", "feature work"]);
+        run_git(&dir, &["checkout", "-q", "main"]);
+        run_git(
+            &dir,
+            &["merge", "-q", "--no-ff", "feature", "-m", "merge feature"],
+        );
+
+        let g = commit_graph(&dir, 20);
+        assert_eq!(g.len(), 3, "root + feature + merge");
+        // Newest first: the merge commit has two parents and HEAD/main refs.
+        let merge = &g[0];
+        assert_eq!(merge.subject, "merge feature");
+        assert_eq!(merge.parents.len(), 2, "merge has two parents");
+        assert!(merge.refs.contains(&"HEAD".to_string()));
+        assert!(merge.refs.contains(&"main".to_string()));
+        // The feature branch's ref decorates its tip.
+        assert!(g.iter().any(|c| c.refs.contains(&"feature".to_string())));
+        // The root commit has no parents (log order isn't guaranteed root-last).
+        let root = g
+            .iter()
+            .find(|c| c.subject == "root")
+            .expect("root commit present");
+        assert!(root.parents.is_empty(), "root has no parent");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn commit_graph_is_empty_for_non_git_dir() {
+        let dir = unique_tmpdir("graphempty");
+        assert!(commit_graph(&dir, 20).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

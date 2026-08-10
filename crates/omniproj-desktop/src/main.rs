@@ -122,6 +122,39 @@ fn get_commits(hash: String, limit: usize) -> Vec<CommitDto> {
         .collect()
 }
 
+/// One commit on the branch-aware flow graph (M4).
+#[derive(Serialize)]
+struct GraphCommitDto {
+    hash: String,
+    short: String,
+    parents: Vec<String>,
+    refs: Vec<String>,
+    date: String,
+    author: String,
+    subject: String,
+}
+
+/// IPC command: a project's commit DAG (newest first) with parents + refs, for the flow
+/// graph the user attributes tasks against (M4, the reconciliation canvas). Read-only.
+#[tauri::command]
+fn get_graph(hash: String, limit: usize) -> Vec<GraphCommitDto> {
+    let Some(meta) = omniproj_core::load_meta(&hash) else {
+        return Vec::new();
+    };
+    omniproj_capture::git::commit_graph(Path::new(&meta.path), limit)
+        .into_iter()
+        .map(|c| GraphCommitDto {
+            hash: c.hash,
+            short: c.short,
+            parents: c.parents,
+            refs: c.refs,
+            date: c.date,
+            author: c.author,
+            subject: c.subject,
+        })
+        .collect()
+}
+
 /// IPC command: attribute a commit (abbreviated SHA) to a task (FR-R2, many-to-one).
 #[tauri::command]
 fn attribute_commit(hash: String, id: String, sha: String) -> Result<(), String> {
@@ -433,6 +466,7 @@ fn main() {
             set_task_note,
             remove_task,
             get_commits,
+            get_graph,
             attribute_commit,
             unattribute_commit,
             get_settings,

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Task, type TaskStatus } from "../api";
+import { GitGraph } from "./GitGraph";
 
 // Record layer (M2): the project's next-action list (intent) beside its git commit
 // timeline (actual). User ground truth — every edit is an explicit action the backend
@@ -27,7 +28,7 @@ export function ProjectDetail({
   const qc = useQueryClient();
   const tasksKey = ["tasks", hash];
   const tasksQ = useQuery({ queryKey: tasksKey, queryFn: () => api.tasks(hash) });
-  const commitsQ = useQuery({ queryKey: ["commits", hash], queryFn: () => api.commits(hash, 30) });
+  const graphQ = useQuery({ queryKey: ["graph", hash], queryFn: () => api.graph(hash, 40) });
   const [draft, setDraft] = useState("");
   const [unclear, setUnclear] = useState(false);
   const refreshTasks = () => qc.invalidateQueries({ queryKey: tasksKey });
@@ -80,7 +81,6 @@ export function ProjectDetail({
   });
 
   const tasks = (tasksQ.data ?? []).filter((t) => t.id);
-  const commits = commitsQ.data ?? [];
 
   return (
     <div className="min-h-full max-w-5xl mx-auto px-6 py-6">
@@ -255,42 +255,17 @@ export function ProjectDetail({
           {add.isError && <p className="text-[var(--color-flag)] text-xs mt-1">{String(add.error)}</p>}
         </section>
 
-        {/* Actual: the git commit timeline */}
+        {/* Actual: the branch-aware git flow graph (the reconciliation canvas) */}
         <section>
-          <h2 className="text-xs uppercase tracking-wide text-[var(--color-muted)] mb-2">git timeline (actual)</h2>
-          {commitsQ.isLoading && <p className="text-[var(--color-muted)] text-sm">reading git log…</p>}
-          <ul className="flex flex-col gap-1.5">
-            {commits.map((c) => (
-              <li key={c.hash} className="rounded border border-[var(--color-edge)] bg-[var(--color-panel)] px-2.5 py-1.5">
-                <div className="flex items-baseline gap-2">
-                  <span className="font-mono text-[11px] text-[var(--color-accent)]">{c.short}</span>
-                  <span className="text-[10px] text-[var(--color-muted)]">{c.date}</span>
-                </div>
-                <div className="text-xs text-[var(--color-fg)] truncate" title={c.subject}>
-                  {c.subject}
-                </div>
-                {tasks.length > 0 && (
-                  <select
-                    value=""
-                    onChange={(e) => {
-                      if (e.target.value) attribute.mutate({ id: e.target.value, sha: c.short });
-                    }}
-                    className="mt-1 w-full text-[10px] bg-[var(--color-ink)] border border-[var(--color-edge)] rounded px-1 py-0.5 text-[var(--color-muted)]"
-                  >
-                    <option value="">attribute to task…</option>
-                    {tasks.map((t) => (
-                      <option key={t.id} value={t.id!}>
-                        {t.text.slice(0, 40)}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </li>
-            ))}
-            {commitsQ.data && commits.length === 0 && (
-              <li className="text-[var(--color-muted)] text-sm">no commits (or not a git repo).</li>
-            )}
-          </ul>
+          <h2 className="mb-2 text-xs uppercase tracking-wide text-[var(--color-muted)]">git flow graph (actual)</h2>
+          {graphQ.isLoading && <p className="text-sm text-[var(--color-muted)]">reading git graph…</p>}
+          {graphQ.data && (
+            <GitGraph
+              commits={graphQ.data}
+              tasks={tasks}
+              onAttribute={(id, sha) => attribute.mutate({ id, sha })}
+            />
+          )}
         </section>
       </div>
     </div>

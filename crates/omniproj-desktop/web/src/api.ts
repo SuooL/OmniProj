@@ -38,6 +38,16 @@ export interface Commit {
   subject: string;
 }
 
+export interface GraphCommit {
+  hash: string;
+  short: string;
+  parents: string[];
+  refs: string[];
+  date: string;
+  author: string;
+  subject: string;
+}
+
 export interface Settings {
   reminders_enabled: boolean;
   silence_days: number;
@@ -59,6 +69,8 @@ export const api = {
     invoke<void>("remove_task", { hash, id }),
   commits: (hash: string, limit: number) =>
     invoke<Commit[]>("get_commits", { hash, limit }),
+  graph: (hash: string, limit: number) =>
+    invoke<GraphCommit[]>("get_graph", { hash, limit }),
   attributeCommit: (hash: string, id: string, sha: string) =>
     invoke<void>("attribute_commit", { hash, id, sha }),
   unattributeCommit: (hash: string, id: string, sha: string) =>
