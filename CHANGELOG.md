@@ -5,6 +5,23 @@ Pre-1.0: the public surface (CLI commands, `~/.omniproj` layout) may still chang
 
 ## [Unreleased]
 
+## [0.0.1] — 2026-08-10
+
+**Desktop-pivot baseline.** OmniProj **resets its version to `0.0.1`** to mark the fresh
+start of the Tauri desktop "project advancer". The prior `0.1.0`–`0.3.1` line was the
+now-pivoted CLI product; this is a deliberate restart, not a SemVer decrement of the same
+product (see `docs/desktop-design.md`). Everything from those releases remains in git
+history and the CHANGELOG below.
+
+### Added
+
+- **M0 desktop shell** — `omniproj-desktop` (Tauri) renders the Attend-layer project
+  overview: registered projects from `~/.omniproj` with git-derived facts (branch,
+  uncommitted-line count, 16-week commit sparkline), read over the `get_projects` Tauri
+  IPC command (reusing `omniproj-core` + `omniproj-capture`, no HTTP layer). The React
+  frontend (portfolio + sparkline) moved from the removed `omniproj-api` into the desktop
+  crate; refresh is a pull, never an auto-poll (charter §8).
+
 ### Removed
 
 - **Desktop-pivot teardown** (`docs/desktop-design.md` §6) — OmniProj is pivoting from the
@@ -39,6 +56,11 @@ Pre-1.0: the public surface (CLI commands, `~/.omniproj` layout) may still chang
   that pinned an absolute `…/git/Mnemo/…` permissions path, breaking `omniproj-desktop`'s
   build script. Documented here; the fix is a local `cargo clean` of the stale artifacts
   (`target/` is not tracked).
+- **Desktop blank-white window** — `beforeDevCommand` used `npm --prefix web`, which Tauri
+  runs from the `web/` dir already, so it resolved to `web/web/package.json` and the Vite
+  dev server never started; the dev build then loaded an empty `devUrl` and rendered white.
+  Fixed with Tauri's object-form command (`{ script, cwd: "web" }`). Run the app via
+  `cargo tauri dev`, not a bare `cargo run` (see CONTRIBUTING).
 
 ## [0.3.1] — 2026-07-13
 
@@ -209,7 +231,8 @@ product "v1" — user model, second opinion, and the dashboard remain out of sco
   equivalent and the `omniproj-ipc` crate boundary keeps a later gRPC swap localized.
   See `docs/omniproj-charter.md`.
 
-[Unreleased]: https://github.com/SuooL/OmniProj/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/SuooL/OmniProj/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/SuooL/OmniProj/releases/tag/v0.0.1
 [0.3.1]: https://github.com/SuooL/OmniProj/releases/tag/v0.3.1
 [0.3.0]: https://github.com/SuooL/OmniProj/releases/tag/v0.3.0
 [0.2.0]: https://github.com/SuooL/OmniProj/releases/tag/v0.2.0

@@ -2315,7 +2315,7 @@ dependencies = [
 
 [[package]]
 name = "omniproj-capture"
-version = "0.3.1"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2327,7 +2327,7 @@ dependencies = [
 
 [[package]]
 name = "omniproj-cli"
-version = "0.3.1"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2343,7 +2343,7 @@ dependencies = [
 
 [[package]]
 name = "omniproj-core"
-version = "0.3.1"
+version = "0.0.1"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -2356,7 +2356,7 @@ dependencies = [
 
 [[package]]
 name = "omniproj-desktop"
-version = "0.3.1"
+version = "0.0.1"
 dependencies = [
  "chrono",
  "omniproj-capture",
@@ -2369,7 +2369,7 @@ dependencies = [
 
 [[package]]
 name = "omniproj-distill"
-version = "0.3.1"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "omniproj-core",
@@ -2382,7 +2382,7 @@ dependencies = [
 
 [[package]]
 name = "omniproj-index"
-version = "0.3.1"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "omniproj-capture",
