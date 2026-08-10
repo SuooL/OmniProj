@@ -33,15 +33,71 @@ pub fn next_path(hash: &str) -> PathBuf {
     notes_dir(hash).join("next.md")
 }
 
+/// Tri-state task status (charter §7 细节决策1: open / **doing** / done). The middle
+/// `Doing` state is encoded as `[/]` in the markdown checklist — a convention Obsidian
+/// and the Tasks plugin already use; `[ ]` = Open, `[x]` = Done. Any renderer shows all
+/// three as a checkbox, so the file stays human-readable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskStatus {
+    Open,
+    Doing,
+    Done,
+}
+
+impl TaskStatus {
+    pub fn is_done(self) -> bool {
+        matches!(self, TaskStatus::Done)
+    }
+
+    /// The checkbox glyph for `- [x]`-style rendering.
+    fn checkbox(self) -> &'static str {
+        match self {
+            TaskStatus::Open => " ",
+            TaskStatus::Doing => "/",
+            TaskStatus::Done => "x",
+        }
+    }
+
+    fn from_checkbox(c: &str) -> Option<Self> {
+        match c {
+            " " => Some(TaskStatus::Open),
+            "/" => Some(TaskStatus::Doing),
+            "x" | "X" => Some(TaskStatus::Done),
+            _ => None,
+        }
+    }
+
+    /// Stable lowercase token for IPC/serde and CLI (`open` / `doing` / `done`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TaskStatus::Open => "open",
+            TaskStatus::Doing => "doing",
+            TaskStatus::Done => "done",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "open" => Some(TaskStatus::Open),
+            "doing" => Some(TaskStatus::Doing),
+            "done" => Some(TaskStatus::Done),
+            _ => None,
+        }
+    }
+}
+
 /// One actionable line in `next.md`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NextItem {
     /// Short stable id (4+ hex). `None` for a hand-added line the tool hasn't stamped yet.
     pub id: Option<String>,
     pub text: String,
-    pub done: bool,
+    pub status: TaskStatus,
     /// `?`-prefixed: the user flagged this as not-yet-thought-through.
     pub unclear: bool,
+    /// Expected-completion date `YYYY-MM-DD`, stored in the trailing id comment as
+    /// `due:<date>`. `None` when unset. Round-trips; invalid dates are dropped on parse.
+    pub due: Option<String>,
 }
 
 /// A parsed `next.md`. `lines` preserves the full document (tasks + raw passthrough)
@@ -90,30 +146,64 @@ impl NextDoc {
     /// Count of not-yet-done items, and of those the count still marked unclear.
     /// (open, unclear) — the two numbers the portfolio card shows.
     pub fn counts(&self) -> (usize, usize) {
-        let open: Vec<_> = self.items().filter(|t| !t.done).collect();
+        let open: Vec<_> = self.items().filter(|t| !t.status.is_done()).collect();
         let unclear = open.iter().filter(|t| t.unclear).count();
         (open.len(), unclear)
     }
 
-    /// Append a new item, assigning it a fresh id unique within this document.
-    /// Returns the id. The caller renders + writes.
+    /// Append a new item (status `Open`), assigning it a fresh id unique within this
+    /// document. Returns the id. The caller renders + writes.
     pub fn add(&mut self, text: &str, unclear: bool) -> String {
         let id = self.fresh_id(text);
         self.lines.push(Line::Task(NextItem {
             id: Some(id.clone()),
             text: text.trim().to_string(),
-            done: false,
+            status: TaskStatus::Open,
             unclear,
+            due: None,
         }));
         id
     }
 
-    /// Mark an item done/undone by id. Returns true if found.
-    pub fn set_done(&mut self, id: &str, done: bool) -> bool {
+    /// Set an item's status by id. Returns true if found.
+    pub fn set_status(&mut self, id: &str, status: TaskStatus) -> bool {
         for l in &mut self.lines {
             if let Line::Task(t) = l {
                 if t.id.as_deref() == Some(id) {
-                    t.done = done;
+                    t.status = status;
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Mark an item done/undone by id (done → `Done`, undone → `Open`). Returns true
+    /// if found. Kept as the binary shorthand over [`set_status`].
+    pub fn set_done(&mut self, id: &str, done: bool) -> bool {
+        self.set_status(
+            id,
+            if done {
+                TaskStatus::Done
+            } else {
+                TaskStatus::Open
+            },
+        )
+    }
+
+    /// Set (or clear, with `None`) an item's expected-completion date by id. A `Some`
+    /// value must be `YYYY-MM-DD`; malformed dates are rejected (returns `false`).
+    /// Returns true if the item was found and updated.
+    pub fn set_due(&mut self, id: &str, due: Option<String>) -> bool {
+        if let Some(d) = &due {
+            if !is_ymd(d) {
+                return false;
+            }
+        }
+        for l in &mut self.lines {
+            if let Line::Task(t) = l {
+                if t.id.as_deref() == Some(id) {
+                    t.due = due;
                     return true;
                 }
             }
@@ -167,26 +257,36 @@ impl NextDoc {
     }
 }
 
-/// Parse a single `- [ ] ...` / `- [x] ...` line into a task, or None if it isn't one.
+/// Parse a single `- [ ] ...` / `- [/] ...` / `- [x] ...` line into a task, or None if
+/// it isn't one. The trailing `<!--#<id> [due:<date>]-->` comment carries the stable id
+/// and optional metadata; both are optional and tolerated in any renderer.
 fn parse_task_line(raw: &str) -> Option<NextItem> {
     let trimmed = raw.trim_start();
     let rest = trimmed.strip_prefix("- [")?;
     let (mark, rest) = rest.split_at(rest.char_indices().nth(1)?.0.max(1));
     // rest now begins at the char after the checkbox char; expect "] "
-    let done = match mark {
-        " " => false,
-        "x" | "X" => true,
-        _ => return None,
-    };
+    let status = TaskStatus::from_checkbox(mark)?;
     let mut body = rest.strip_prefix("]")?.trim_start();
-    // Extract a trailing <!--#id--> if present.
+    // Extract a trailing <!--#id [key:val ...]--> if present: first token is the hex id,
+    // remaining space-separated tokens are metadata (currently `due:<YYYY-MM-DD>`).
     let mut id = None;
+    let mut due = None;
     if let Some(open) = body.rfind("<!--#") {
         if let Some(close_rel) = body[open..].find("-->") {
             let inner = &body[open + 5..open + close_rel];
-            if !inner.is_empty() && inner.chars().all(|c| c.is_ascii_hexdigit()) {
-                id = Some(inner.to_string());
-                body = body[..open].trim_end();
+            let mut tokens = inner.split_whitespace();
+            if let Some(first) = tokens.next() {
+                if !first.is_empty() && first.chars().all(|c| c.is_ascii_hexdigit()) {
+                    id = Some(first.to_string());
+                    for kv in tokens {
+                        if let Some(d) = kv.strip_prefix("due:") {
+                            if is_ymd(d) {
+                                due = Some(d.to_string());
+                            }
+                        }
+                    }
+                    body = body[..open].trim_end();
+                }
             }
         }
     }
@@ -198,19 +298,41 @@ fn parse_task_line(raw: &str) -> Option<NextItem> {
     Some(NextItem {
         id,
         text: text.to_string(),
-        done,
+        status,
         unclear,
+        due,
     })
 }
 
 fn render_task_line(t: &NextItem) -> String {
-    let check = if t.done { "x" } else { " " };
+    let check = t.status.checkbox();
     let prefix = if t.unclear { "? " } else { "" };
+    // The id comment also carries metadata (`due:`). Without an id we have nowhere stable
+    // to hang metadata, so an id-less line renders bare (the tool assigns ids on add).
     let suffix = match &t.id {
-        Some(id) => format!(" <!--#{id}-->"),
+        Some(id) => {
+            let due = t
+                .due
+                .as_ref()
+                .map(|d| format!(" due:{d}"))
+                .unwrap_or_default();
+            format!(" <!--#{id}{due}-->")
+        }
         None => String::new(),
     };
     format!("- [{check}] {prefix}{}{suffix}", t.text)
+}
+
+/// True iff `s` is a syntactically valid `YYYY-MM-DD` (digit/hyphen shape only — not a
+/// calendar validity check; that's the caller's concern).
+fn is_ymd(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 10
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b[..4].iter().all(u8::is_ascii_digit)
+        && b[5..7].iter().all(u8::is_ascii_digit)
+        && b[8..].iter().all(u8::is_ascii_digit)
 }
 
 #[cfg(test)]
@@ -225,9 +347,9 @@ mod tests {
         let items: Vec<_> = doc.items().cloned().collect();
         assert_eq!(items.len(), 3);
         assert_eq!(items[0].text, "plain open");
-        assert!(!items[0].done && !items[0].unclear);
-        assert!(items[1].done);
-        assert!(items[2].unclear && !items[2].done);
+        assert!(items[0].status == TaskStatus::Open && !items[0].unclear);
+        assert_eq!(items[1].status, TaskStatus::Done);
+        assert!(items[2].unclear && items[2].status != TaskStatus::Done);
         assert_eq!(items[2].id.as_deref(), Some("e5f6"));
     }
 
@@ -270,11 +392,12 @@ mod tests {
     fn set_done_and_remove_by_id() {
         let mut doc = NextDoc::parse("- [ ] a <!--#1111-->\n- [ ] b <!--#2222-->\n");
         assert!(doc.set_done("1111", true));
-        assert!(
+        assert_eq!(
             doc.items()
                 .find(|t| t.id.as_deref() == Some("1111"))
                 .unwrap()
-                .done
+                .status,
+            TaskStatus::Done
         );
         assert!(!doc.set_done("nope", true));
         assert!(doc.remove("2222"));
@@ -292,5 +415,67 @@ mod tests {
         let item = reparsed.items().next().unwrap();
         assert!(item.unclear);
         assert_eq!(item.id.as_deref(), Some(id.as_str()));
+    }
+
+    #[test]
+    fn doing_status_parses_and_round_trips() {
+        let doc = NextDoc::parse("- [/] mid-flight task <!--#a1b2-->\n");
+        let item = doc.items().next().unwrap();
+        assert_eq!(item.status, TaskStatus::Doing);
+        // `[/]` survives a render round-trip.
+        assert_eq!(doc.render(), "- [/] mid-flight task <!--#a1b2-->\n");
+    }
+
+    #[test]
+    fn due_date_parses_and_round_trips() {
+        let src = "- [ ] ship it <!--#a1b2 due:2026-08-15-->\n";
+        let doc = NextDoc::parse(src);
+        let item = doc.items().next().unwrap();
+        assert_eq!(item.due.as_deref(), Some("2026-08-15"));
+        assert_eq!(doc.render(), src);
+    }
+
+    #[test]
+    fn malformed_due_is_dropped_but_id_kept() {
+        let doc = NextDoc::parse("- [ ] x <!--#a1b2 due:notadate-->\n");
+        let item = doc.items().next().unwrap();
+        assert_eq!(item.id.as_deref(), Some("a1b2"));
+        assert_eq!(item.due, None);
+    }
+
+    #[test]
+    fn backward_compat_old_comment_without_due() {
+        // A file written by an older OmniProj (no `due:`) parses unchanged.
+        let src = "- [x] legacy done <!--#dead-->\n";
+        let doc = NextDoc::parse(src);
+        let item = doc.items().next().unwrap();
+        assert_eq!(item.status, TaskStatus::Done);
+        assert_eq!(item.due, None);
+        assert_eq!(doc.render(), src);
+    }
+
+    #[test]
+    fn set_status_and_set_due_by_id() {
+        let mut doc = NextDoc::default();
+        let id = doc.add("do the thing", false);
+        assert!(doc.set_status(&id, TaskStatus::Doing));
+        assert!(doc.set_due(&id, Some("2026-09-01".to_string())));
+        let rendered = doc.render();
+        assert!(rendered.contains(&format!("- [/] do the thing <!--#{id} due:2026-09-01-->")));
+        // Round-trips back to the same in-memory state.
+        let re = NextDoc::parse(&rendered);
+        let item = re.items().next().unwrap();
+        assert_eq!(item.status, TaskStatus::Doing);
+        assert_eq!(item.due.as_deref(), Some("2026-09-01"));
+    }
+
+    #[test]
+    fn set_due_rejects_bad_date_and_clears_with_none() {
+        let mut doc = NextDoc::default();
+        let id = doc.add("x", false);
+        assert!(!doc.set_due(&id, Some("2026/09/01".to_string())));
+        assert!(doc.set_due(&id, Some("2026-09-01".to_string())));
+        assert!(doc.set_due(&id, None)); // clearing is always allowed
+        assert_eq!(doc.items().next().unwrap().due, None);
     }
 }

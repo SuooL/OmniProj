@@ -109,10 +109,22 @@ enum NoteAction {
         #[arg(long)]
         unclear: bool,
     },
+    /// Mark an item in-progress (doing) by its short id.
+    Doing {
+        /// Short id (e.g. `a3f1`).
+        id: String,
+    },
     /// Mark an item done by its short id (the `#id` shown in the list).
     Done {
         /// Short id (e.g. `a3f1`).
         id: String,
+    },
+    /// Set (or clear) an item's expected-completion date by its short id.
+    Due {
+        /// Short id (e.g. `a3f1`).
+        id: String,
+        /// Date as `YYYY-MM-DD`. Omit to clear the due date.
+        date: Option<String>,
     },
     /// Delete an item by its short id.
     Rm {
@@ -314,12 +326,33 @@ fn cmd_note(action: Option<NoteAction>, path: Option<PathBuf>) -> Result<()> {
             let tag = if unclear { " (unclear)" } else { "" };
             eprintln!("[omniproj] added #{id}{tag}: {}", text.trim());
         }
+        Some(NoteAction::Doing { id }) => {
+            if doc.set_status(&id, omniproj_core::TaskStatus::Doing) {
+                doc.save(&meta.hash)?;
+                eprintln!("[omniproj] #{id} doing");
+            } else {
+                anyhow::bail!("no item with id #{id} (run `omniproj note` to list)");
+            }
+        }
         Some(NoteAction::Done { id }) => {
             if doc.set_done(&id, true) {
                 doc.save(&meta.hash)?;
                 eprintln!("[omniproj] #{id} done");
             } else {
                 anyhow::bail!("no item with id #{id} (run `omniproj note` to list)");
+            }
+        }
+        Some(NoteAction::Due { id, date }) => {
+            if doc.set_due(&id, date.clone()) {
+                doc.save(&meta.hash)?;
+                match date {
+                    Some(d) => eprintln!("[omniproj] #{id} due {d}"),
+                    None => eprintln!("[omniproj] #{id} due date cleared"),
+                }
+            } else {
+                anyhow::bail!(
+                    "could not set due for #{id} — unknown id, or date is not YYYY-MM-DD"
+                );
             }
         }
         Some(NoteAction::Rm { id }) => {
@@ -346,10 +379,19 @@ fn print_note_list(project: &str, doc: &omniproj_core::NextDoc) {
     let (open, unclear) = doc.counts();
     println!("# Next — {project}  ({open} open, {unclear} unclear)");
     for it in items {
-        let check = if it.done { "x" } else { " " };
+        let check = match it.status {
+            omniproj_core::TaskStatus::Open => " ",
+            omniproj_core::TaskStatus::Doing => "/",
+            omniproj_core::TaskStatus::Done => "x",
+        };
         let q = if it.unclear { "? " } else { "" };
         let id = it.id.as_deref().unwrap_or("----");
-        println!("  [{check}] #{id}  {q}{}", it.text);
+        let due = it
+            .due
+            .as_deref()
+            .map(|d| format!("  (due {d})"))
+            .unwrap_or_default();
+        println!("  [{check}] #{id}  {q}{}{due}", it.text);
     }
 }
 
@@ -396,10 +438,20 @@ fn cmd_next() -> Result<()> {
             String::new()
         };
         println!("\n## {} ({open} open{flag})", r.name);
-        for it in r.doc.items().filter(|t| !t.done) {
+        for it in r.doc.items().filter(|t| !t.status.is_done()) {
             let q = if it.unclear { "? " } else { "" };
+            let doing = if it.status == omniproj_core::TaskStatus::Doing {
+                "▸ "
+            } else {
+                ""
+            };
             let id = it.id.as_deref().unwrap_or("----");
-            println!("  #{id}  {q}{}", it.text);
+            let due = it
+                .due
+                .as_deref()
+                .map(|d| format!("  (due {d})"))
+                .unwrap_or_default();
+            println!("  #{id}  {doing}{q}{}{due}", it.text);
         }
     }
     Ok(())
