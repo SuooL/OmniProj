@@ -1,17 +1,29 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 import { ProjectCard } from "./components/ProjectCard";
+import { ProjectDetail } from "./components/ProjectDetail";
 
-// Attend layer, first screen: the registered projects with their git-derived
-// facts. Read via Tauri IPC (get_projects). Refresh is a pull, never an
-// auto-poll. Task counts / staleness thresholds / reminders land in later
-// milestones.
+// Attend layer, first screen: the registered projects with their git-derived facts.
+// Click a card to open its Record view (next-action list). Read via Tauri IPC. Refresh
+// is a pull, never an auto-poll. Staleness thresholds / reminders land in later milestones.
 
 export function App() {
+  const [selected, setSelected] = useState<{ hash: string; name: string } | null>(null);
   const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ["projects"],
     queryFn: api.projects,
   });
+
+  if (selected) {
+    return (
+      <ProjectDetail
+        hash={selected.hash}
+        name={selected.name}
+        onBack={() => setSelected(null)}
+      />
+    );
+  }
 
   return (
     <div className="min-h-full max-w-6xl mx-auto px-6 py-6">
@@ -41,7 +53,11 @@ export function App() {
 
       <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(380px,1fr))]">
         {data?.map((c) => (
-          <ProjectCard key={c.hash} c={c} />
+          <ProjectCard
+            key={c.hash}
+            c={c}
+            onOpen={() => setSelected({ hash: c.hash, name: c.name })}
+          />
         ))}
       </div>
     </div>
