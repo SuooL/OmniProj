@@ -214,8 +214,161 @@ fn remove_task(hash: String, id: String) -> Result<(), String> {
     })
 }
 
+/// Desktop reminder settings — the *controlled push* knob (charter §4d / §5 原则5:
+/// cadence and threshold are user-visible, adjustable, and switchable off). Persisted
+/// at `~/.omniproj/desktop.toml`.
+#[derive(Serialize, serde::Deserialize, Clone)]
+struct Settings {
+    /// Master switch for the daily reminder.
+    reminders_enabled: bool,
+    /// A project with no commit within this many days "needs attention".
+    silence_days: u32,
+    /// How often the reminder check runs (hours).
+    interval_hours: u64,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            reminders_enabled: true,
+            silence_days: 7,
+            interval_hours: 24,
+        }
+    }
+}
+
+fn settings_path() -> std::path::PathBuf {
+    omniproj_core::omniproj_home().join("desktop.toml")
+}
+
+fn load_settings() -> Settings {
+    std::fs::read_to_string(settings_path())
+        .ok()
+        .and_then(|s| toml::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+fn get_settings() -> Settings {
+    load_settings()
+}
+
+#[tauri::command]
+fn set_settings(settings: Settings) -> Result<(), String> {
+    omniproj_core::ensure_home().map_err(|e| e.to_string())?;
+    let body = toml::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    std::fs::write(settings_path(), body).map_err(|e| e.to_string())
+}
+
+/// Registered projects that need attention: no commit within `silence_days` (or no git
+/// history). A neutral staleness fact — no scoring or ranking (charter §8 护栏).
+fn attention_projects(silence_days: u32) -> Vec<String> {
+    let now = chrono::Utc::now().timestamp();
+    let cutoff = now - (silence_days as i64) * 86_400;
+    omniproj_core::list_projects()
+        .into_iter()
+        .filter(|m| {
+            let path = Path::new(&m.path);
+            match omniproj_capture::git::commit_log(path, 1).first() {
+                Some(c) => chrono::NaiveDate::parse_from_str(&c.date, "%Y-%m-%d")
+                    .ok()
+                    .and_then(|d| d.and_hms_opt(0, 0, 0))
+                    .map(|dt| dt.and_utc().timestamp() < cutoff)
+                    .unwrap_or(false),
+                None => true, // no commits → stale
+            }
+        })
+        .map(|m| m.name)
+        .collect()
+}
+
+/// IPC command: the names of projects currently needing attention (for the in-app badge).
+#[tauri::command]
+fn get_attention() -> Vec<String> {
+    attention_projects(load_settings().silence_days)
+}
+
+/// IPC command: fire a native notification immediately so the user can confirm the push
+/// path works (and grant OS permission) without waiting for the daily cadence.
+#[tauri::command]
+fn test_reminder(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    let names = attention_projects(load_settings().silence_days);
+    let body = if names.is_empty() {
+        "No projects need attention right now.".to_string()
+    } else {
+        format!("{} need attention: {}", names.len(), names.join(", "))
+    };
+    app.notification()
+        .builder()
+        .title("OmniProj reminder (test)")
+        .body(body)
+        .show()
+        .map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
+        .setup(|app| {
+            use tauri::menu::{MenuBuilder, MenuItemBuilder};
+            use tauri::tray::TrayIconBuilder;
+            use tauri::Manager;
+
+            // Menu-bar presence (charter §3 Attend): a tray icon with a minimal menu.
+            let show = MenuItemBuilder::with_id("show", "Open OmniProj").build(app)?;
+            let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
+            let count = attention_projects(load_settings().silence_days).len();
+            let _tray = TrayIconBuilder::with_id("main")
+                .icon(
+                    app.default_window_icon()
+                        .expect("app icon set in tauri.conf.json")
+                        .clone(),
+                )
+                .tooltip(format!("OmniProj — {count} project(s) need attention"))
+                .menu(&menu)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "show" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .build(app)?;
+            app.manage(_tray); // keep the tray alive for the app's lifetime
+
+            // Controlled daily push (charter §4d): recompute the attention list on a
+            // cadence and send ONE native summary notification when non-empty. Never
+            // interrupts visually beyond the OS notification; off when disabled.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use std::time::Duration;
+                use tauri_plugin_notification::NotificationExt;
+                // Brief startup delay so the first check doesn't race window creation.
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                loop {
+                    let s = load_settings();
+                    if s.reminders_enabled {
+                        let names = attention_projects(s.silence_days);
+                        if !names.is_empty() {
+                            let _ = handle
+                                .notification()
+                                .builder()
+                                .title(format!("{} project(s) need attention", names.len()))
+                                .body(names.join(", "))
+                                .show();
+                        }
+                    }
+                    let hrs = load_settings().interval_hours.max(1);
+                    tokio::time::sleep(Duration::from_secs(hrs * 3600)).await;
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_projects,
             get_tasks,
@@ -226,7 +379,11 @@ fn main() {
             remove_task,
             get_commits,
             attribute_commit,
-            unattribute_commit
+            unattribute_commit,
+            get_settings,
+            set_settings,
+            get_attention,
+            test_reminder
         ])
         .run(tauri::generate_context!())
         .expect("error while running omniproj desktop");

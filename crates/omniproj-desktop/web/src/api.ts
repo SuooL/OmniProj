@@ -38,6 +38,12 @@ export interface Commit {
   subject: string;
 }
 
+export interface Settings {
+  reminders_enabled: boolean;
+  silence_days: number;
+  interval_hours: number;
+}
+
 export const api = {
   projects: () => invoke<ProjectCard[]>("get_projects"),
   tasks: (hash: string) => invoke<Task[]>("get_tasks", { hash }),
@@ -57,4 +63,8 @@ export const api = {
     invoke<void>("attribute_commit", { hash, id, sha }),
   unattributeCommit: (hash: string, id: string, sha: string) =>
     invoke<void>("unattribute_commit", { hash, id, sha }),
+  attention: () => invoke<string[]>("get_attention"),
+  getSettings: () => invoke<Settings>("get_settings"),
+  setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
+  testReminder: () => invoke<void>("test_reminder"),
 };
