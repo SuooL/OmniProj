@@ -1,17 +1,35 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 import { ProjectCard } from "./components/ProjectCard";
+import { ProjectDetail } from "./components/ProjectDetail";
+import { Settings } from "./components/Settings";
 
-// Attend layer, first screen: the registered projects with their git-derived
-// facts. Read via Tauri IPC (get_projects). Refresh is a pull, never an
-// auto-poll. Task counts / staleness thresholds / reminders land in later
-// milestones.
+// Attend layer, first screen: the registered projects with their git-derived facts, plus
+// a "needs attention" badge (silent past the threshold). Click a card to open its Record
+// view (next-action list). Read via Tauri IPC. Refresh is a pull, never an auto-poll.
 
 export function App() {
+  const [selected, setSelected] = useState<{ hash: string; name: string } | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
   const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ["projects"],
     queryFn: api.projects,
   });
+  const attention = useQuery({ queryKey: ["attention"], queryFn: api.attention });
+
+  if (showSettings) return <Settings onBack={() => setShowSettings(false)} />;
+  if (selected) {
+    return (
+      <ProjectDetail
+        hash={selected.hash}
+        name={selected.name}
+        onBack={() => setSelected(null)}
+      />
+    );
+  }
+
+  const needAttention = attention.data ?? [];
 
   return (
     <div className="min-h-full max-w-6xl mx-auto px-6 py-6">
@@ -20,10 +38,24 @@ export function App() {
         <span className="text-sm text-[var(--color-muted)]">
           {data ? `${data.length} project${data.length === 1 ? "" : "s"}` : ""}
         </span>
+        {needAttention.length > 0 && (
+          <span
+            title={needAttention.join(", ")}
+            className="text-xs rounded border border-[var(--color-warm)] text-[var(--color-warm)] px-2 py-0.5"
+          >
+            {needAttention.length} need attention
+          </span>
+        )}
+        <button
+          onClick={() => setShowSettings(true)}
+          className="ml-auto text-xs rounded border border-[var(--color-edge)] px-2.5 py-1 text-[var(--color-fg)] hover:bg-[var(--color-panel)]"
+        >
+          ⚙ reminders
+        </button>
         <button
           onClick={() => refetch()}
           disabled={isFetching}
-          className="ml-auto text-xs rounded border border-[var(--color-edge)] px-2.5 py-1 text-[var(--color-fg)] hover:bg-[var(--color-panel)] disabled:opacity-50"
+          className="text-xs rounded border border-[var(--color-edge)] px-2.5 py-1 text-[var(--color-fg)] hover:bg-[var(--color-panel)] disabled:opacity-50"
         >
           {isFetching ? "refreshing…" : "refresh"}
         </button>
@@ -41,7 +73,11 @@ export function App() {
 
       <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(380px,1fr))]">
         {data?.map((c) => (
-          <ProjectCard key={c.hash} c={c} />
+          <ProjectCard
+            key={c.hash}
+            c={c}
+            onOpen={() => setSelected({ hash: c.hash, name: c.name })}
+          />
         ))}
       </div>
     </div>

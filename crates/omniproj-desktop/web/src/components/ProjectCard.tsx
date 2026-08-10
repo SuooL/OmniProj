@@ -8,9 +8,12 @@ function ago(iso: string | null): string {
   return `${Math.round(d)}d ago`;
 }
 
-export function ProjectCard({ c }: { c: Card }) {
+export function ProjectCard({ c, onOpen }: { c: Card; onOpen?: () => void }) {
   return (
-    <div className="rounded-lg border border-[var(--color-edge)] bg-[var(--color-panel)] p-4 flex flex-col gap-3">
+    <div
+      onClick={onOpen}
+      className="rounded-lg border border-[var(--color-edge)] bg-[var(--color-panel)] p-4 flex flex-col gap-3 cursor-pointer hover:border-[var(--color-accent)] transition-colors"
+    >
       <div className="flex items-center gap-2">
         <span className="font-semibold text-[var(--color-fg)] truncate">{c.name}</span>
         {c.branch && (

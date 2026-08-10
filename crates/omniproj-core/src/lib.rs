@@ -14,7 +14,7 @@ pub mod user_model;
 
 pub use factsheet::{FactSheet, GitFacts};
 pub use model::{Message, Role, Session, Source};
-pub use notes::{next_path, NextDoc, NextItem};
+pub use notes::{next_path, NextDoc, NextItem, TaskStatus};
 pub use paths::{
     auto_dir, cache_dir, content_hash, learned_path, notes_dir, omniproj_home, project_dir,
     project_hash,

@@ -10,9 +10,12 @@ default-run = "omniproj-desktop"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-notification = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
+toml = { workspace = true }
 chrono = { workspace = true }
+tokio = { workspace = true }
 omniproj-core = { workspace = true }
 omniproj-capture = { workspace = true }
