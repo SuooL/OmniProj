@@ -1,0 +1,30 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#171b21"/>
+      <stop offset="1" stop-color="#0b0d10"/>
+    </linearGradient>
+    <linearGradient id="trail" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#2b6cb0"/>
+      <stop offset="1" stop-color="#58a6ff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- macOS-style rounded tile -->
+  <rect x="64" y="64" width="896" height="896" rx="205" fill="url(#tile)"/>
+  <rect x="64.5" y="64.5" width="895" height="895" rx="204.5" fill="none" stroke="#2a313b" stroke-width="1"/>
+
+  <!-- Omni overview ring: the all-seeing frame, kept quiet -->
+  <circle cx="512" cy="512" r="300" fill="none" stroke="#39424f" stroke-width="40"/>
+
+  <!-- git advance: an ascending commit trail breaking forward through the ring -->
+  <path d="M 300 712 L 452 560 L 604 484 L 792 296"
+        fill="none" stroke="url(#trail)" stroke-width="40"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="300" cy="712" r="40" fill="#2b6cb0"/>
+  <circle cx="452" cy="560" r="40" fill="#3d82d6"/>
+  <circle cx="604" cy="484" r="40" fill="#58a6ff"/>
+  <!-- HEAD / the actionable next step, in the "advance" green -->
+  <circle cx="792" cy="296" r="58" fill="#3fb950"/>
+  <circle cx="792" cy="296" r="58" fill="none" stroke="#0b0d10" stroke-width="10"/>
+</svg>

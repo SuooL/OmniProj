@@ -9,6 +9,11 @@ import { api, type Task, type TaskStatus } from "../api";
 
 const NEXT: Record<TaskStatus, TaskStatus> = { open: "doing", doing: "done", done: "open" };
 const GLYPH: Record<TaskStatus, string> = { open: "○", doing: "◐", done: "●" };
+const GLYPH_COLOR: Record<TaskStatus, string> = {
+  open: "var(--color-dim)",
+  doing: "var(--color-accent)",
+  done: "var(--color-active)",
+};
 
 export function ProjectDetail({
   hash,
@@ -109,7 +114,8 @@ export function ProjectDetail({
                 <button
                   title={`status: ${t.status} (click to cycle)`}
                   onClick={() => cycle.mutate(t)}
-                  className="text-lg leading-none w-6 text-[var(--color-active)]"
+                  style={{ color: GLYPH_COLOR[t.status] }}
+                  className="w-6 text-lg leading-none"
                 >
                   {GLYPH[t.status]}
                 </button>
