@@ -1,0 +1,16 @@
+[package]
+name = "omniproj-index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "OmniProj internal: disposable FTS5 index over raw normalized session text."
+publish = false
+
+# Derived FTS5 retrieval index (spec §4.6): built on RAW normalized session text,
+# disposable + rebuildable, lives in cache/. Isolated crate so the heavy bundled
+# SQLite never touches omniproj-core's hexagonal boundary.
+[dependencies]
+omniproj-core.workspace = true
+omniproj-capture.workspace = true
+rusqlite.workspace = true
+anyhow.workspace = true

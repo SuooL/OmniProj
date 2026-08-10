@@ -1,0 +1,30 @@
+[package]
+name = "omniproj-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "OmniProj — cognitive scaffolding for LLM-era knowledge work: local-first, git-versioned re-entry briefings distilled from your git activity and Claude/Codex sessions."
+homepage.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["cli", "memory", "llm", "git", "agent"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "omniproj"
+path = "src/main.rs"
+
+[dependencies]
+omniproj-core.workspace = true
+omniproj-capture.workspace = true
+omniproj-distill.workspace = true
+omniproj-daemon.workspace = true
+omniproj-ipc.workspace = true
+omniproj-api.workspace = true
+omniproj-index.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+dirs.workspace = true

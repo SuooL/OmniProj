@@ -1,0 +1,13 @@
+# OmniProj
+
+# Rust build artifacts
+/target
+
+# Raw session digests: unfiltered real session content — may contain secrets
+# /credentials and patient/medical data. Regenerable via spike/extract_digest.py.
+spike/digest-*.txt
+
+# Local AI-tooling runtime state (never repo content)
+.trellis/.runtime/
+.trellis/**/__pycache__/
+.Rhistory

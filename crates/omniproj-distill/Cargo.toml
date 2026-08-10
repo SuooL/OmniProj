@@ -1,0 +1,19 @@
+[package]
+name = "omniproj-distill"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "OmniProj internal: Layer 2 distillation + verify gate + LLM provider adapters."
+publish = false
+
+# Layer 2 (spec §5/§5.1): the ONLY crate that links an LLM.
+# v1 ships a reqwest->Anthropic adapter behind `trait LlmProvider`; a `genai` adapter
+# is the planned drop-in second impl (no other crate changes when swapped).
+[dependencies]
+omniproj-core.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+toml.workspace = true
+tokio.workspace = true

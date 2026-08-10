@@ -1,0 +1,4 @@
+# Minimal rustfmt config: the codebase is formatted with default stable rustfmt
+# (see CI `cargo fmt --all --check`). Pin only non-churning defaults so contributors
+# and CI agree; do NOT add opinionated settings that would reflow committed code.
+edition = "2021"

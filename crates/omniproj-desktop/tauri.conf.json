@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OmniProj",
+  "version": "0.3.1",
+  "identifier": "app.omniproj.desktop",
+  "build": {
+    "frontendDist": "../omniproj-api/web/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm --prefix ../omniproj-api/web run dev",
+    "beforeBuildCommand": "npm --prefix ../omniproj-api/web run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OmniProj",
+        "label": "main",
+        "width": 1100,
+        "height": 760,
+        "minWidth": 760,
+        "minHeight": 520
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png"]
+  }
+}

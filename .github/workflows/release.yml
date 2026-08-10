@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-apple-darwin
+            # Cross-compiled on the arm64 runner (Apple toolchain is universal, dtolnay
+            # adds the target std). Avoids the scarce/deprecated macos-13 Intel runners.
+            os: macos-14
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binary
+        run: cargo build --release --locked -p omniproj-cli --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf omniproj-${{ github.ref_name }}-${{ matrix.target }}.tar.gz omniproj
+          shasum -a 256 omniproj-${{ github.ref_name }}-${{ matrix.target }}.tar.gz > omniproj-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Create the release if the tag was pushed before `gh release create` ran
+          # (idempotent: fails silently when it already exists).
+          gh release create ${{ github.ref_name }} --verify-tag --generate-notes 2>/dev/null || true
+          gh release upload ${{ github.ref_name }} \
+            target/${{ matrix.target }}/release/omniproj-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
+            target/${{ matrix.target }}/release/omniproj-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256 \
+            --clobber

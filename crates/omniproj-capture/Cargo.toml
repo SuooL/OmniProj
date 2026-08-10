@@ -1,0 +1,17 @@
+[package]
+name = "omniproj-capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "OmniProj internal: Layer 1 capture — git + Claude/Codex parsers into a unified Session."
+publish = false
+
+# Layer 1 (spec §4.2 / §7): git + Claude/Codex parsers -> normalized Session. NO LLM.
+# v1 thin loop shells out to `git`; gix can replace it later behind the same fns.
+[dependencies]
+omniproj-core.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+walkdir.workspace = true
+chrono.workspace = true
+dirs.workspace = true

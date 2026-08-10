@@ -1,0 +1,5 @@
+# The built dist/ IS committed (embedded into the binary; cargo-install users have no
+# Node). node_modules and local caches are not.
+node_modules/
+.vite/
+*.tsbuildinfo
