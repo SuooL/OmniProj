@@ -392,6 +392,9 @@ fn print_note_list(project: &str, doc: &omniproj_core::NextDoc) {
             .map(|d| format!("  (due {d})"))
             .unwrap_or_default();
         println!("  [{check}] #{id}  {q}{}{due}", it.text);
+        if let Some(n) = &it.note {
+            println!("        note: {n}");
+        }
     }
 }
 

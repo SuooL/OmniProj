@@ -43,6 +43,10 @@ export function ProjectDetail({
     mutationFn: (v: { id: string; date: string | null }) => api.setTaskDue(hash, v.id, v.date),
     onSuccess: refreshTasks,
   });
+  const setNote = useMutation({
+    mutationFn: (v: { id: string; note: string | null }) => api.setTaskNote(hash, v.id, v.note),
+    onSuccess: refreshTasks,
+  });
   const remove = useMutation({ mutationFn: (id: string) => api.removeTask(hash, id), onSuccess: refreshTasks });
   const attribute = useMutation({
     mutationFn: (v: { id: string; sha: string }) => api.attributeCommit(hash, v.id, v.sha),
@@ -118,6 +122,16 @@ export function ProjectDetail({
                       ))}
                     </span>
                   )}
+                  <input
+                    key={t.note ?? ""}
+                    defaultValue={t.note ?? ""}
+                    placeholder="+ problem note…"
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      if (v !== (t.note ?? "")) setNote.mutate({ id: t.id!, note: v || null });
+                    }}
+                    className="block w-full mt-1 bg-transparent text-[11px] text-[var(--color-warm)] placeholder:text-[var(--color-muted)] border-none focus:outline-none"
+                  />
                 </span>
                 <input
                   type="date"

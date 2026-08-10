@@ -102,6 +102,10 @@ pub struct NextItem {
     /// (FR-R2). Many commits → one task. Stored in the id comment as `commits:h1,h2`;
     /// insertion order preserved. Non-hex tokens are dropped on parse.
     pub commits: Vec<String>,
+    /// One-line problem note (问题备注, FR-R1). Stored as an indented `  note: <text>`
+    /// line directly under the task — a nested line any markdown renderer shows, and
+    /// which round-trips. `None` when unset. Multi-line notes are collapsed to one line.
+    pub note: Option<String>,
 }
 
 /// A parsed `next.md`. `lines` preserves the full document (tasks + raw passthrough)
@@ -122,9 +126,18 @@ impl NextDoc {
     /// as a raw passthrough line.
     pub fn parse(text: &str) -> Self {
         let mut lines = Vec::new();
-        for raw in text.lines() {
+        let mut it = text.lines().peekable();
+        while let Some(raw) = it.next() {
             match parse_task_line(raw) {
-                Some(item) => lines.push(Line::Task(item)),
+                Some(mut item) => {
+                    // An immediately following indented `  note: <text>` line is this
+                    // task's problem note; consume it so it isn't a stray Raw line.
+                    if let Some(note) = it.peek().and_then(|n| parse_note_line(n)) {
+                        item.note = Some(note);
+                        it.next();
+                    }
+                    lines.push(Line::Task(item));
+                }
                 None => lines.push(Line::Raw(raw.to_string())),
             }
         }
@@ -166,8 +179,27 @@ impl NextDoc {
             unclear,
             due: None,
             commits: Vec::new(),
+            note: None,
         }));
         id
+    }
+
+    /// Set (or clear, with `None`/empty) an item's one-line problem note. Newlines are
+    /// collapsed to spaces to protect the single-line on-disk form. Returns true if the
+    /// item was found.
+    pub fn set_note(&mut self, id: &str, note: Option<String>) -> bool {
+        let note = note
+            .map(|n| n.replace(['\n', '\r'], " ").trim().to_string())
+            .filter(|n| !n.is_empty());
+        for l in &mut self.lines {
+            if let Line::Task(t) = l {
+                if t.id.as_deref() == Some(id) {
+                    t.note = note;
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Attribute a git commit (abbreviated SHA) to an item (FR-R2). No-op if already
@@ -266,10 +298,20 @@ impl NextDoc {
         let mut out = String::new();
         for l in &self.lines {
             match l {
-                Line::Task(t) => out.push_str(&render_task_line(t)),
-                Line::Raw(r) => out.push_str(r),
+                Line::Task(t) => {
+                    out.push_str(&render_task_line(t));
+                    out.push('\n');
+                    if let Some(n) = &t.note {
+                        out.push_str("  note: ");
+                        out.push_str(n);
+                        out.push('\n');
+                    }
+                }
+                Line::Raw(r) => {
+                    out.push_str(r);
+                    out.push('\n');
+                }
             }
-            out.push('\n');
         }
         out
     }
@@ -354,7 +396,21 @@ fn parse_task_line(raw: &str) -> Option<NextItem> {
         unclear,
         due,
         commits,
+        note: None,
     })
+}
+
+/// Parse an indented `  note: <text>` line (a task's problem note) into its text, or
+/// `None` if the line isn't one (or has no text). Requires ≥2 leading spaces so it can't
+/// be confused with a top-level line.
+fn parse_note_line(raw: &str) -> Option<String> {
+    let body = raw.strip_prefix("  ")?;
+    let text = body.trim_start().strip_prefix("note:")?.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
 }
 
 fn render_task_line(t: &NextItem) -> String {
@@ -578,6 +634,40 @@ mod tests {
         let it = doc.items().next().unwrap();
         assert_eq!(it.due.as_deref(), Some("2026-08-20"));
         assert_eq!(it.commits, vec!["abc1234", "def5678"]);
+        assert_eq!(doc.render(), src);
+    }
+
+    #[test]
+    fn problem_note_attaches_and_round_trips() {
+        let src = "- [ ] ship it <!--#a1b2-->\n  note: blocked on the API redesign\n";
+        let doc = NextDoc::parse(src);
+        let it = doc.items().next().unwrap();
+        assert_eq!(it.note.as_deref(), Some("blocked on the API redesign"));
+        assert_eq!(doc.render(), src);
+    }
+
+    #[test]
+    fn set_note_attaches_clears_and_collapses_newlines() {
+        let mut doc = NextDoc::default();
+        let id = doc.add("do it", false);
+        assert!(doc.set_note(&id, Some("line one\nline two".to_string())));
+        assert_eq!(
+            doc.items().next().unwrap().note.as_deref(),
+            Some("line one line two")
+        );
+        assert!(doc.render().contains("  note: line one line two"));
+        // Clearing removes the note line.
+        assert!(doc.set_note(&id, None));
+        assert_eq!(doc.items().next().unwrap().note, None);
+        assert!(!doc.render().contains("note:"));
+    }
+
+    #[test]
+    fn orphan_note_line_without_a_task_stays_verbatim() {
+        // A `  note:` line not directly under a task is just passthrough prose.
+        let src = "some prose\n  note: not attached to anything\n";
+        let doc = NextDoc::parse(src);
+        assert_eq!(doc.items().count(), 0);
         assert_eq!(doc.render(), src);
     }
 }

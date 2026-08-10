@@ -26,6 +26,8 @@ export interface Task {
   due: string | null;
   /** Attributed commit SHAs (abbreviated) — the actual side of planned-vs-actual. */
   commits: string[];
+  /** One-line problem note (问题备注), or null. */
+  note: string | null;
 }
 
 export interface Commit {
@@ -45,6 +47,8 @@ export const api = {
     invoke<void>("set_task_status", { hash, id, status }),
   setTaskDue: (hash: string, id: string, date: string | null) =>
     invoke<void>("set_task_due", { hash, id, date }),
+  setTaskNote: (hash: string, id: string, note: string | null) =>
+    invoke<void>("set_task_note", { hash, id, note }),
   removeTask: (hash: string, id: string) =>
     invoke<void>("remove_task", { hash, id }),
   commits: (hash: string, limit: number) =>

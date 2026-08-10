@@ -60,6 +60,8 @@ struct TaskDto {
     due: Option<String>,
     /// Attributed commit SHAs (abbreviated) — the *actual* side of FR-R2.
     commits: Vec<String>,
+    /// One-line problem note (问题备注), or null.
+    note: Option<String>,
 }
 
 /// IPC command: a project's next-action list (read-only, no LLM).
@@ -74,8 +76,21 @@ fn get_tasks(hash: String) -> Vec<TaskDto> {
             unclear: t.unclear,
             due: t.due.clone(),
             commits: t.commits.clone(),
+            note: t.note.clone(),
         })
         .collect()
+}
+
+/// IPC command: set (Some) or clear (None/empty) a task's one-line problem note.
+#[tauri::command]
+fn set_task_note(hash: String, id: String, note: Option<String>) -> Result<(), String> {
+    mutate(&hash, "task note", |doc| {
+        if doc.set_note(&id, note.clone()) {
+            Ok(())
+        } else {
+            Err(format!("unknown id #{id}"))
+        }
+    })
 }
 
 /// One commit on the Record-layer timeline (the *actual* line, FR-R2).
@@ -207,6 +222,7 @@ fn main() {
             add_task,
             set_task_status,
             set_task_due,
+            set_task_note,
             remove_task,
             get_commits,
             attribute_commit,
