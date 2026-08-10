@@ -61,11 +61,16 @@ Tauri 桌面 app
 
 原生能力:系统通知(受控 push)、菜单栏 tray、文件系统直读(`~/.omniproj`、用户 repo、`~/.claude`/`~/.codex`)。
 
-## 6. 代码留 / 砍(提案,待用户签字后再动)
+## 6. 代码留 / 砍(✅ 已执行 2026-08-10)
 
-**留(核心,复用 ~80%)**:`omniproj-core`(paths/notes/store)、`omniproj-capture`(git/session)、`omniproj-distill` 的 `provider.rs`、React 前端(portfolio/sparkline)。
+> 已在 `feature/desktop-pivot` 执行本节砍除清单。CLI 侧采用**渐进收敛**:先砍掉 api/daemon/ipc
+> 三个 crate + 后台蒸馏/opinion/eval/doctor 等命令,**暂留** capture/notes 侧工具命令
+> (`list`/`remove`/`digest`/`search`/`recall`/`note`/`next`/`clarify`/`stats`/`providers`/`init`),
+> 待桌面 M2/M3 接管后再收敛到「只剩 `add`」——避免在桌面重实现前凭空 strand 能力。详见 CHANGELOG。
 
-**砍(不服务"推进器"或增复杂度)**:`omniproj-api` axum server 层(→ Tauri IPC)、`omniproj-daemon`(→ Tauri 后台)、`omniproj-ipc`、opinion / user-model / second-opinion / deep-pipeline / curate / eval / doctor / install-service / reconcile。CLI(`omniproj-cli`)最小保留 `add`(注册项目),其余走桌面 UI。
+**留(核心,复用 ~80%)**:`omniproj-core`(paths/notes/store)、`omniproj-capture`(git/session)、`omniproj-distill` 的 `provider.rs` + verify + clarify、`omniproj-index`、React 前端(portfolio/sparkline)。
+
+**砍(✅ 已删)**:`omniproj-api` axum server 层(→ Tauri IPC)、`omniproj-daemon`(→ Tauri 后台)、`omniproj-ipc`、opinion / user-model / second-opinion / deep-pipeline / curate / eval / doctor / install-service / reconcile / mcp。CLI(`omniproj-cli`)**最终**只保留 `add`(注册项目),其余走桌面 UI(当前渐进保留见上)。
 
 **新建(窄)**:Tauri 外壳 + IPC 命令、菜单栏/每日通知、**task 模型扩展**(状态 doing / 预期完成日期 / 问题备注 / 讨论)、结构化逐提交历史、**git flow graph 视图 + task↔commit 对应**、`plan.md` 决策日志(abandoned 标记)、Advance 拆解写路径(现 clarify 刻意不收敛,需新 prompt)。
 

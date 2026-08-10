@@ -15,12 +15,28 @@ components automatically).
 cargo build --workspace
 ```
 
-The single binary is produced by the `omniproj-cli` crate:
+The `omniproj-cli` crate produces the `omniproj` binary:
 
 ```sh
 cargo run -p omniproj-cli -- --help
 cargo install --git https://github.com/SuooL/OmniProj omniproj-cli   # installs `omniproj`
 ```
+
+## Running the desktop app (`omniproj-desktop`)
+
+The Tauri desktop app must be run through the Tauri CLI, **not** as a bare
+`cargo run -p omniproj-desktop` — a dev build loads the Vite dev server at
+`build.devUrl` (`:5173`), so running the plain binary with no dev server yields a
+**blank white window**. Use:
+
+```sh
+cargo install tauri-cli --version '^2' --locked   # first time (provides `cargo tauri`)
+cargo tauri dev                                    # from crates/omniproj-desktop/
+```
+
+`cargo tauri dev` starts the Vite dev server (`beforeDevCommand`) and launches the app
+pointed at it. For a standalone bundle that embeds the frontend (no dev server needed),
+use `cargo tauri build`. The React frontend lives in `crates/omniproj-desktop/web/`.
 
 > Environment note: some maintainer machines don't have `cargo` on `PATH` and invoke
 > it via the rustup toolchain directory (e.g.
