@@ -89,6 +89,10 @@ export const api = {
   advanceTask: (hash: string, id: string) => invoke<string[]>("advance_task", { hash, id }),
   adoptSubtasks: (hash: string, texts: string[]) =>
     invoke<string[]>("adopt_subtasks", { hash, texts }),
+  clarifyTask: (hash: string, id: string, message?: string) =>
+    invoke<string>("clarify_task", { hash, id, message: message ?? null }),
+  getClarify: (hash: string, id: string) => invoke<string>("get_clarify", { hash, id }),
+  refineTask: (hash: string, id: string) => invoke<string>("refine_task", { hash, id }),
   plan: (hash: string) => invoke<Decision[]>("get_plan", { hash }),
   addDecision: (hash: string, title: string, body: string) =>
     invoke<string>("add_decision", { hash, title, body }),

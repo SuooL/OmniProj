@@ -81,6 +81,29 @@ export function ProjectDetail({
     },
   });
 
+  // Advance extensions (M5): clarify (FR-V3 adversarial questioning) and refine (FR-V2
+  // repo-grounded spec). Both are proposals in auto/ — the conclusion/spec is the user's.
+  const [assist, setAssist] = useState<{ id: string; kind: "clarify" | "refine" } | null>(null);
+  const [thought, setThought] = useState("");
+  const [spec, setSpec] = useState<string | null>(null);
+  const clarifyQ = useQuery({
+    queryKey: ["clarify", hash, assist?.id],
+    queryFn: () => api.getClarify(hash, assist!.id),
+    enabled: !!assist && assist.kind === "clarify",
+  });
+  const clarify = useMutation({
+    mutationFn: (v: { id: string; message?: string }) => api.clarifyTask(hash, v.id, v.message),
+    onSuccess: (_r, v) => {
+      setThought("");
+      qc.invalidateQueries({ queryKey: ["clarify", hash, v.id] });
+    },
+  });
+  const refine = useMutation({
+    mutationFn: (id: string) => api.refineTask(hash, id),
+    onMutate: () => setSpec(null),
+    onSuccess: (s) => setSpec(s),
+  });
+
   const tasks = (tasksQ.data ?? []).filter((t) => t.id);
 
   return (
@@ -167,10 +190,35 @@ export function ProjectDetail({
                 <button
                   onClick={() => advance.mutate(t.id!)}
                   disabled={advance.isPending}
-                  title="Advance: let the agent break this into concrete steps (a proposal)"
-                  className="text-sm text-[var(--color-accent)] hover:text-[var(--color-fg)] px-1 disabled:opacity-50"
+                  title="Advance: break this into concrete steps (a proposal)"
+                  className="px-1 text-sm text-[var(--color-accent)] hover:text-[var(--color-fg)] disabled:opacity-50"
                 >
                   {advance.isPending && advance.variables === t.id ? "…" : "✨"}
+                </button>
+                <button
+                  onClick={() =>
+                    setAssist(
+                      assist?.id === t.id && assist.kind === "clarify"
+                        ? null
+                        : { id: t.id!, kind: "clarify" },
+                    )
+                  }
+                  title="Clarify: adversarial questions to think it through"
+                  className="px-1 text-sm hover:text-[var(--color-fg)] text-[var(--color-muted)]"
+                >
+                  💬
+                </button>
+                <button
+                  onClick={() => {
+                    setAssist({ id: t.id!, kind: "refine" });
+                    setSpec(null);
+                    refine.mutate(t.id!);
+                  }}
+                  disabled={refine.isPending}
+                  title="Refine: draft a grounded spec from this idea"
+                  className="px-1 text-sm hover:text-[var(--color-fg)] text-[var(--color-muted)] disabled:opacity-50"
+                >
+                  📋
                 </button>
                 <button
                   onClick={() => remove.mutate(t.id!)}
@@ -220,6 +268,62 @@ export function ProjectDetail({
                        dismiss
                      </button>
                    </div>
+                 </div>
+               )}
+
+               {assist?.id === t.id && assist.kind === "clarify" && (
+                 <div className="border-t border-[var(--color-edge)] px-3 py-2 text-xs">
+                   <div className="mb-1.5 text-[11px] text-[var(--color-muted)]">
+                     clarify — questions to think it through, not answers. The conclusion is yours to write.
+                   </div>
+                   {clarify.isError && (
+                     <p className="mb-1 text-[var(--color-flag)]">{String(clarify.error)}</p>
+                   )}
+                   <div className="max-h-56 overflow-auto whitespace-pre-wrap text-[var(--color-fg)]">
+                     {clarifyQ.data?.trim() || "no rounds yet — ask one."}
+                   </div>
+                   <div className="mt-2 flex gap-2">
+                     <input
+                       value={thought}
+                       onChange={(e) => setThought(e.target.value)}
+                       placeholder="a thought to add (optional)…"
+                       className="flex-1 rounded border border-[var(--color-edge)] bg-[var(--color-ink)] px-2 py-1 text-[var(--color-fg)] placeholder:text-[var(--color-muted)]"
+                     />
+                     <button
+                       onClick={() => clarify.mutate({ id: t.id!, message: thought || undefined })}
+                       disabled={clarify.isPending}
+                       className="rounded border border-[var(--color-edge)] px-2 py-1 text-[11px] text-[var(--color-fg)] hover:bg-[var(--color-raised)] disabled:opacity-50"
+                     >
+                       {clarify.isPending ? "…" : "ask a round"}
+                     </button>
+                     <button
+                       onClick={() => setAssist(null)}
+                       className="px-2 py-1 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+                     >
+                       close
+                     </button>
+                   </div>
+                 </div>
+               )}
+
+               {assist?.id === t.id && assist.kind === "refine" && (
+                 <div className="border-t border-[var(--color-edge)] px-3 py-2 text-xs">
+                   <div className="mb-1.5 text-[11px] text-[var(--color-muted)]">
+                     refined spec (a proposal saved to auto/, grounded in the repo — not web).
+                   </div>
+                   {refine.isPending && <p className="text-[var(--color-muted)]">refining…</p>}
+                   {refine.isError && <p className="text-[var(--color-flag)]">{String(refine.error)}</p>}
+                   {spec && (
+                     <pre className="max-h-72 overflow-auto whitespace-pre-wrap font-sans text-[var(--color-fg)]">
+                       {spec}
+                     </pre>
+                   )}
+                   <button
+                     onClick={() => setAssist(null)}
+                     className="mt-2 px-2 py-1 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+                   >
+                     close
+                   </button>
                  </div>
                )}
               </li>

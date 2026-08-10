@@ -302,6 +302,114 @@ fn adopt_subtasks(hash: String, texts: Vec<String>) -> Result<Vec<String>, Strin
     })
 }
 
+/// `auto/clarify/<id>.md` — the AI-written discussion for one task (derivative, revertable;
+/// never `notes/`). The conclusion is the user's to transcribe (charter §6 例外 guardrail).
+fn clarify_file(hash: &str, id: &str) -> std::path::PathBuf {
+    omniproj_core::auto_dir(hash)
+        .join("clarify")
+        .join(format!("{id}.md"))
+}
+
+/// IPC command: the accumulated clarify discussion for a task (read-only).
+#[tauri::command]
+fn get_clarify(hash: String, id: String) -> String {
+    std::fs::read_to_string(clarify_file(&hash, &id)).unwrap_or_default()
+}
+
+/// IPC command (Advance / FR-V3): run one bounded adversarial-questioning round on a task —
+/// the model returns 标记+理由 (unstated premises, contradictions, missing criteria), never
+/// a recommendation. Appended to the discussion; the CONCLUSION is never auto-written to
+/// `notes/` (charter §6). Async. Returns this round's text.
+#[tauri::command]
+async fn clarify_task(hash: String, id: String, message: Option<String>) -> Result<String, String> {
+    let item_text = {
+        let doc = omniproj_core::NextDoc::load(&hash);
+        let found = doc
+            .items()
+            .find(|t| t.id.as_deref() == Some(id.as_str()))
+            .map(|t| t.text.clone());
+        found.ok_or_else(|| format!("unknown task #{id}"))?
+    };
+    let resolved = omniproj_distill::resolve_clarify()
+        .map_err(|e| format!("no LLM provider — run `omniproj init` and set an API key ({e})"))?;
+    let file = clarify_file(&hash, &id);
+    let prior = std::fs::read_to_string(&file).unwrap_or_default();
+    let round =
+        omniproj_distill::clarify_round(&item_text, &prior, message.as_deref(), &resolved.provider)
+            .await
+            .map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let rendered = omniproj_distill::render_round(&now, message.as_deref(), &round);
+    let updated = format!("{prior}{rendered}");
+    omniproj_core::ensure_home().map_err(|e| e.to_string())?;
+    let (h, i) = (hash.clone(), id.clone());
+    omniproj_core::store_txn(move || -> std::io::Result<()> {
+        if let Some(p) = file.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        std::fs::write(&file, &updated)?;
+        omniproj_core::commit_all(&format!("clarify {h} #{i}"));
+        Ok(())
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(round)
+}
+
+/// IPC command (Advance / FR-V2): refine a rough task/idea into a clear, testable spec,
+/// grounded in the repo's branch + recent commits. AI derivative → persisted to
+/// `auto/refine/<id>.md` and returned; the user decides what to do with it. Async. (The
+/// charter's web-research half needs a browsing provider and is not wired — repo-grounded.)
+#[tauri::command]
+async fn refine_task(hash: String, id: String) -> Result<String, String> {
+    let (task, note) = {
+        let doc = omniproj_core::NextDoc::load(&hash);
+        let item = doc
+            .items()
+            .find(|t| t.id.as_deref() == Some(id.as_str()))
+            .ok_or_else(|| format!("unknown task #{id}"))?;
+        (item.text.clone(), item.note.clone())
+    };
+    let context = omniproj_core::load_meta(&hash).map(|m| {
+        let path = Path::new(&m.path);
+        let branch = omniproj_capture::git::collect(path)
+            .map(|g| g.branch)
+            .unwrap_or_default();
+        let commits: Vec<String> = omniproj_capture::git::commit_log(path, 12)
+            .into_iter()
+            .map(|c| format!("- {}", c.subject))
+            .collect();
+        let mut s = String::new();
+        if !branch.is_empty() {
+            s.push_str(&format!("branch: {branch}\n"));
+        }
+        if let Some(n) = &note {
+            s.push_str(&format!("problem note: {n}\n"));
+        }
+        if !commits.is_empty() {
+            s.push_str("recent commits:\n");
+            s.push_str(&commits.join("\n"));
+        }
+        s
+    });
+    let resolved = omniproj_distill::resolve(None)
+        .map_err(|e| format!("no LLM provider — run `omniproj init` and set an API key ({e})"))?;
+    let spec = omniproj_distill::refine(&task, context.as_deref(), &resolved.provider)
+        .await
+        .map_err(|e| e.to_string())?;
+    let body = format!("# Refined spec — #{id}: {task}\n\n{spec}\n");
+    omniproj_core::ensure_home().map_err(|e| e.to_string())?;
+    let (h, i) = (hash.clone(), id.clone());
+    omniproj_core::store_txn(move || -> std::io::Result<()> {
+        let dir = omniproj_core::auto_dir(&h).join("refine");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join(format!("{i}.md")), body)?;
+        omniproj_core::commit_all(&format!("refine spec #{i}"));
+        Ok(())
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(spec)
+}
+
 /// One plan/decision-log entry (Record layer, M4).
 #[derive(Serialize)]
 struct PlanEntryDto {
@@ -550,6 +658,9 @@ fn main() {
             test_reminder,
             advance_task,
             adopt_subtasks,
+            get_clarify,
+            clarify_task,
+            refine_task,
             get_plan,
             add_decision,
             set_decision_status
