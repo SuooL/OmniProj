@@ -5,6 +5,27 @@ Pre-1.0: the public surface (CLI commands, `~/.omniproj` layout) may still chang
 
 ## [Unreleased]
 
+### Removed
+
+- **Desktop-pivot teardown** (`docs/desktop-design.md` §6) — OmniProj is pivoting from the
+  CLI product to a Tauri desktop "project advancer", so the layers the desktop app replaces
+  were removed rather than carried as dead weight:
+  - **Crates** — `omniproj-api` (the axum web dashboard + embedded SPA), `omniproj-daemon`
+    (the background watcher / floor-timer / refresh orchestration), and `omniproj-ipc`
+    (the daemon⇄CLI Unix-socket protocol) are deleted, along with the `web-build` CI job.
+  - **CLI commands** — `briefing`, `refresh`, `status`, `daemon`, `opinion`, `dashboard`,
+    `curate`, `eval`, `doctor`, `model`, `correct`, `reconcile`, `install-service`,
+    `uninstall-service`, and `mcp` are removed. The CLI now keeps `add`/`list`/`remove`,
+    `note`/`next`/`clarify`, `recall`, `search`, `digest`, `stats`, and `providers`/`init`.
+  - **`omniproj-distill` modules** — `opinion`, `deep` (the deep reasoning pipeline),
+    `eval`, `doctor`, `curate`, and `learn` are removed; the crate is now the provider
+    adapters + the verify gate + `clarify` (the grounding foundation the desktop Advance
+    layer will reuse). The base `distill()`/`verify_output()` pipeline is retained as
+    library code.
+
+  Everything removed remains in git history and can be restored. `omniproj-core`,
+  `omniproj-capture`, and `omniproj-index` are retained unchanged.
+
 ### Fixed
 
 - **Test isolation** — `omniproj-index`'s tests wrote their sqlite index into the
@@ -13,12 +34,11 @@ Pre-1.0: the public surface (CLI commands, `~/.omniproj` layout) may still chang
   run. They now point `OMNIPROJ_HOME` at a throwaway temp store, serialized on a local
   guard because the env var is process-global, with a regression test asserting the
   index path stays inside the sandbox.
-
-### Changed
-
-- **`omniproj doctor` exits non-zero when a check FAILs** (it previously always exited 0),
-  so it can be used as a setup gate in CI and scripts. A pass or warning-only run still
-  exits 0.
+- **Stale `mnemo-desktop` build artifacts** — the desktop crate's earlier name (`mnemo-desktop`,
+  from before the Mnemo → OmniProj rename) left cached Tauri build output under `target/`
+  that pinned an absolute `…/git/Mnemo/…` permissions path, breaking `omniproj-desktop`'s
+  build script. Documented here; the fix is a local `cargo clean` of the stale artifacts
+  (`target/` is not tracked).
 
 ## [0.3.1] — 2026-07-13
 

@@ -3,12 +3,6 @@
 
 pub mod clarify;
 pub mod config;
-pub mod curate;
-pub mod deep;
-pub mod doctor;
-pub mod eval;
-pub mod learn;
-pub mod opinion;
 pub mod prompt;
 pub mod provider;
 pub mod verify;
@@ -19,14 +13,6 @@ pub use config::{
     resolve_depth, resolve_privacy, Depth, PrivacyConfig, ProviderKind, ProviderStatus, Resolved,
     CONFIG_TEMPLATE,
 };
-pub use curate::{
-    consolidate_learned, curate_decisions, curate_open, learned_over_cap, user_model_over_cap,
-    LEARNED_CAP_CHARS, USER_MODEL_DIM_CAP_CHARS,
-};
-pub use deep::distill_deep;
-pub use eval::{judge, EvalScores};
-pub use learn::learn_from_correction;
-pub use opinion::{second_opinion, OpinionInput};
 pub use provider::{AnyProvider, LlmProvider};
 pub use verify::VerifyReport;
 

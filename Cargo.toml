@@ -22,16 +22,11 @@ toml = "0.8"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync", "net", "io-util", "io-std", "process"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-notify-debouncer-full = "0.7"
 fs2 = "0.4"
-axum = "0.8"
 rusqlite = { version = "0.37", features = ["bundled"] }
 
 # internal crates
 omniproj-core = { path = "crates/omniproj-core" }
 omniproj-capture = { path = "crates/omniproj-capture" }
 omniproj-distill = { path = "crates/omniproj-distill" }
-omniproj-daemon = { path = "crates/omniproj-daemon" }
-omniproj-ipc = { path = "crates/omniproj-ipc" }
-omniproj-api = { path = "crates/omniproj-api" }
 omniproj-index = { path = "crates/omniproj-index" }

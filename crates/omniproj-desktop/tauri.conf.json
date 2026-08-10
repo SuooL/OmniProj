@@ -4,10 +4,10 @@
   "version": "0.3.1",
   "identifier": "app.omniproj.desktop",
   "build": {
-    "frontendDist": "../omniproj-api/web/dist",
+    "frontendDist": "web/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm --prefix ../omniproj-api/web run dev",
-    "beforeBuildCommand": "npm --prefix ../omniproj-api/web run build"
+    "beforeDevCommand": "npm --prefix web run dev",
+    "beforeBuildCommand": "npm --prefix web run build"
   },
   "app": {
     "windows": [

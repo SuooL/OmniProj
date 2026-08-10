@@ -34,24 +34,3 @@ jobs:
         run: cargo build --workspace --locked
       - name: Test
         run: cargo test --workspace --locked
-
-  # The frontend (crates/omniproj-api/web) is a committed dist embedded into the binary at
-  # build time. This job ensures the frontend still BUILDS. It does not byte-diff dist:
-  # Tailwind v4's build output is not deterministic run-to-run, so an exact diff is flaky.
-  # A fresh dist is produced by `tauri build` (beforeBuildCommand) at packaging time.
-  web-build:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: crates/omniproj-api/web
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 26
-      - name: Install deps
-        run: npm ci
-      - name: Build frontend
-        run: npm run build
