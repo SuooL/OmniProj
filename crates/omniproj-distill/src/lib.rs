@@ -1,12 +1,14 @@
 //! omniproj-distill — Layer 2 (spec §5). Turn a substrate digest into the three state files.
 //! The only crate that links an LLM.
 
+pub mod breakdown;
 pub mod clarify;
 pub mod config;
 pub mod prompt;
 pub mod provider;
 pub mod verify;
 
+pub use breakdown::{breakdown, parse_steps};
 pub use clarify::{clarify_round, count_rounds_within, render_round};
 pub use config::{
     config_path, default_model_string, is_local_provider, list, resolve, resolve_clarify,

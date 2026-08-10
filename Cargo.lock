@@ -2615,6 +2615,7 @@ dependencies = [
  "chrono",
  "omniproj-capture",
  "omniproj-core",
+ "omniproj-distill",
  "serde",
  "serde_json",
  "tauri",
