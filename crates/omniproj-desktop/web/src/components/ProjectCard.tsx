@@ -1,42 +1,40 @@
 import type { ProjectCard as Card } from "../api";
 import { Sparkline } from "./Sparkline";
+import { staleness, TONE_COLOR } from "../staleness";
 
-function ago(iso: string | null): string {
-  if (!iso) return "never";
-  const d = (Date.now() - new Date(iso).getTime()) / 86400000;
-  if (d < 1) return "today";
-  return `${Math.round(d)}d ago`;
-}
+// A row on the situation board. Led by a decay rail (color = idle tone) so the eye lands on
+// what's rotting first. Neutral facts only: last activity, uncommitted lines, branch, path.
 
 export function ProjectCard({ c, onOpen }: { c: Card; onOpen?: () => void }) {
+  const s = staleness(c.commit_weeks);
+  const tone = TONE_COLOR[s.tone];
   return (
-    <div
+    <button
       onClick={onOpen}
-      className="rounded-lg border border-[var(--color-edge)] bg-[var(--color-panel)] p-4 flex flex-col gap-3 cursor-pointer hover:border-[var(--color-accent)] transition-colors"
+      className="group flex w-full overflow-hidden rounded-lg border border-[var(--color-edge)] bg-[var(--color-panel)] text-left transition-colors hover:border-[var(--color-accent)]"
     >
-      <div className="flex items-center gap-2">
-        <span className="font-semibold text-[var(--color-fg)] truncate">{c.name}</span>
-        {c.branch && (
-          <span className="font-mono text-xs text-[var(--color-muted)] truncate">
-            {c.branch}
-          </span>
-        )}
-      </div>
+      <span className="w-1 shrink-0" style={{ background: tone }} aria-hidden />
+      <div className="flex min-w-0 flex-1 flex-col gap-2 px-3.5 py-3">
+        <div className="flex items-baseline gap-2">
+          <span className="min-w-0 truncate font-semibold text-[var(--color-fg)]">{c.name}</span>
+          {c.branch && (
+            <span className="shrink-0 font-mono text-[11px] text-[var(--color-muted)]">{c.branch}</span>
+          )}
+        </div>
 
-      <Sparkline weeks={c.commit_weeks} />
+        <Sparkline weeks={c.commit_weeks} color={tone} />
 
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-muted)] items-center">
-        {c.dirty > 0 && (
-          <span className="rounded border border-[var(--color-warm)] text-[var(--color-warm)] px-1.5">
-            {c.dirty} uncommitted
-          </span>
-        )}
-        <span className="ml-auto">distilled {ago(c.last_distilled)}</span>
-      </div>
+        <div className="flex items-center gap-2 whitespace-nowrap font-mono text-[11px]">
+          <span style={{ color: tone }}>{s.label}</span>
+          {c.dirty > 0 && (
+            <span className="text-[var(--color-warm)]">· {c.dirty} uncommitted</span>
+          )}
+        </div>
 
-      <div className="text-[11px] text-[var(--color-cold)] font-mono truncate" title={c.path}>
-        {c.path}
+        <div className="truncate font-mono text-[10px] text-[var(--color-dim)]" title={c.path}>
+          {c.path}
+        </div>
       </div>
-    </div>
+    </button>
   );
 }

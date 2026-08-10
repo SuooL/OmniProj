@@ -9,6 +9,11 @@ import { api, type Task, type TaskStatus } from "../api";
 
 const NEXT: Record<TaskStatus, TaskStatus> = { open: "doing", doing: "done", done: "open" };
 const GLYPH: Record<TaskStatus, string> = { open: "○", doing: "◐", done: "●" };
+const GLYPH_COLOR: Record<TaskStatus, string> = {
+  open: "var(--color-dim)",
+  doing: "var(--color-accent)",
+  done: "var(--color-active)",
+};
 
 export function ProjectDetail({
   hash,
@@ -57,6 +62,23 @@ export function ProjectDetail({
     onSuccess: refreshTasks,
   });
 
+  // Advance (M3/FR-V1): agent proposes concrete sub-steps; the user picks which to adopt.
+  const [advancing, setAdvancing] = useState<
+    { id: string; candidates: string[]; selected: boolean[] } | null
+  >(null);
+  const advance = useMutation({
+    mutationFn: (id: string) => api.advanceTask(hash, id),
+    onSuccess: (candidates, id) =>
+      setAdvancing({ id, candidates, selected: candidates.map(() => true) }),
+  });
+  const adopt = useMutation({
+    mutationFn: (texts: string[]) => api.adoptSubtasks(hash, texts),
+    onSuccess: () => {
+      setAdvancing(null);
+      refreshTasks();
+    },
+  });
+
   const tasks = (tasksQ.data ?? []).filter((t) => t.id);
   const commits = commitsQ.data ?? [];
 
@@ -86,12 +108,14 @@ export function ProjectDetail({
             {tasks.map((t) => (
               <li
                 key={t.id}
-                className="flex items-center gap-3 rounded border border-[var(--color-edge)] bg-[var(--color-panel)] px-3 py-2"
+                className="rounded border border-[var(--color-edge)] bg-[var(--color-panel)]"
               >
+               <div className="flex items-center gap-3 px-3 py-2">
                 <button
                   title={`status: ${t.status} (click to cycle)`}
                   onClick={() => cycle.mutate(t)}
-                  className="text-lg leading-none w-6 text-[var(--color-active)]"
+                  style={{ color: GLYPH_COLOR[t.status] }}
+                  className="w-6 text-lg leading-none"
                 >
                   {GLYPH[t.status]}
                 </button>
@@ -140,12 +164,63 @@ export function ProjectDetail({
                   className="text-xs bg-transparent border border-[var(--color-edge)] rounded px-1.5 py-0.5 text-[var(--color-muted)]"
                 />
                 <button
+                  onClick={() => advance.mutate(t.id!)}
+                  disabled={advance.isPending}
+                  title="Advance: let the agent break this into concrete steps (a proposal)"
+                  className="text-sm text-[var(--color-accent)] hover:text-[var(--color-fg)] px-1 disabled:opacity-50"
+                >
+                  {advance.isPending && advance.variables === t.id ? "…" : "✨"}
+                </button>
+                <button
                   onClick={() => remove.mutate(t.id!)}
                   title="delete"
                   className="text-[var(--color-muted)] hover:text-[var(--color-flag)] px-1"
                 >
                   ×
                 </button>
+               </div>
+
+               {advance.isError && advance.variables === t.id && (
+                 <p className="text-[var(--color-flag)] text-[11px] px-3 pb-2">{String(advance.error)}</p>
+               )}
+               {advancing?.id === t.id && (
+                 <div className="border-t border-[var(--color-edge)] px-3 py-2">
+                   <div className="text-[11px] text-[var(--color-muted)] mb-1.5">
+                     agent proposal — a suggestion, not a decision. Pick which to adopt as tasks:
+                   </div>
+                   {advancing.candidates.map((c, i) => (
+                     <label key={i} className="flex items-start gap-2 text-xs text-[var(--color-fg)] py-0.5">
+                       <input
+                         type="checkbox"
+                         checked={advancing.selected[i]}
+                         onChange={(e) => {
+                           const selected = [...advancing.selected];
+                           selected[i] = e.target.checked;
+                           setAdvancing({ ...advancing, selected });
+                         }}
+                       />
+                       <span>{c}</span>
+                     </label>
+                   ))}
+                   <div className="flex gap-2 mt-2">
+                     <button
+                       onClick={() =>
+                         adopt.mutate(advancing.candidates.filter((_, i) => advancing.selected[i]))
+                       }
+                       disabled={adopt.isPending || !advancing.selected.some(Boolean)}
+                       className="text-[11px] rounded border border-[var(--color-edge)] px-2 py-1 text-[var(--color-fg)] hover:bg-[var(--color-panel)] disabled:opacity-50"
+                     >
+                       adopt selected
+                     </button>
+                     <button
+                       onClick={() => setAdvancing(null)}
+                       className="text-[11px] text-[var(--color-muted)] px-2 py-1 hover:text-[var(--color-fg)]"
+                     >
+                       dismiss
+                     </button>
+                   </div>
+                 </div>
+               )}
               </li>
             ))}
             {tasksQ.data && tasks.length === 0 && (

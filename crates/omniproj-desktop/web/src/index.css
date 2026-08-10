@@ -1,19 +1,22 @@
 @import "tailwindcss";
 
-/* Cockpit theme: dark, dense, information-first — a situation board you scan, not a
-   consumer app. Neutral palette (no brand hue implying judgement); facts in mono. */
+/* Cockpit theme: a dark instrument/situation board you scan, not a consumer app. Neutral
+   phosphor palette — green=fresh, amber=stalling, cold=idle — encodes decay (charter §8),
+   never a brand hue implying judgement. Data is set in mono. */
 @theme {
   --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, "Menlo", monospace;
-  --color-ink: #0b0d10;
-  --color-panel: #14171c;
-  --color-edge: #262b33;
-  --color-fg: #d7dbe0;
-  --color-muted: #7d868f;
-  --color-active: #3fb950;
-  --color-warm: #d29922;
-  --color-cold: #6b7280;
-  --color-flag: #e5534b;
-  --color-accent: #58a6ff;
+  --color-ink: #0a0c10;
+  --color-panel: #12161f;
+  --color-raised: #171c27;
+  --color-edge: #232b39;
+  --color-fg: #e2e7ee;
+  --color-muted: #7b8794;
+  --color-dim: #454f5e;
+  --color-active: #46d67f; /* fresh — phosphor green */
+  --color-warm: #f0b429; /* stalling — amber */
+  --color-cold: #6b7787; /* idle — cold grey-blue */
+  --color-flag: #f2635a;
+  --color-accent: #4cc9f0; /* interactive — restrained cyan */
 }
 
 html,
@@ -21,11 +24,24 @@ body,
 #root {
   height: 100%;
 }
+
 body {
   margin: 0;
-  background: var(--color-ink);
+  background-color: var(--color-ink);
+  /* faint instrument grid: gives the board its surface, stays out of the way */
+  background-image:
+    linear-gradient(rgba(124, 146, 176, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 146, 176, 0.045) 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-position: -1px -1px;
   color: var(--color-fg);
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Visible keyboard focus (quality floor) */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
 }

@@ -214,6 +214,61 @@ fn remove_task(hash: String, id: String) -> Result<(), String> {
     })
 }
 
+/// IPC command (Advance / FR-V1): ask the agent to break a not-yet-executable task into
+/// concrete candidate sub-steps. The proposal is AI derivative — persisted to
+/// `auto/advance/<id>.md` and RETURNED for review; nothing reaches `notes/` until the user
+/// adopts (charter §4b: 推荐权给 agent,拍板权留给人). Async — the one desktop LLM call.
+#[tauri::command]
+async fn advance_task(hash: String, id: String) -> Result<Vec<String>, String> {
+    let (task, note) = {
+        let doc = omniproj_core::NextDoc::load(&hash);
+        let item = doc
+            .items()
+            .find(|t| t.id.as_deref() == Some(id.as_str()))
+            .ok_or_else(|| format!("unknown task #{id}"))?;
+        (item.text.clone(), item.note.clone())
+    };
+    let resolved = omniproj_distill::resolve(None).map_err(|e| {
+        format!("no LLM provider configured — run `omniproj init` and set an API key ({e})")
+    })?;
+    let steps = omniproj_distill::breakdown(&task, note.as_deref(), &resolved.provider)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Persist the proposal as a revertable derivative (auditable; charter §5 原则3).
+    let body = format!(
+        "# Advance proposal — #{id}: {task}\n\n{}\n",
+        steps
+            .iter()
+            .map(|s| format!("- {s}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    omniproj_core::ensure_home().map_err(|e| e.to_string())?;
+    omniproj_core::store_txn(move || -> std::io::Result<()> {
+        let dir = omniproj_core::auto_dir(&hash).join("advance");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join(format!("{id}.md")), body)?;
+        omniproj_core::commit_all(&format!("advance proposal #{id}"));
+        Ok(())
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(steps)
+}
+
+/// IPC command: adopt selected Advance candidates as real next-actions — promotes AI
+/// derivative → user ground truth, but only on explicit action. Returns the new ids.
+#[tauri::command]
+fn adopt_subtasks(hash: String, texts: Vec<String>) -> Result<Vec<String>, String> {
+    mutate(&hash, "adopt subtasks", |doc| {
+        Ok(texts
+            .iter()
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .map(|t| doc.add(t, false))
+            .collect::<Vec<_>>())
+    })
+}
+
 /// Desktop reminder settings — the *controlled push* knob (charter §4d / §5 原则5:
 /// cadence and threshold are user-visible, adjustable, and switchable off). Persisted
 /// at `~/.omniproj/desktop.toml`.
@@ -383,7 +438,9 @@ fn main() {
             get_settings,
             set_settings,
             get_attention,
-            test_reminder
+            test_reminder,
+            advance_task,
+            adopt_subtasks
         ])
         .run(tauri::generate_context!())
         .expect("error while running omniproj desktop");

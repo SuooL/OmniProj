@@ -63,6 +63,9 @@ export const api = {
     invoke<void>("attribute_commit", { hash, id, sha }),
   unattributeCommit: (hash: string, id: string, sha: string) =>
     invoke<void>("unattribute_commit", { hash, id, sha }),
+  advanceTask: (hash: string, id: string) => invoke<string[]>("advance_task", { hash, id }),
+  adoptSubtasks: (hash: string, texts: string[]) =>
+    invoke<string[]>("adopt_subtasks", { hash, texts }),
   attention: () => invoke<string[]>("get_attention"),
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),

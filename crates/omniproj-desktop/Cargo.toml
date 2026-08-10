@@ -19,3 +19,4 @@ chrono = { workspace = true }
 tokio = { workspace = true }
 omniproj-core = { workspace = true }
 omniproj-capture = { workspace = true }
+omniproj-distill = { workspace = true }
