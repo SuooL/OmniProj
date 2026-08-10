@@ -63,7 +63,8 @@ open a pull request against `dev`. `main` only advances via release merges.
 ## Pull requests
 
 - Fill in the PR template checklist.
-- Keep changes focused; update `docs/v1-spec.md` and `README.md` when behavior changes.
+- Keep changes focused; update the relevant spec doc under `docs/` (`omniproj-charter.md`,
+  `requirements.md`, `desktop-design.md`) and `README.md` when behavior changes.
 - Add tests for behavior changes, especially anything touching capture, the verify
   gate, privacy redaction, or state migration.
 

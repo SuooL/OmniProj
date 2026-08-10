@@ -71,8 +71,8 @@ and the daemon and on-disk state are hardened for daily use.
 - **CI + release automation restored** — `ci.yml` (fmt → clippy `-D warnings` → build →
   test on push/PR to main+dev) and `release.yml` (tag `v*` → macOS arm64/x86_64 +
   Linux x86_64 binaries with SHA-256 → GitHub Release).
-- **Demo + top-of-README banner** — an animated demo (`docs/demo.gif`, reproducible via
-  `docs/demo.tape`) plus platform-support and privacy-boundary notes on the first screen.
+- **Demo + top-of-README banner** — a console-based re-entry demo in the README plus
+  platform-support and privacy-boundary notes on the first screen.
 - **OSS hygiene** — `CONTRIBUTING.md`, `SECURITY.md` (states the LLM-provider data
   boundary), `CODE_OF_CONDUCT.md`, issue/PR templates, `rust-toolchain.toml`,
   `rustfmt.toml`, and crates.io metadata (internal crates marked `publish = false`).
@@ -104,7 +104,7 @@ outputs are grounded by deterministic capture plus post-distill verification.
   `project_recall`, `project_search`, and `briefing` / `decisions` / `open` /
   `opinion` / `learned` resources for agent session start.
 - **Claude Code hook guide** — documented SessionStart recall and SessionEnd refresh
-  recipes in `docs/claude-code-integration.md`.
+  recipes in the README's "Agent integration (MCP + hooks)" section.
 - **Session-root watching** — the daemon now watches Claude Code and Codex transcript
   roots, then refreshes after a quiet window so conversation-only progress does not
   wait for the 24h floor.
@@ -151,7 +151,7 @@ outputs are grounded by deterministic capture plus post-distill verification.
 First functional release: the **thin loop** (capture → ground → distill → verify) plus a
 fully autonomous **background daemon**. Note this is an early milestone, not the complete
 product "v1" — user model, second opinion, and the dashboard remain out of scope for now
-(see `docs/v1-spec.md` §1).
+(see `docs/omniproj-charter.md`).
 
 ### Added
 
@@ -187,8 +187,10 @@ product "v1" — user model, second opinion, and the dashboard remain out of sco
 - IPC ships as length-delimited JSON over the Unix socket rather than the spec's
   tonic gRPC (no `protoc` on the dev toolchain; tonic 0.14 codegen churn). Surface is
   equivalent and the `omniproj-ipc` crate boundary keeps a later gRPC swap localized.
-  See `docs/v1-spec.md` §7.
+  See `docs/omniproj-charter.md`.
 
-[Unreleased]: https://github.com/SuooL/OmniProj/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/SuooL/OmniProj/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/SuooL/OmniProj/releases/tag/v0.3.1
+[0.3.0]: https://github.com/SuooL/OmniProj/releases/tag/v0.3.0
 [0.2.0]: https://github.com/SuooL/OmniProj/releases/tag/v0.2.0
 [0.1.0]: https://github.com/SuooL/OmniProj/releases/tag/v0.1.0

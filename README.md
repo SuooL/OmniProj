@@ -114,7 +114,7 @@ Let your agent recall the project state automatically at session start:
 claude mcp add omniproj -- omniproj mcp     # tool: project_recall · resources: briefing/decisions/open/…
 ```
 
-See [docs/claude-code-integration.md](docs/claude-code-integration.md) for the `.mcp.json` shape and SessionStart/SessionEnd hook recipes (`omniproj recall` is the no-LLM instant recall built for hooks).
+`omniproj recall` is the no-LLM instant recall built for SessionStart/SessionEnd hooks — pair it with the `claude mcp add` line above in your `.mcp.json` / hook config.
 
 ## Commands
 
