@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Task, type TaskStatus } from "../api";
 import { GitGraph } from "./GitGraph";
+import { Decisions } from "./Decisions";
 
 // Record layer (M2): the project's next-action list (intent) beside its git commit
 // timeline (actual). User ground truth — every edit is an explicit action the backend
@@ -268,6 +269,8 @@ export function ProjectDetail({
           )}
         </section>
       </div>
+
+      <Decisions hash={hash} />
     </div>
   );
 }

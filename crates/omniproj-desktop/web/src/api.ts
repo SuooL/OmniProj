@@ -48,6 +48,17 @@ export interface GraphCommit {
   subject: string;
 }
 
+export type DecisionStatus = "planned" | "doing" | "done" | "abandoned";
+
+export interface Decision {
+  id: string | null;
+  date: string;
+  title: string;
+  status: DecisionStatus;
+  commit: string | null;
+  body: string;
+}
+
 export interface Settings {
   reminders_enabled: boolean;
   silence_days: number;
@@ -78,6 +89,11 @@ export const api = {
   advanceTask: (hash: string, id: string) => invoke<string[]>("advance_task", { hash, id }),
   adoptSubtasks: (hash: string, texts: string[]) =>
     invoke<string[]>("adopt_subtasks", { hash, texts }),
+  plan: (hash: string) => invoke<Decision[]>("get_plan", { hash }),
+  addDecision: (hash: string, title: string, body: string) =>
+    invoke<string>("add_decision", { hash, title, body }),
+  setDecisionStatus: (hash: string, id: string, status: DecisionStatus) =>
+    invoke<void>("set_decision_status", { hash, id, status }),
   attention: () => invoke<string[]>("get_attention"),
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),

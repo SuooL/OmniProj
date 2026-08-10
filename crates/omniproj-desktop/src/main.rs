@@ -302,6 +302,81 @@ fn adopt_subtasks(hash: String, texts: Vec<String>) -> Result<Vec<String>, Strin
     })
 }
 
+/// One plan/decision-log entry (Record layer, M4).
+#[derive(Serialize)]
+struct PlanEntryDto {
+    id: Option<String>,
+    date: String,
+    title: String,
+    /// "planned" | "doing" | "done" | "abandoned".
+    status: String,
+    commit: Option<String>,
+    body: String,
+}
+
+/// IPC command: the project's plan / decision log (`plan.md`), in document order.
+#[tauri::command]
+fn get_plan(hash: String) -> Vec<PlanEntryDto> {
+    omniproj_core::PlanDoc::load(&hash)
+        .entries()
+        .iter()
+        .map(|e| PlanEntryDto {
+            id: e.id.clone(),
+            date: e.date.clone(),
+            title: e.title.clone(),
+            status: e.status.as_str().to_string(),
+            commit: e.commit.clone(),
+            body: e.body.clone(),
+        })
+        .collect()
+}
+
+/// Load → mutate → version `plan.md` in one revertable store commit (mirrors `mutate`).
+fn plan_mutate<T>(
+    hash: &str,
+    msg: &str,
+    f: impl FnOnce(&mut omniproj_core::PlanDoc) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut doc = omniproj_core::PlanDoc::load(hash);
+    let out = f(&mut doc)?;
+    omniproj_core::ensure_home().map_err(|e| e.to_string())?;
+    let hash = hash.to_string();
+    let msg = msg.to_string();
+    omniproj_core::store_txn(move || -> std::io::Result<()> {
+        doc.save(&hash)?;
+        omniproj_core::commit_all(&format!("{msg} {hash}"));
+        Ok(())
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+/// IPC command: append a decision (status `planned`, dated today). Returns its id.
+#[tauri::command]
+fn add_decision(hash: String, title: String, body: String) -> Result<String, String> {
+    if title.trim().is_empty() {
+        return Err("decision needs a title".into());
+    }
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    plan_mutate(&hash, "decision add", |doc| {
+        Ok(doc.add(&today, &title, &body))
+    })
+}
+
+/// IPC command: set a decision's status ("planned"|"doing"|"done"|"abandoned"). Marking a
+/// decision `abandoned` records "decided not to" — it is never deleted (charter §7).
+#[tauri::command]
+fn set_decision_status(hash: String, id: String, status: String) -> Result<(), String> {
+    let st = omniproj_core::PlanStatus::parse(&status).ok_or("invalid status")?;
+    plan_mutate(&hash, "decision status", |doc| {
+        if doc.set_status(&id, st) {
+            Ok(())
+        } else {
+            Err(format!("unknown decision #{id}"))
+        }
+    })
+}
+
 /// Desktop reminder settings — the *controlled push* knob (charter §4d / §5 原则5:
 /// cadence and threshold are user-visible, adjustable, and switchable off). Persisted
 /// at `~/.omniproj/desktop.toml`.
@@ -474,7 +549,10 @@ fn main() {
             get_attention,
             test_reminder,
             advance_task,
-            adopt_subtasks
+            adopt_subtasks,
+            get_plan,
+            add_decision,
+            set_decision_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running omniproj desktop");
