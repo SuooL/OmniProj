@@ -71,12 +71,25 @@ fn read_error(kind: RepositoryReadErrorKind, message: impl Into<String>) -> Repo
     RepositoryReadError::new(kind, message)
 }
 
+fn validate_rfc3339_input(value: &str, field: &str) -> Result<(), RepositoryReadError> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|_| ())
+        .map_err(|_| {
+            read_error(
+                RepositoryReadErrorKind::InvalidOutput,
+                format!("invalid {field}: expected an RFC3339 timestamp"),
+            )
+        })
+}
+
 /// Run one source-repository read with optional index refreshes disabled. This helper
 /// is intentionally separate from the legacy `git` wrapper below so existing callers
 /// retain their fail-soft behavior until they migrate to typed observations.
 fn read_git(path: &Path, args: &[&str]) -> Result<Output, RepositoryReadError> {
     Command::new("git")
         .arg("--no-optional-locks")
+        .args(["-c", "status.renames=true"])
+        .args(["-c", "core.quotePath=false"])
         .arg("-C")
         .arg(path)
         .args(args)
@@ -275,21 +288,51 @@ fn last_commit(
     }))
 }
 
-fn status_counts(status: &str) -> Result<(usize, usize, usize, usize), RepositoryReadError> {
+struct ParsedStatus {
+    changed_files: usize,
+    staged_files: usize,
+    unstaged_files: usize,
+    untracked_files: usize,
+    canonical: String,
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    encoded
+}
+
+fn parse_status(status: &[u8]) -> Result<ParsedStatus, RepositoryReadError> {
     let mut changed = 0;
     let mut staged = 0;
     let mut unstaged = 0;
     let mut untracked = 0;
+    let mut canonical_records = Vec::new();
+    let mut cursor = 0;
 
-    for line in status.lines() {
-        let bytes = line.as_bytes();
-        if bytes.len() < 3 || bytes[2] != b' ' {
+    while cursor < status.len() {
+        let record_end = status[cursor..]
+            .iter()
+            .position(|byte| *byte == 0)
+            .map(|offset| cursor + offset)
+            .ok_or_else(|| {
+                read_error(
+                    RepositoryReadErrorKind::InvalidOutput,
+                    "Git returned an unterminated porcelain status record",
+                )
+            })?;
+        let record = &status[cursor..record_end];
+        cursor = record_end + 1;
+        if record.len() < 4 || record[2] != b' ' {
             return Err(read_error(
                 RepositoryReadErrorKind::InvalidOutput,
                 "Git returned a malformed porcelain status record",
             ));
         }
-        let (index, worktree) = (bytes[0], bytes[1]);
+        let (index, worktree) = (record[0], record[1]);
         let valid = |value| b" MADRCU?!T".contains(&value);
         if !valid(index) || !valid(worktree) {
             return Err(read_error(
@@ -297,6 +340,38 @@ fn status_counts(status: &str) -> Result<(usize, usize, usize, usize), Repositor
                 "Git returned an unknown porcelain status code",
             ));
         }
+        let path = &record[3..];
+        if path.is_empty() {
+            return Err(read_error(
+                RepositoryReadErrorKind::InvalidOutput,
+                "Git returned an empty porcelain path",
+            ));
+        }
+        let is_rename_or_copy = matches!(index, b'R' | b'C') || matches!(worktree, b'R' | b'C');
+        let original_path = if is_rename_or_copy {
+            let original_end = status[cursor..]
+                .iter()
+                .position(|byte| *byte == 0)
+                .map(|offset| cursor + offset)
+                .ok_or_else(|| {
+                    read_error(
+                        RepositoryReadErrorKind::InvalidOutput,
+                        "Git returned an unterminated rename source path",
+                    )
+                })?;
+            let original = &status[cursor..original_end];
+            cursor = original_end + 1;
+            if original.is_empty() {
+                return Err(read_error(
+                    RepositoryReadErrorKind::InvalidOutput,
+                    "Git returned an empty rename source path",
+                ));
+            }
+            Some(original)
+        } else {
+            None
+        };
+
         match (index, worktree) {
             (b'?', b'?') => {
                 changed += 1;
@@ -319,39 +394,64 @@ fn status_counts(status: &str) -> Result<(usize, usize, usize, usize), Repositor
                 }
             }
         }
+
+        let mut canonical = format!(
+            "{index:02x}{worktree:02x}|{}:{}",
+            path.len(),
+            hex_bytes(path)
+        );
+        if let Some(original) = original_path {
+            use std::fmt::Write as _;
+            write!(canonical, "|{}:{}", original.len(), hex_bytes(original))
+                .expect("writing to String cannot fail");
+        } else {
+            canonical.push_str("|-");
+        }
+        canonical_records.push(canonical);
     }
-    Ok((changed, staged, unstaged, untracked))
+
+    canonical_records.sort_unstable();
+    Ok(ParsedStatus {
+        changed_files: changed,
+        staged_files: staged,
+        unstaged_files: unstaged,
+        untracked_files: untracked,
+        canonical: canonical_records.join("\n"),
+    })
 }
 
 pub fn observe_repository(
     path: &Path,
     observed_at: &str,
 ) -> Result<RepositoryObservation, RepositoryReadError> {
+    validate_rfc3339_input(observed_at, "observed_at")?;
     ensure_readable_repository(path)?;
     let (head_state, head_sha) = inspect_head(path)?;
     let last_commit = last_commit(path, head_sha.as_deref())?;
-    let output = read_git(path, &["status", "--porcelain=v1", "--untracked-files=all"])?;
+    let output = read_git(
+        path,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )?;
     if !output.status.success() {
         return Err(command_error(&output, "reading repository status"));
     }
-    let status = output_text(&output, "reading repository status")?;
-    let status = status.trim_end();
-    let (changed_files, staged_files, unstaged_files, untracked_files) = status_counts(status)?;
+    let status = parse_status(&output.stdout)?;
 
     Ok(RepositoryObservation {
         observed_at: observed_at.to_string(),
         head_state,
         head_sha,
         last_commit,
-        changed_files,
-        staged_files,
-        unstaged_files,
-        untracked_files,
-        status_digest: omniproj_core::content_hash(status),
+        changed_files: status.changed_files,
+        staged_files: status.staged_files,
+        unstaged_files: status.unstaged_files,
+        untracked_files: status.untracked_files,
+        status_digest: omniproj_core::content_hash(&status.canonical),
     })
 }
 
 pub fn count_commits_since(path: &Path, since_rfc3339: &str) -> Result<u32, RepositoryReadError> {
+    validate_rfc3339_input(since_rfc3339, "since_rfc3339")?;
     ensure_readable_repository(path)?;
     let (head_state, _) = inspect_head(path)?;
     if matches!(head_state, HeadState::Unborn { .. }) {

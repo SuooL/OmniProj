@@ -168,6 +168,23 @@ fn index_snapshot(repo: &Path) -> IndexSnapshot {
     }
 }
 
+fn observe_without_source_writes(repo: &Path) -> omniproj_capture::git::RepositoryObservation {
+    let tree_before = tree_snapshot(repo);
+    let index_before = index_snapshot(repo);
+    let observation = observe_repository(repo, "2026-08-11T12:00:00Z").unwrap();
+    assert_eq!(
+        tree_snapshot(repo),
+        tree_before,
+        "observation changed source"
+    );
+    assert_eq!(
+        index_snapshot(repo),
+        index_before,
+        "observation changed index"
+    );
+    observation
+}
+
 fn assert_error_kind(path: &Path, expected: RepositoryReadErrorKind) {
     let error = observe_repository(path, "2026-08-11T12:00:00Z")
         .expect_err("repository inspection must fail");
@@ -249,7 +266,7 @@ fn reports_unborn_attached_and_detached_head_states() {
 }
 
 #[test]
-fn counts_each_changed_path_once_across_porcelain_categories() {
+fn porcelain_counts_and_digest_ignore_repository_config_and_path_syntax() {
     let fixture = Fixture::new("porcelain");
     fixture.init();
     for name in ["staged.txt", "both.txt", "unstaged.txt", "old.txt"] {
@@ -265,21 +282,35 @@ fn counts_each_changed_path_once_across_porcelain_categories() {
     fixture.write("both.txt", "worktree version\n");
     fixture.write("unstaged.txt", "unstaged\n");
     fixture.git(&["mv", "old.txt", "renamed.txt"]);
-    fixture.write("untracked.txt", "untracked\n");
+    fixture.write("space -> café\nline.txt", "untracked\n");
     // Observation semantics must not inherit a user preference that hides
     // untracked files from ordinary status output.
     fixture.git(&["config", "status.showUntrackedFiles", "no"]);
+    fixture.git(&["config", "status.renames", "false"]);
+    fixture.git(&["config", "core.quotePath", "true"]);
 
-    let observed = observe_repository(&fixture.path, "2026-08-11T12:00:00Z").unwrap();
-    assert_eq!(observed.changed_files, 5, "paths, not category sum");
-    assert_eq!(observed.staged_files, 3, "staged + both + rename");
-    assert_eq!(observed.unstaged_files, 2, "unstaged + both");
-    assert_eq!(observed.untracked_files, 1);
-    assert_eq!(observed.status_digest.len(), 16);
-    assert!(observed
+    let quoted = observe_without_source_writes(&fixture.path);
+    assert_eq!(quoted.changed_files, 5, "rename is one logical path change");
+    assert_eq!(quoted.staged_files, 3, "staged + both + rename");
+    assert_eq!(quoted.unstaged_files, 2, "unstaged + both");
+    assert_eq!(quoted.untracked_files, 1);
+    assert_eq!(quoted.status_digest.len(), 16);
+    assert!(quoted
         .status_digest
         .chars()
         .all(|character| character.is_ascii_hexdigit()));
+
+    fixture.git(&["config", "status.renames", "true"]);
+    fixture.git(&["config", "core.quotePath", "false"]);
+    let unquoted = observe_without_source_writes(&fixture.path);
+    assert_eq!(unquoted.changed_files, quoted.changed_files);
+    assert_eq!(unquoted.staged_files, quoted.staged_files);
+    assert_eq!(unquoted.unstaged_files, quoted.unstaged_files);
+    assert_eq!(unquoted.untracked_files, quoted.untracked_files);
+    assert_eq!(
+        unquoted.status_digest, quoted.status_digest,
+        "digest is derived from canonical semantic records"
+    );
 }
 
 #[test]
@@ -290,15 +321,15 @@ fn reports_fixed_rfc3339_commit_metadata_and_since_counts() {
     fixture.git(&["add", "a.txt"]);
     fixture.commit_at("fixed timestamp", "2025-03-04T05:06:07+02:00");
 
-    let observed = observe_repository(&fixture.path, "2026-08-11T12:00:00Z").unwrap();
-    assert_eq!(observed.observed_at, "2026-08-11T12:00:00Z");
+    let observed = observe_repository(&fixture.path, "2026-08-11T12:00:00-04:00").unwrap();
+    assert_eq!(observed.observed_at, "2026-08-11T12:00:00-04:00");
     let commit = observed.last_commit.expect("last commit");
     assert_eq!(commit.committed_at, "2025-03-04T05:06:07+02:00");
     assert_eq!(commit.subject, "fixed timestamp");
     assert_eq!(commit.sha.len(), 40);
     assert!(commit.sha.starts_with(&commit.short_sha));
     assert_eq!(
-        count_commits_since(&fixture.path, "2025-03-03T00:00:00Z").unwrap(),
+        count_commits_since(&fixture.path, "2025-03-03T00:00:00-04:00").unwrap(),
         1
     );
     assert_eq!(
@@ -385,4 +416,58 @@ fn child_git_error_probe() {
     let error = observe_repository(&path, "2026-08-11T12:00:00Z")
         .expect_err("probe must produce a typed error");
     assert_eq!(format!("{:?}", error.kind), expected);
+}
+
+#[cfg(unix)]
+#[test]
+fn invalid_rfc3339_inputs_do_not_spawn_git() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::new("invalid-input-probe");
+    let source = fixture.path.join("source");
+    let bin = fixture.path.join("bin");
+    let marker = fixture.path.join("git-was-spawned");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&bin).unwrap();
+    let git = bin.join("git");
+    fs::write(
+        &git,
+        "#!/bin/sh\n: > \"$OMNIPROJ_GIT_SPAWN_MARKER\"\nexit 71\n",
+    )
+    .unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "child_invalid_rfc3339_probe", "--nocapture"])
+        .env("OMNIPROJ_INVALID_INPUT_SOURCE", source)
+        .env("OMNIPROJ_GIT_SPAWN_MARKER", &marker)
+        .env("PATH", bin)
+        .output()
+        .expect("run isolated invalid-input probe");
+    assert!(
+        output.status.success(),
+        "invalid-input probe failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!marker.exists(), "invalid input spawned Git");
+}
+
+#[test]
+fn child_invalid_rfc3339_probe() {
+    let Some(source) = std::env::var_os("OMNIPROJ_INVALID_INPUT_SOURCE") else {
+        return;
+    };
+    let source = PathBuf::from(source);
+    for invalid in ["tomorrow", "invalid", "2026-08-11T12:00:00"] {
+        let observed = observe_repository(&source, invalid).expect_err("invalid observed_at");
+        assert_eq!(observed.kind, RepositoryReadErrorKind::InvalidOutput);
+        assert!(observed.message.contains("observed_at"));
+        assert!(observed.message.contains("RFC3339"));
+
+        let since = count_commits_since(&source, invalid).expect_err("invalid since_rfc3339");
+        assert_eq!(since.kind, RepositoryReadErrorKind::InvalidOutput);
+        assert!(since.message.contains("since_rfc3339"));
+        assert!(since.message.contains("RFC3339"));
+    }
 }
