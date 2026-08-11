@@ -107,6 +107,16 @@ fn write_legacy_migration_journal(home: &Path, project_ids: &[&str]) {
     .unwrap();
 }
 
+fn write_round1_migration_journal(home: &Path, phase: &str) {
+    std::fs::write(
+        home.join(".migration-v2"),
+        format!(
+            "target_schema_version = 2\nphase = {phase:?}\nproject_ids = [{PROJECT_ID:?}]\ncreated_state_ids = [{PROJECT_ID:?}]\n"
+        ),
+    )
+    .unwrap();
+}
+
 #[cfg(unix)]
 fn install_failing_commit_hook(home: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
@@ -249,6 +259,254 @@ fn migration_failpoints_resume_to_the_same_v2_files() {
         std::env::remove_var("OMNIPROJ_HOME");
         std::fs::remove_dir_all(home).unwrap();
     }
+}
+
+#[test]
+fn schema_stamp_write_before_phase_advance_is_recoverable() {
+    let _guard = env_guard();
+    let home = unique_home("schema-write-before-phase");
+    seed_v1_store(&home);
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    std::env::set_var(
+        "OMNIPROJ_TEST_FAILPOINT",
+        "migration_after_schema_stamp_write_before_phase",
+    );
+
+    assert!(ensure_home().is_err());
+    assert_eq!(
+        std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
+        "2\n"
+    );
+    assert!(home.join(".migration-v2").exists());
+
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+    ensure_home().unwrap();
+    assert!(!home.join(".migration-v2").exists());
+    assert_eq!(git_names(&home, "HEAD"), vec!["SCHEMA_VERSION"]);
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn schema_audit_recovery_rejects_same_path_human_bytes_before_git_add() {
+    let _guard = env_guard();
+    let home = unique_home("schema-same-path-audit-conflict");
+    seed_v1_store(&home);
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    std::env::set_var(
+        "OMNIPROJ_TEST_FAILPOINT",
+        "migration_after_project_audit_commit",
+    );
+    assert!(ensure_home().is_err());
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+    let hook = install_failing_commit_hook(&home);
+    assert!(matches!(ensure_home(), Err(StoreError::AuditCommit(_))));
+    std::fs::write(home.join("SCHEMA_VERSION"), "2 \n").unwrap();
+    std::fs::remove_file(hook).unwrap();
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::AuditConflict { .. }));
+    assert_eq!(
+        std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
+        "2 \n"
+    );
+    assert_eq!(git_output(&home, &["show", ":SCHEMA_VERSION"]), "2\n");
+    assert!(home.join(".migration-v2").exists());
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn round1_projects_written_journal_resumes_when_outputs_are_verifiable() {
+    let _guard = env_guard();
+    let home = unique_home("round1-projects-written");
+    seed_v1_store(&home);
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    std::env::set_var("OMNIPROJ_TEST_FAILPOINT", "migration_after_metadata_write");
+    assert!(ensure_home().is_err());
+    write_round1_migration_journal(&home, "projects_written");
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+
+    ensure_home().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
+        "2\n"
+    );
+    assert!(!home.join(".migration-v2").exists());
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn round1_post_project_and_schema_phases_resume_when_outputs_are_verifiable() {
+    let _guard = env_guard();
+    for (phase, failpoint) in [
+        ("projects_audited", "migration_after_project_audit_commit"),
+        (
+            "schema_stamp_pending",
+            "migration_after_project_audit_commit",
+        ),
+        ("schema_stamped", "migration_after_schema_stamp"),
+    ] {
+        let home = unique_home(&format!("round1-{phase}"));
+        seed_v1_store(&home);
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        std::env::set_var("OMNIPROJ_TEST_FAILPOINT", failpoint);
+        assert!(ensure_home().is_err());
+        write_round1_migration_journal(&home, phase);
+        std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+
+        ensure_home().unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
+            "2\n"
+        );
+        assert!(!home.join(".migration-v2").exists());
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+}
+
+#[test]
+fn round1_ignore_audited_partial_write_resumes_only_deterministic_outputs() {
+    let _guard = env_guard();
+    let home = unique_home("round1-ignore-audited-partial");
+    seed_v1_store(&home);
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    std::env::set_var("OMNIPROJ_TEST_FAILPOINT", "migration_after_metadata_write");
+    assert!(ensure_home().is_err());
+    write_round1_migration_journal(&home, "ignore_audited");
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+
+    ensure_home().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
+        "2\n"
+    );
+    assert!(!home.join(".migration-v2").exists());
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn round1_ignore_audited_rejects_a_valid_human_v2_edit_without_staging_it() {
+    let _guard = env_guard();
+    let home = unique_home("round1-ignore-audited-human-v2");
+    seed_v1_store(&home);
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    std::env::set_var("OMNIPROJ_TEST_FAILPOINT", "migration_after_metadata_write");
+    assert!(ensure_home().is_err());
+    let relative_meta = format!("projects/{PROJECT_ID}/meta.toml");
+    let meta = home.join(&relative_meta);
+    let human = std::fs::read_to_string(&meta).unwrap().replacen(
+        "name = \"Legacy Project\"",
+        "name = \"Human v2 name\"",
+        1,
+    );
+    std::fs::write(&meta, &human).unwrap();
+    write_round1_migration_journal(&home, "ignore_audited");
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::AuditConflict { .. }));
+    assert_eq!(std::fs::read_to_string(&meta).unwrap(), human);
+    assert!(!git_output(&home, &["show", &format!(":{relative_meta}")]).contains("Human v2"));
+    assert_eq!(
+        std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
+        "1\n"
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn migration_rejects_dangling_state_symlink_without_replacing_or_staging_it() {
+    use std::os::unix::fs::symlink;
+
+    let _guard = env_guard();
+    let home = unique_home("dangling-state-symlink");
+    seed_v1_store(&home);
+    let relative = format!("projects/{PROJECT_ID}/notes/project.md");
+    let state = home.join(&relative);
+    symlink("missing-human-target", &state).unwrap();
+    std::env::set_var("OMNIPROJ_HOME", &home);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::AuditConflict { .. }));
+    assert_eq!(
+        std::fs::read_link(&state).unwrap(),
+        PathBuf::from("missing-human-target")
+    );
+    assert_eq!(
+        git_output(&home, &["status", "--short", "--", &relative]),
+        "?? projects/b8a9e19ef3c91245/notes/project.md\n"
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn migration_rejects_same_bytes_metadata_symlink_without_following_it() {
+    use std::os::unix::fs::symlink;
+
+    let _guard = env_guard();
+    let home = unique_home("same-bytes-meta-symlink");
+    seed_v1_store(&home);
+    let relative = format!("projects/{PROJECT_ID}/meta.toml");
+    let meta = home.join(&relative);
+    let external = home.join("Human-meta.toml");
+    let original = std::fs::read(&meta).unwrap();
+    std::fs::write(&external, &original).unwrap();
+    std::fs::remove_file(&meta).unwrap();
+    symlink(&external, &meta).unwrap();
+    std::env::set_var("OMNIPROJ_HOME", &home);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::AuditConflict { .. }));
+    assert_eq!(std::fs::read_link(&meta).unwrap(), external);
+    assert_eq!(std::fs::read(&external).unwrap(), original);
+    assert!(
+        !git_output(&home, &["diff", "--cached", "--name-only", "--", &relative])
+            .contains(&relative)
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn migration_rejects_directory_state_target_without_modifying_or_staging_it() {
+    let _guard = env_guard();
+    let home = unique_home("directory-state-target");
+    seed_v1_store(&home);
+    let relative = format!("projects/{PROJECT_ID}/notes/project.md");
+    let state = home.join(&relative);
+    std::fs::create_dir(&state).unwrap();
+    std::fs::write(state.join("Human.md"), "Human directory contents\n").unwrap();
+    std::env::set_var("OMNIPROJ_HOME", &home);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::AuditConflict { .. }));
+    assert_eq!(
+        std::fs::read_to_string(state.join("Human.md")).unwrap(),
+        "Human directory contents\n"
+    );
+    assert_eq!(
+        git_output(&home, &["diff", "--cached", "--name-only", "--", &relative]),
+        ""
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
