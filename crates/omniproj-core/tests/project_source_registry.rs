@@ -73,6 +73,34 @@ fn install_failing_commit_hook(home: &Path) -> PathBuf {
     hook
 }
 
+fn rewrite_pending_audit_as_round2(home: &Path) {
+    let path = home.join(".git/omniproj-pending-audit.toml");
+    let mut document: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+    for target in document.get_mut("targets").unwrap().as_array_mut().unwrap() {
+        let target = target.as_table_mut().unwrap();
+        let prior = target.remove("prior").unwrap();
+        let prior = prior.as_table().unwrap();
+        match prior.get("kind").and_then(toml::Value::as_str) {
+            Some("missing") => {}
+            Some("regular_file") => {
+                target.insert("prior_sha256".into(), prior.get("sha256").unwrap().clone());
+            }
+            other => panic!("unexpected generated prior identity {other:?}"),
+        }
+        let expected = target.remove("expected").unwrap();
+        let expected = expected.as_table().unwrap();
+        assert_eq!(
+            expected.get("kind").and_then(toml::Value::as_str),
+            Some("regular_file")
+        );
+        target.insert(
+            "expected_sha256".into(),
+            expected.get("sha256").unwrap().clone(),
+        );
+    }
+    std::fs::write(path, toml::to_string(&document).unwrap()).unwrap();
+}
+
 #[test]
 fn v2_registry_envelope_serializes_snake_case_and_exposes_primary_source() {
     let project_id = ProjectId::parse("project-2026").unwrap();
@@ -326,6 +354,53 @@ fn registration_parent_fsync_failure_recognizes_applied_rename_and_audits_withou
         ]
     );
     cleanup(home, [source]);
+}
+
+#[cfg(unix)]
+#[test]
+fn round2_pending_audits_resume_from_prepared_and_applied() {
+    let _guard = env_guard();
+
+    let (prepared_home, prepared_source) = setup("round2-pending-prepared");
+    std::env::set_var(
+        "OMNIPROJ_TEST_FAILPOINT",
+        "registration_directory_rename_failure",
+    );
+    assert!(register_project(RegisterProjectInput {
+        location: &prepared_source,
+        name: "Round-2 prepared",
+        created_at: CREATED_AT,
+    })
+    .is_err());
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+    rewrite_pending_audit_as_round2(&prepared_home);
+
+    ensure_home().unwrap();
+
+    assert!(!prepared_home
+        .join(".git/omniproj-pending-audit.toml")
+        .exists());
+    assert!(list_project_records().unwrap().is_empty());
+    cleanup(prepared_home, [prepared_source]);
+
+    let (applied_home, applied_source) = setup("round2-pending-applied");
+    let hook = install_failing_commit_hook(&applied_home);
+    assert!(register_project(RegisterProjectInput {
+        location: &applied_source,
+        name: "Round-2 applied",
+        created_at: CREATED_AT,
+    })
+    .is_err());
+    std::fs::remove_file(hook).unwrap();
+    rewrite_pending_audit_as_round2(&applied_home);
+
+    ensure_home().unwrap();
+
+    assert!(!applied_home
+        .join(".git/omniproj-pending-audit.toml")
+        .exists());
+    assert_eq!(list_project_records().unwrap().len(), 1);
+    cleanup(applied_home, [applied_source]);
 }
 
 #[cfg(unix)]

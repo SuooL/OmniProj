@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use omniproj_core::{ensure_home, load_project, ProjectId, StoreError};
+use sha2::{Digest, Sha256};
 
 const PROJECT_ID: &str = "b8a9e19ef3c91245";
 const CREATED_AT: &str = "2026-08-10T12:00:00Z";
@@ -12,6 +13,7 @@ const LEGACY_NEXT: &str = "# Next\n\n- [ ] Preserve this Human note.\n";
 const LEGACY_PLAN: &str = "# Plan\n\nA hand-authored plan.\n";
 const LEGACY_BRIEFING: &str = "# Briefing\n\nAgent-authored legacy briefing.\n";
 const SETUP_STATE: &str = "+++\nschema_version = 1\nrevision = 0\nstatus = \"setup\"\nstatus_changed_at = \"2026-08-10T12:00:00Z\"\ncreated_at = \"2026-08-10T12:00:00Z\"\nupdated_at = \"2026-08-10T12:00:00Z\"\nwork_items = []\ncommitment_transitions = []\n+++\n\n# Project notes\n";
+const SCHEMA_V2_SHA256: &str = "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3";
 
 fn unique_home(tag: &str) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -115,6 +117,48 @@ fn write_round1_migration_journal(home: &Path, phase: &str) {
         ),
     )
     .unwrap();
+}
+
+fn rewrite_snapshot_journal_as_round2(path: &Path, targets_key: &str, phase: Option<&str>) {
+    let mut document: toml::Value = std::fs::read_to_string(path).unwrap().parse().unwrap();
+    if let Some(phase) = phase {
+        document
+            .as_table_mut()
+            .unwrap()
+            .insert("phase".into(), toml::Value::String(phase.into()));
+    }
+    for target in document
+        .get_mut(targets_key)
+        .unwrap()
+        .as_array_mut()
+        .unwrap()
+    {
+        let target = target.as_table_mut().unwrap();
+        let prior = target.remove("prior").unwrap();
+        let prior = prior.as_table().unwrap();
+        match prior.get("kind").and_then(toml::Value::as_str) {
+            Some("missing") => {}
+            Some("regular_file") => {
+                target.insert("prior_sha256".into(), prior.get("sha256").unwrap().clone());
+            }
+            other => panic!("unexpected generated prior identity {other:?}"),
+        }
+        let expected = target.remove("expected").unwrap();
+        let expected = expected.as_table().unwrap();
+        assert_eq!(
+            expected.get("kind").and_then(toml::Value::as_str),
+            Some("regular_file")
+        );
+        target.insert(
+            "expected_sha256".into(),
+            expected.get("sha256").unwrap().clone(),
+        );
+    }
+    std::fs::write(path, toml::to_string(&document).unwrap()).unwrap();
+}
+
+fn sha256(contents: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(contents))
 }
 
 #[cfg(unix)]
@@ -283,6 +327,237 @@ fn schema_stamp_write_before_phase_advance_is_recoverable() {
     ensure_home().unwrap();
     assert!(!home.join(".migration-v2").exists());
     assert_eq!(git_names(&home, "HEAD"), vec!["SCHEMA_VERSION"]);
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn round2_snapshot_migration_journals_resume_from_every_write_phase() {
+    let _guard = env_guard();
+    for phase in ["ignore_write_prepared", "ignore_written"] {
+        let home = unique_home(&format!("round2-{phase}"));
+        seed_v1_store(&home);
+        let hook = install_failing_commit_hook(&home);
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        assert!(matches!(ensure_home(), Err(StoreError::AuditCommit(_))));
+        std::fs::remove_file(hook).unwrap();
+        rewrite_snapshot_journal_as_round2(
+            &home.join(".migration-v2"),
+            "audit_targets",
+            Some(phase),
+        );
+
+        ensure_home().unwrap();
+
+        assert_eq!(std::fs::read(home.join("SCHEMA_VERSION")).unwrap(), b"2\n");
+        assert!(!home.join(".migration-v2").exists());
+        assert_eq!(git_output(&home, &["diff", "--cached", "--name-only"]), "");
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    for phase in ["projects_write_prepared", "projects_written"] {
+        let home = unique_home(&format!("round2-{phase}"));
+        seed_v1_store(&home);
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        std::env::set_var("OMNIPROJ_TEST_FAILPOINT", "migration_after_metadata_write");
+        assert!(ensure_home().is_err());
+        std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+        rewrite_snapshot_journal_as_round2(
+            &home.join(".migration-v2"),
+            "audit_targets",
+            Some(phase),
+        );
+
+        ensure_home().unwrap();
+
+        assert_eq!(std::fs::read(home.join("SCHEMA_VERSION")).unwrap(), b"2\n");
+        assert!(!home.join(".migration-v2").exists());
+        assert_eq!(git_output(&home, &["diff", "--cached", "--name-only"]), "");
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn round2_snapshot_compatibility_does_not_treat_a_symlink_as_a_regular_prior() {
+    use std::os::unix::fs::symlink;
+
+    let _guard = env_guard();
+    let home = unique_home("round2-symlink-prior");
+    seed_v1_store(&home);
+    let gitignore = home.join(".gitignore");
+    let external = home.join("Human-ignore");
+    let prior = std::fs::read(&gitignore).unwrap();
+    let mut expected = String::from_utf8(prior.clone()).unwrap();
+    expected.push_str("/.migration-v2\n");
+    std::fs::write(&external, &prior).unwrap();
+    std::fs::remove_file(&gitignore).unwrap();
+    symlink(&external, &gitignore).unwrap();
+    let journal = format!(
+        "target_schema_version = 2\nphase = \"ignore_write_prepared\"\nproject_ids = [{PROJECT_ID:?}]\ncreated_state_ids = [{PROJECT_ID:?}]\npending_ignore_contents = {expected:?}\n\n[[audit_targets]]\nrelative_path = \".gitignore\"\nprior_sha256 = {:?}\nexpected_sha256 = {:?}\n",
+        sha256(&prior),
+        sha256(expected.as_bytes())
+    );
+    std::fs::write(home.join(".migration-v2"), &journal).unwrap();
+    std::env::set_var("OMNIPROJ_HOME", &home);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::AuditConflict { .. }));
+    assert_eq!(std::fs::read_link(&gitignore).unwrap(), external);
+    assert_eq!(std::fs::read(&external).unwrap(), prior);
+    assert_eq!(
+        std::fs::read_to_string(home.join(".migration-v2")).unwrap(),
+        journal
+    );
+    assert_eq!(
+        git_output(
+            &home,
+            &["diff", "--cached", "--name-only", "--", ".gitignore"]
+        ),
+        ""
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn malformed_and_ambiguous_round2_snapshot_journals_are_not_staged_or_rewritten() {
+    let _guard = env_guard();
+    for target in [
+        "relative_path = \".gitignore\"\nexpected_sha256 = \"not-a-hash\"\n".to_owned(),
+        format!(
+            "relative_path = \".gitignore\"\nexpected_sha256 = {SCHEMA_V2_SHA256:?}\n\n[audit_targets.prior]\nkind = \"missing\"\n"
+        ),
+    ] {
+        let home = unique_home("malformed-round2-snapshot");
+        seed_v1_store(&home);
+        let journal = format!(
+            "target_schema_version = 2\nphase = \"ignore_write_prepared\"\nproject_ids = [{PROJECT_ID:?}]\ncreated_state_ids = [{PROJECT_ID:?}]\npending_ignore_contents = \"expected\\n\"\n\n[[audit_targets]]\n{target}"
+        );
+        std::fs::write(home.join(".migration-v2"), &journal).unwrap();
+        let before = std::fs::read(home.join(".gitignore")).unwrap();
+        std::env::set_var("OMNIPROJ_HOME", &home);
+
+        let error = ensure_home().unwrap_err();
+
+        assert!(matches!(error, StoreError::InvalidData(_)));
+        assert_eq!(std::fs::read(home.join(".gitignore")).unwrap(), before);
+        assert_eq!(std::fs::read_to_string(home.join(".migration-v2")).unwrap(), journal);
+        assert_eq!(
+            git_output(&home, &["diff", "--cached", "--name-only", "--", ".gitignore"]),
+            ""
+        );
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn schema_write_prepared_rejects_a_persisted_symlink_prior_without_replacing_it() {
+    use std::os::unix::fs::symlink;
+
+    let _guard = env_guard();
+    let home = unique_home("persisted-schema-symlink-prior");
+    seed_v1_store(&home);
+    let schema = home.join("SCHEMA_VERSION");
+    let external = home.join("Human-schema");
+    std::fs::write(&external, b"1\n").unwrap();
+    std::fs::remove_file(&schema).unwrap();
+    symlink(&external, &schema).unwrap();
+    let journal = format!(
+        "target_schema_version = 2\nphase = \"schema_write_prepared\"\nproject_ids = [{PROJECT_ID:?}]\ncreated_state_ids = []\n\n[[audit_targets]]\nrelative_path = \"SCHEMA_VERSION\"\n\n[audit_targets.prior]\nkind = \"symlink\"\ntarget = {external:?}\n\n[audit_targets.expected]\nkind = \"regular_file\"\nsha256 = {SCHEMA_V2_SHA256:?}\n"
+    );
+    std::fs::write(home.join(".migration-v2"), &journal).unwrap();
+    std::env::set_var("OMNIPROJ_HOME", &home);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::InvalidData(_)));
+    assert_eq!(std::fs::read_link(&schema).unwrap(), external);
+    assert_eq!(std::fs::read(&external).unwrap(), b"1\n");
+    assert_eq!(
+        std::fs::read_to_string(home.join(".migration-v2")).unwrap(),
+        journal
+    );
+    assert_eq!(
+        git_output(
+            &home,
+            &["diff", "--cached", "--name-only", "--", "SCHEMA_VERSION"]
+        ),
+        ""
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn project_write_prepared_rejects_a_persisted_directory_prior_during_decode() {
+    let _guard = env_guard();
+    let home = unique_home("persisted-project-directory-prior");
+    seed_v1_store(&home);
+    let relative = format!("projects/{PROJECT_ID}/meta.toml");
+    let meta = home.join(&relative);
+    std::fs::remove_file(&meta).unwrap();
+    std::fs::create_dir(&meta).unwrap();
+    std::fs::write(meta.join("Human.md"), b"Human directory bytes\n").unwrap();
+    let journal = format!(
+        "target_schema_version = 2\nphase = \"projects_write_prepared\"\nproject_ids = [{PROJECT_ID:?}]\ncreated_state_ids = []\n\n[[audit_targets]]\nrelative_path = {relative:?}\n\n[audit_targets.prior]\nkind = \"directory\"\n\n[audit_targets.expected]\nkind = \"regular_file\"\nsha256 = {SCHEMA_V2_SHA256:?}\n"
+    );
+    std::fs::write(home.join(".migration-v2"), &journal).unwrap();
+    std::env::set_var("OMNIPROJ_HOME", &home);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::InvalidData(_)));
+    assert_eq!(
+        std::fs::read(meta.join("Human.md")).unwrap(),
+        b"Human directory bytes\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.join(".migration-v2")).unwrap(),
+        journal
+    );
+    assert_eq!(
+        git_output(&home, &["diff", "--cached", "--name-only", "--", &relative]),
+        ""
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn pending_audit_rejects_a_persisted_directory_prior_without_clearing_or_staging() {
+    let _guard = env_guard();
+    let home = unique_home("persisted-pending-directory-prior");
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    ensure_home().unwrap();
+    let relative = "tool-target";
+    let target = home.join(relative);
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(target.join("Human.md"), b"Human directory bytes\n").unwrap();
+    let journal = format!(
+        "message = \"tampered mutation\"\nphase = \"prepared\"\n\n[[targets]]\nrelative_path = {relative:?}\n\n[targets.prior]\nkind = \"directory\"\n\n[targets.expected]\nkind = \"regular_file\"\nsha256 = {SCHEMA_V2_SHA256:?}\n"
+    );
+    let journal_path = home.join(".git/omniproj-pending-audit.toml");
+    std::fs::write(&journal_path, &journal).unwrap();
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::InvalidData(_)));
+    assert_eq!(
+        std::fs::read(target.join("Human.md")).unwrap(),
+        b"Human directory bytes\n"
+    );
+    assert_eq!(std::fs::read_to_string(&journal_path).unwrap(), journal);
+    assert_eq!(
+        git_output(&home, &["diff", "--cached", "--name-only", "--", relative]),
+        ""
+    );
     std::env::remove_var("OMNIPROJ_HOME");
     std::fs::remove_dir_all(home).unwrap();
 }

@@ -146,6 +146,7 @@ pub fn ensure_home() -> Result<PathBuf, StoreError> {
 fn ensure_home_locked(home: &Path) -> Result<(), StoreError> {
     let fresh = !home.join(".git").exists();
     if fresh {
+        let create_gitignore = validate_fresh_init_inputs(home)?;
         if !git(home, &["init", "-q"]) {
             return Err(StoreError::AuditCommit(format!(
                 "could not initialize store Git repository at {}",
@@ -155,21 +156,30 @@ fn ensure_home_locked(home: &Path) -> Result<(), StoreError> {
         fresh_init_test_pause_after_git_init();
         let gitignore = home.join(".gitignore");
         let mut initial_audit_targets = Vec::new();
-        if !gitignore.exists() {
-            initial_audit_targets.push(audit_target_snapshot(
+        if create_gitignore {
+            let target = audit_target_snapshot(
                 home,
                 PathBuf::from(".gitignore"),
                 INITIAL_GITIGNORE.as_bytes(),
-            )?);
+            )?;
+            if target.prior != AuditPathIdentity::Missing {
+                return Err(StoreError::AuditConflict { path: gitignore });
+            }
+            initial_audit_targets.push(target);
         }
         let schema_contents = format!("{CURRENT_SCHEMA_VERSION}\n");
-        initial_audit_targets.push(audit_target_snapshot(
+        let schema_path = home.join(SCHEMA_VERSION_FILE);
+        let schema_target = audit_target_snapshot(
             home,
             PathBuf::from(SCHEMA_VERSION_FILE),
             schema_contents.as_bytes(),
-        )?);
+        )?;
+        if schema_target.prior != AuditPathIdentity::Missing {
+            return Err(StoreError::MigrationConflict { path: schema_path });
+        }
+        initial_audit_targets.push(schema_target);
         begin_pending_audit(home, "init omniproj store", &initial_audit_targets)?;
-        if !gitignore.exists() {
+        if create_gitignore {
             atomic_write(&gitignore, INITIAL_GITIGNORE.as_bytes())?;
             failpoint("fresh_init_after_gitignore_write")?;
         }
@@ -184,6 +194,25 @@ fn ensure_home_locked(home: &Path) -> Result<(), StoreError> {
         recover_pending_audit(home)?;
     }
     cleanup_empty_staging_dirs(home)
+}
+
+fn validate_fresh_init_inputs(home: &Path) -> Result<bool, StoreError> {
+    let schema_path = home.join(SCHEMA_VERSION_FILE);
+    match std::fs::symlink_metadata(&schema_path) {
+        Ok(_) => return Err(StoreError::MigrationConflict { path: schema_path }),
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(StoreError::Io(error)),
+    }
+
+    let gitignore_path = home.join(".gitignore");
+    match std::fs::symlink_metadata(&gitignore_path) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(false),
+        Ok(_) => Err(StoreError::AuditConflict {
+            path: gitignore_path,
+        }),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(StoreError::Io(error)),
+    }
 }
 
 #[cfg(test)]
@@ -355,6 +384,17 @@ struct MigrationV2Journal {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Round2MigrationV2Journal {
+    target_schema_version: u32,
+    phase: MigrationV2Phase,
+    project_ids: Vec<ProjectId>,
+    created_state_ids: Vec<ProjectId>,
+    audit_targets: Vec<Round2AuditTargetSnapshot>,
+    pending_ignore_contents: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Round1MigrationV2Journal {
     target_schema_version: u32,
     phase: MigrationV2Phase,
@@ -390,6 +430,26 @@ fn decode_migration_journal(
     text: &str,
 ) -> Result<MigrationV2Journal, StoreError> {
     if let Ok(mut journal) = toml::from_str::<MigrationV2Journal>(text) {
+        validate_migration_journal(path, &journal)?;
+        normalize_legacy_schema_phase(home, &mut journal)?;
+        validate_migration_journal(path, &journal)?;
+        return Ok(journal);
+    }
+    if let Ok(round2) = toml::from_str::<Round2MigrationV2Journal>(text) {
+        let mut journal = MigrationV2Journal {
+            target_schema_version: round2.target_schema_version,
+            phase: round2.phase,
+            project_ids: round2.project_ids,
+            created_state_ids: round2.created_state_ids,
+            audit_targets: round2
+                .audit_targets
+                .into_iter()
+                .map(|target| upgrade_round2_audit_target(path, target))
+                .collect::<Result<_, _>>()?,
+            pending_ignore_contents: round2.pending_ignore_contents,
+        };
+        validate_migration_journal(path, &journal)?;
+        validate_snapshot_phase_state(home, &journal)?;
         normalize_legacy_schema_phase(home, &mut journal)?;
         validate_migration_journal(path, &journal)?;
         return Ok(journal);
@@ -417,6 +477,21 @@ fn decode_migration_journal(
         "{} is malformed or does not match a supported migration journal format",
         path.display()
     )))
+}
+
+fn validate_snapshot_phase_state(
+    home: &Path,
+    journal: &MigrationV2Journal,
+) -> Result<(), StoreError> {
+    match journal.phase {
+        MigrationV2Phase::IgnoreWritePrepared | MigrationV2Phase::ProjectsWritePrepared => {
+            validate_targets_are_prior_or_expected(home, &journal.audit_targets)
+        }
+        MigrationV2Phase::IgnoreWritten | MigrationV2Phase::ProjectsWritten => {
+            validate_audit_targets(home, &journal.audit_targets, SnapshotSide::Expected)
+        }
+        _ => Ok(()),
+    }
 }
 
 fn normalize_legacy_schema_phase(
@@ -540,9 +615,7 @@ fn validate_migration_journal(path: &Path, journal: &MigrationV2Journal) -> Resu
     for target in &journal.audit_targets {
         validate_relative_audit_path(&target.relative_path)?;
         if !target_paths.insert(target.relative_path.clone())
-            || !valid_audit_identity(&target.prior)
-            || !valid_audit_identity(&target.expected)
-            || !matches!(target.expected, AuditPathIdentity::RegularFile { .. })
+            || !valid_mutation_audit_target(target)
         {
             return Err(StoreError::InvalidData(format!(
                 "{} has invalid audit target snapshots",
@@ -613,6 +686,16 @@ fn valid_audit_identity(identity: &AuditPathIdentity) -> bool {
         | AuditPathIdentity::Directory
         | AuditPathIdentity::Symlink { .. } => true,
     }
+}
+
+fn valid_mutation_audit_target(target: &AuditTargetSnapshot) -> bool {
+    valid_audit_identity(&target.prior)
+        && valid_audit_identity(&target.expected)
+        && matches!(
+            target.prior,
+            AuditPathIdentity::Missing | AuditPathIdentity::RegularFile { .. }
+        )
+        && matches!(target.expected, AuditPathIdentity::RegularFile { .. })
 }
 
 fn upgrade_legacy_migration_journal(
@@ -1454,6 +1537,14 @@ pub(crate) struct AuditTargetSnapshot {
     expected: AuditPathIdentity,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Round2AuditTargetSnapshot {
+    relative_path: PathBuf,
+    prior_sha256: Option<String>,
+    expected_sha256: String,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum AuditPathIdentity {
@@ -1469,6 +1560,43 @@ struct PendingAudit {
     message: String,
     phase: PendingAuditPhase,
     targets: Vec<AuditTargetSnapshot>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Round2PendingAudit {
+    message: String,
+    phase: PendingAuditPhase,
+    targets: Vec<Round2AuditTargetSnapshot>,
+}
+
+fn upgrade_round2_audit_target(
+    journal_path: &Path,
+    target: Round2AuditTargetSnapshot,
+) -> Result<AuditTargetSnapshot, StoreError> {
+    let valid_hash =
+        |hash: &str| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if !valid_hash(&target.expected_sha256)
+        || target
+            .prior_sha256
+            .as_deref()
+            .is_some_and(|hash| !valid_hash(hash))
+    {
+        return Err(StoreError::InvalidData(format!(
+            "{} has invalid Round-2 audit target snapshots",
+            journal_path.display()
+        )));
+    }
+    Ok(AuditTargetSnapshot {
+        relative_path: target.relative_path,
+        prior: target
+            .prior_sha256
+            .map(|sha256| AuditPathIdentity::RegularFile { sha256 })
+            .unwrap_or(AuditPathIdentity::Missing),
+        expected: AuditPathIdentity::RegularFile {
+            sha256: target.expected_sha256,
+        },
+    })
 }
 
 pub(crate) fn audit_target_snapshot(
@@ -1504,6 +1632,11 @@ pub(crate) fn begin_pending_audit(
 ) -> Result<(), StoreError> {
     for target in targets {
         validate_relative_audit_path(&target.relative_path)?;
+        if !valid_mutation_audit_target(target) {
+            return Err(StoreError::InvalidData(
+                "pending audit contains an invalid mutation snapshot".into(),
+            ));
+        }
     }
     let journal_path = home.join(PENDING_AUDIT_JOURNAL);
     if journal_path.exists() {
@@ -1625,9 +1758,24 @@ fn recover_interrupted_fresh_init(home: &Path) -> Result<(), StoreError> {
 
 fn read_pending_audit(path: &Path) -> Result<PendingAudit, StoreError> {
     let text = std::fs::read_to_string(path)?;
-    let journal: PendingAudit = toml::from_str(&text).map_err(|error| {
-        StoreError::InvalidData(format!("{} is malformed: {error}", path.display()))
-    })?;
+    let journal: PendingAudit = if let Ok(journal) = toml::from_str(&text) {
+        journal
+    } else if let Ok(round2) = toml::from_str::<Round2PendingAudit>(&text) {
+        PendingAudit {
+            message: round2.message,
+            phase: round2.phase,
+            targets: round2
+                .targets
+                .into_iter()
+                .map(|target| upgrade_round2_audit_target(path, target))
+                .collect::<Result<_, _>>()?,
+        }
+    } else {
+        return Err(StoreError::InvalidData(format!(
+            "{} is malformed or does not match a supported pending-audit format",
+            path.display()
+        )));
+    };
     if journal.targets.is_empty() {
         return Err(StoreError::InvalidData(format!(
             "{} contains no audit targets",
@@ -1637,11 +1785,7 @@ fn read_pending_audit(path: &Path) -> Result<PendingAudit, StoreError> {
     let mut paths = std::collections::HashSet::new();
     for target in &journal.targets {
         validate_relative_audit_path(&target.relative_path)?;
-        if !paths.insert(&target.relative_path)
-            || !valid_audit_identity(&target.prior)
-            || !valid_audit_identity(&target.expected)
-            || !matches!(target.expected, AuditPathIdentity::RegularFile { .. })
-        {
+        if !paths.insert(&target.relative_path) || !valid_mutation_audit_target(target) {
             return Err(StoreError::InvalidData(format!(
                 "{} has invalid audit target snapshots",
                 path.display()
@@ -2043,6 +2187,133 @@ mod tests {
         assert_eq!(
             git_output(&home, &["status", "--short", "--", "Human.md"]),
             "?? Human.md\n"
+        );
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn fresh_initialization_rejects_a_preexisting_schema_before_git_init() {
+        let _g = crate::env_guard();
+        for kind in ["regular", "directory"] {
+            let home = unique_home(&format!("fresh-preexisting-schema-{kind}"));
+            std::fs::create_dir_all(&home).unwrap();
+            let schema = home.join(SCHEMA_VERSION_FILE);
+            if kind == "regular" {
+                std::fs::write(&schema, b"9\n").unwrap();
+            } else {
+                std::fs::create_dir(&schema).unwrap();
+                std::fs::write(schema.join("Human.md"), b"Human directory bytes\n").unwrap();
+            }
+            std::env::set_var("OMNIPROJ_HOME", &home);
+
+            let error = ensure_home().unwrap_err();
+
+            assert!(matches!(error, StoreError::MigrationConflict { .. }));
+            assert!(!home.join(".git").exists());
+            if kind == "regular" {
+                assert_eq!(std::fs::read(&schema).unwrap(), b"9\n");
+            } else {
+                assert_eq!(
+                    std::fs::read(schema.join("Human.md")).unwrap(),
+                    b"Human directory bytes\n"
+                );
+            }
+            std::env::remove_var("OMNIPROJ_HOME");
+            std::fs::remove_dir_all(home).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fresh_initialization_rejects_schema_and_gitignore_symlinks_before_git_init() {
+        use std::os::unix::fs::symlink;
+
+        let _g = crate::env_guard();
+        for relative in [SCHEMA_VERSION_FILE, ".gitignore"] {
+            let home = unique_home(&format!("fresh-{relative}-symlink"));
+            std::fs::create_dir_all(&home).unwrap();
+            let external = home.join("Human-target");
+            std::fs::write(&external, b"Human target bytes\n").unwrap();
+            symlink(&external, home.join(relative)).unwrap();
+            std::env::set_var("OMNIPROJ_HOME", &home);
+
+            let error = ensure_home().unwrap_err();
+
+            assert!(matches!(
+                error,
+                StoreError::MigrationConflict { .. } | StoreError::AuditConflict { .. }
+            ));
+            assert!(!home.join(".git").exists());
+            assert_eq!(std::fs::read_link(home.join(relative)).unwrap(), external);
+            assert_eq!(std::fs::read(&external).unwrap(), b"Human target bytes\n");
+            std::env::remove_var("OMNIPROJ_HOME");
+            std::fs::remove_dir_all(home).unwrap();
+        }
+    }
+
+    #[test]
+    fn fresh_initialization_rejects_a_gitignore_directory_before_git_init() {
+        let _g = crate::env_guard();
+        let home = unique_home("fresh-gitignore-directory");
+        std::fs::create_dir_all(home.join(".gitignore")).unwrap();
+        std::fs::write(home.join(".gitignore/Human.md"), b"Human directory bytes\n").unwrap();
+        std::env::set_var("OMNIPROJ_HOME", &home);
+
+        let error = ensure_home().unwrap_err();
+
+        assert!(matches!(error, StoreError::AuditConflict { .. }));
+        assert!(!home.join(".git").exists());
+        assert_eq!(
+            std::fs::read(home.join(".gitignore/Human.md")).unwrap(),
+            b"Human directory bytes\n"
+        );
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fresh_initialization_preserves_a_regular_gitignore_across_audit_retry() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _g = crate::env_guard();
+        let home = unique_home("fresh-human-gitignore-retry");
+        std::fs::create_dir_all(&home).unwrap();
+        let human_ignore = b"# Human ignore bytes\nprivate/\n";
+        std::fs::write(home.join(".gitignore"), human_ignore).unwrap();
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        let reached = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let release = std::sync::Arc::new(std::sync::Barrier::new(2));
+        install_fresh_init_test_pause(reached.clone(), release.clone());
+
+        let first = std::thread::spawn(ensure_home);
+        reached.wait();
+        let hook = home.join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        let mut permissions = std::fs::metadata(&hook).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&hook, permissions).unwrap();
+        release.wait();
+        assert!(matches!(
+            first.join().unwrap(),
+            Err(StoreError::AuditCommit(_))
+        ));
+        std::fs::remove_file(hook).unwrap();
+
+        ensure_home().unwrap();
+
+        assert_eq!(
+            std::fs::read(home.join(".gitignore")).unwrap(),
+            human_ignore
+        );
+        assert_eq!(
+            git_output(&home, &["show", "--format=", "--name-only", "HEAD"]),
+            format!("{SCHEMA_VERSION_FILE}\n")
+        );
+        assert_eq!(
+            git_output(&home, &["status", "--short", "--", ".gitignore"]),
+            "?? .gitignore\n"
         );
         std::env::remove_var("OMNIPROJ_HOME");
         std::fs::remove_dir_all(home).unwrap();
