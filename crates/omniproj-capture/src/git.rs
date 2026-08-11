@@ -327,7 +327,7 @@ fn validate_status_pair(index: u8, worktree: u8) -> Result<bool, RepositoryReadE
     let ordinary = match index {
         b' ' => matches!(worktree, b'M' | b'T' | b'A' | b'D' | b'R' | b'C'),
         b'M' | b'T' | b'A' => matches!(worktree, b' ' | b'M' | b'T' | b'D'),
-        b'D' => matches!(worktree, b' ' | b'M' | b'T' | b'R' | b'C'),
+        b'D' => worktree == b' ',
         b'R' | b'C' => matches!(worktree, b' ' | b'M' | b'T' | b'D'),
         _ => false,
     };

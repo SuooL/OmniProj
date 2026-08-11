@@ -497,6 +497,10 @@ case " $* " in
       single_bang) printf ' ! path\000' ;;
       illegal_combination) printf 'AC new\000old\000' ;;
       unknown_code) printf 'Z  path\000' ;;
+      deleted_modified) printf 'DM path\000' ;;
+      deleted_typechanged) printf 'DT path\000' ;;
+      deleted_renamed) printf 'DR new\000old\000' ;;
+      deleted_copied) printf 'DC new\000old\000' ;;
       truncated_normal) printf 'M  path' ;;
       rename_missing_second_nul) printf 'R  new\000old' ;;
       copy_empty_second_path) printf 'C  new\000\000' ;;
@@ -535,6 +539,10 @@ fn malformed_porcelain_statuses_are_typed_errors_without_panics() {
         "single_bang",
         "illegal_combination",
         "unknown_code",
+        "deleted_modified",
+        "deleted_typechanged",
+        "deleted_renamed",
+        "deleted_copied",
         "truncated_normal",
         "rename_missing_second_nul",
         "copy_empty_second_path",
