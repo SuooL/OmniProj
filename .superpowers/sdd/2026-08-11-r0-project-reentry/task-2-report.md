@@ -317,3 +317,33 @@ Code commit: `aa653fa8bbafe8f659813c4d3ceb68ede993bbcd` (`fix(core): prove migra
 - `journal_created` requires Git-backed project priors and the prior schema; `ignore_audited` additionally requires the marker-bearing `.gitignore` to match `HEAD` while allowing each project target to be either prior or expected for partial-loop recovery.
 - `projects_audited` requires the exact project set plus every deterministic migrated metadata/migration-created state output in both worktree and `HEAD`; `schema_audited` additionally requires literal `2\n` in both worktree and `HEAD`. Schema prepared/written phases retain their prior-or-expected/expected crash windows.
 - Non-created Human project-state files remain outside the migration audit target set and are never staged or rewritten; they must still parse as the canonical pre-existing setup state. Compatibility normalization conflicts on mixed or otherwise unprovable states rather than guessing.
+
+## Fresh Correction Round 8
+
+Code commit: `61ccdeda77394631ebb22eac2c9df1970b8eb3f5` (`fix(core): preserve legacy canonical human state`).
+
+### Changed files
+
+- `crates/omniproj-core/src/store.rs`: classifies an existing project state under an exact two-field/no-phase journal and schema 1 as non-created only when it strictly parses to the deterministic setup document and is byte-identical to its canonical rendering; journal-created recovery no longer requires that Human state to match `HEAD`, while schema 2 and inferred `projects_audited` recovery retain explicit `HEAD` proof.
+- `crates/omniproj-core/tests/schema_v2_migration.rs`: covers the real Git schema-1 store with an exact old journal, pre-existing untracked canonical state, and unrelated Human bytes; also tightens the former ambiguous fixture into a parse-equivalent but noncanonical-byte near miss.
+
+### RED evidence
+
+- `cargo test -p omniproj-core --test schema_v2_migration legacy_journal_preserves_preexisting_untracked_canonical_project_state -- --exact --nocapture` failed 0/1 because `ensure_home()` returned `MigrationConflict` for the untracked canonical `notes/project.md`.
+
+### GREEN evidence and final verification
+
+- The focused canonical-state and noncanonical near-miss tests both passed; the full migration suite passed 40/40.
+- The canonical state and unrelated Human file remain byte-identical and untracked, and the project audit commit contains only migrated `meta.toml`.
+- `cargo test -p omniproj-core --test schema_v2_migration --test project_source_registry`: 56 passed, 0 failed.
+- `cargo test -p omniproj-core --lib project_state -- --nocapture`: 9 passed, 0 failed.
+- `cargo test -p omniproj-core --lib`: 89 passed, 0 failed.
+- `cargo test -p omniproj-core --tests`: 145 passed, 0 failed across unit and integration suites.
+- `cargo check --workspace`: exit 0; only the existing staged-migration deprecation warnings remain.
+- `cargo fmt --all --check` and `git diff --check`: exit 0.
+
+### Design decisions and concerns
+
+- Exact canonical bytes are the classification boundary: semantic parse equality alone is insufficient, so alternate whitespace or any other byte difference remains a typed `MigrationConflict` and is not rewritten.
+- The relaxation applies only while upgrading the no-phase compatibility journal against schema 1 with project metadata still at its prior identity. If metadata proves the project audit already occurred, every project state must still match `HEAD`; schema-2 compatibility recovery is unchanged.
+- Non-created canonical state is excluded from `created_state_ids` and all migration audit targets, preserving its original tracking semantics.
