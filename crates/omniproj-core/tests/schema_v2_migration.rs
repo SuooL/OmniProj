@@ -121,6 +121,10 @@ fn write_round1_migration_journal(home: &Path, phase: &str) {
 
 fn rewrite_snapshot_journal_as_round2(path: &Path, targets_key: &str, phase: Option<&str>) {
     let mut document: toml::Value = std::fs::read_to_string(path).unwrap().parse().unwrap();
+    document
+        .as_table_mut()
+        .unwrap()
+        .remove("preserved_state_proofs");
     if let Some(phase) = phase {
         document
             .as_table_mut()
@@ -192,6 +196,16 @@ fn rewrite_tagged_journal_phase_without_targets(path: &Path, phase: &str) {
     table.insert("phase".into(), toml::Value::String(phase.into()));
     table.insert("audit_targets".into(), toml::Value::Array(Vec::new()));
     table.remove("pending_ignore_contents");
+    std::fs::write(path, toml::to_string(&document).unwrap()).unwrap();
+}
+
+fn remove_preserved_state_proofs(path: &Path) {
+    let mut document: toml::Value = std::fs::read_to_string(path).unwrap().parse().unwrap();
+    assert!(document
+        .as_table_mut()
+        .unwrap()
+        .remove("preserved_state_proofs")
+        .is_some());
     std::fs::write(path, toml::to_string(&document).unwrap()).unwrap();
 }
 
@@ -1425,6 +1439,293 @@ fn legacy_journal_preserves_preexisting_untracked_canonical_project_state() {
     );
     std::env::remove_var("OMNIPROJ_HOME");
     std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn normalized_legacy_journal_retains_exact_untracked_state_proof_across_retries() {
+    let _guard = env_guard();
+    let home = unique_home("normalized-legacy-untracked-state-proof");
+    seed_v1_store(&home);
+    let state = home
+        .join("projects")
+        .join(PROJECT_ID)
+        .join("notes/project.md");
+    let meta = home.join("projects").join(PROJECT_ID).join("meta.toml");
+    std::fs::write(&state, SETUP_STATE).unwrap();
+    write_legacy_migration_journal(&home, &[PROJECT_ID]);
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    std::env::set_var(
+        "OMNIPROJ_TEST_FAILPOINT",
+        "migration_after_project_state_write",
+    );
+    assert!(ensure_home().is_err());
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+
+    let noncanonical = SETUP_STATE.replacen("revision = 0", "revision=0", 1);
+    assert_eq!(
+        omniproj_core::ProjectStateDoc::parse(&noncanonical).unwrap(),
+        omniproj_core::ProjectStateDoc::parse(SETUP_STATE).unwrap()
+    );
+    std::fs::write(&state, &noncanonical).unwrap();
+    let journal = home.join(".migration-v2");
+    let journal_before = std::fs::read(&journal).unwrap();
+    let state_before = std::fs::read(&state).unwrap();
+    let meta_before = std::fs::read(&meta).unwrap();
+    let schema_before = std::fs::read(home.join("SCHEMA_VERSION")).unwrap();
+    let index_before = git_output(&home, &["diff", "--cached", "--name-only"]);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::MigrationConflict { .. }));
+    assert_eq!(std::fs::read(&journal).unwrap(), journal_before);
+    assert_eq!(std::fs::read(&state).unwrap(), state_before);
+    assert_eq!(std::fs::read(&meta).unwrap(), meta_before);
+    assert_eq!(
+        std::fs::read(home.join("SCHEMA_VERSION")).unwrap(),
+        schema_before
+    );
+    assert_eq!(
+        git_output(&home, &["diff", "--cached", "--name-only"]),
+        index_before
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn normalized_audited_legacy_journal_retains_state_head_proof_across_retries() {
+    let _guard = env_guard();
+    let home = unique_home("normalized-legacy-audited-state-proof");
+    seed_v1_store(&home);
+    let relative_state = format!("projects/{PROJECT_ID}/notes/project.md");
+    let state = home.join(&relative_state);
+    let meta = home.join("projects").join(PROJECT_ID).join("meta.toml");
+    std::fs::write(&state, SETUP_STATE).unwrap();
+    run_git(&home, &["add", "--", &relative_state]);
+    run_git(
+        &home,
+        &[
+            "-c",
+            "user.name=omniproj-test",
+            "-c",
+            "user.email=omniproj-test@local",
+            "commit",
+            "-q",
+            "-m",
+            "seed canonical project state",
+            "--",
+            &relative_state,
+        ],
+    );
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    std::env::set_var(
+        "OMNIPROJ_TEST_FAILPOINT",
+        "migration_after_project_audit_commit",
+    );
+    assert!(ensure_home().is_err());
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+    write_legacy_migration_journal(&home, &[PROJECT_ID]);
+    std::env::set_var("OMNIPROJ_TEST_FAILPOINT", "migration_after_schema_stamp");
+    assert!(ensure_home().is_err());
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+
+    run_git(&home, &["rm", "-q", "--cached", "--", &relative_state]);
+    run_git(
+        &home,
+        &[
+            "-c",
+            "user.name=omniproj-test",
+            "-c",
+            "user.email=omniproj-test@local",
+            "commit",
+            "-q",
+            "-m",
+            "stop tracking canonical project state",
+        ],
+    );
+    let journal = home.join(".migration-v2");
+    let journal_before = std::fs::read(&journal).unwrap();
+    let state_before = std::fs::read(&state).unwrap();
+    let meta_before = std::fs::read(&meta).unwrap();
+    let schema_before = std::fs::read(home.join("SCHEMA_VERSION")).unwrap();
+    let index_before = git_output(&home, &["diff", "--cached", "--name-only"]);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::MigrationConflict { .. }));
+    assert_eq!(std::fs::read(&journal).unwrap(), journal_before);
+    assert_eq!(std::fs::read(&state).unwrap(), state_before);
+    assert_eq!(std::fs::read(&meta).unwrap(), meta_before);
+    assert_eq!(
+        std::fs::read(home.join("SCHEMA_VERSION")).unwrap(),
+        schema_before
+    );
+    assert_eq!(
+        git_output(&home, &["diff", "--cached", "--name-only"]),
+        index_before
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn prior_current_journal_without_proofs_upgrades_from_verifiable_state() {
+    let _guard = env_guard();
+
+    let recoverable = unique_home("prior-current-recoverable-state-proof");
+    seed_v1_store(&recoverable);
+    let recoverable_state = recoverable
+        .join("projects")
+        .join(PROJECT_ID)
+        .join("notes/project.md");
+    std::fs::write(&recoverable_state, SETUP_STATE).unwrap();
+    std::env::set_var("OMNIPROJ_HOME", &recoverable);
+    std::env::set_var(
+        "OMNIPROJ_TEST_FAILPOINT",
+        "migration_after_journal_creation",
+    );
+    assert!(ensure_home().is_err());
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+    remove_preserved_state_proofs(&recoverable.join(".migration-v2"));
+
+    ensure_home().unwrap();
+
+    assert_eq!(
+        std::fs::read(recoverable.join("SCHEMA_VERSION")).unwrap(),
+        b"2\n"
+    );
+    assert_eq!(
+        std::fs::read(&recoverable_state).unwrap(),
+        SETUP_STATE.as_bytes()
+    );
+    assert_eq!(
+        git_output(
+            &recoverable,
+            &[
+                "status",
+                "--short",
+                "--",
+                &format!("projects/{PROJECT_ID}/notes/project.md")
+            ],
+        ),
+        format!("?? projects/{PROJECT_ID}/notes/project.md\n")
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(recoverable).unwrap();
+}
+
+#[test]
+fn prior_current_audited_journal_without_proofs_rejects_ambiguous_state() {
+    let _guard = env_guard();
+    let ambiguous = unique_home("prior-current-ambiguous-state-proof");
+    seed_v1_store(&ambiguous);
+    let ambiguous_state = ambiguous
+        .join("projects")
+        .join(PROJECT_ID)
+        .join("notes/project.md");
+    std::fs::write(&ambiguous_state, SETUP_STATE).unwrap();
+    std::env::set_var("OMNIPROJ_HOME", &ambiguous);
+    std::env::set_var("OMNIPROJ_TEST_FAILPOINT", "migration_after_schema_stamp");
+    assert!(ensure_home().is_err());
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+    let journal = ambiguous.join(".migration-v2");
+    remove_preserved_state_proofs(&journal);
+    let journal_before = std::fs::read(&journal).unwrap();
+    let state_before = std::fs::read(&ambiguous_state).unwrap();
+    let schema_before = std::fs::read(ambiguous.join("SCHEMA_VERSION")).unwrap();
+    let index_before = git_output(&ambiguous, &["diff", "--cached", "--name-only"]);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::MigrationConflict { .. }));
+    assert_eq!(std::fs::read(&journal).unwrap(), journal_before);
+    assert_eq!(std::fs::read(&ambiguous_state).unwrap(), state_before);
+    assert_eq!(
+        std::fs::read(ambiguous.join("SCHEMA_VERSION")).unwrap(),
+        schema_before
+    );
+    assert_eq!(
+        git_output(&ambiguous, &["diff", "--cached", "--name-only"]),
+        index_before
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(ambiguous).unwrap();
+}
+
+#[test]
+fn malformed_preserved_state_proofs_are_rejected_before_rewrite() {
+    let _guard = env_guard();
+    for case in ["missing", "duplicate", "wrong-kind", "unknown-field"] {
+        let home = unique_home(&format!("malformed-preserved-state-proof-{case}"));
+        seed_v1_store(&home);
+        let state = home
+            .join("projects")
+            .join(PROJECT_ID)
+            .join("notes/project.md");
+        let meta = home.join("projects").join(PROJECT_ID).join("meta.toml");
+        std::fs::write(&state, SETUP_STATE).unwrap();
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        std::env::set_var(
+            "OMNIPROJ_TEST_FAILPOINT",
+            "migration_after_journal_creation",
+        );
+        assert!(ensure_home().is_err());
+        std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+        let journal = home.join(".migration-v2");
+        let mut document: toml::Value = std::fs::read_to_string(&journal).unwrap().parse().unwrap();
+        let proofs = document
+            .get_mut("preserved_state_proofs")
+            .unwrap()
+            .as_array_mut()
+            .unwrap();
+        assert_eq!(proofs.len(), 1);
+        match case {
+            "missing" => proofs.clear(),
+            "duplicate" => proofs.push(proofs[0].clone()),
+            "wrong-kind" => {
+                let expected = proofs[0]
+                    .get_mut("expected")
+                    .unwrap()
+                    .as_table_mut()
+                    .unwrap();
+                expected.insert("kind".into(), toml::Value::String("missing".into()));
+                expected.remove("sha256");
+            }
+            "unknown-field" => {
+                proofs[0]
+                    .as_table_mut()
+                    .unwrap()
+                    .insert("unexpected".into(), toml::Value::Boolean(true));
+            }
+            _ => unreachable!(),
+        }
+        std::fs::write(&journal, toml::to_string(&document).unwrap()).unwrap();
+        let journal_before = std::fs::read(&journal).unwrap();
+        let state_before = std::fs::read(&state).unwrap();
+        let meta_before = std::fs::read(&meta).unwrap();
+        let schema_before = std::fs::read(home.join("SCHEMA_VERSION")).unwrap();
+        let index_before = git_output(&home, &["diff", "--cached", "--name-only"]);
+
+        let error = ensure_home().unwrap_err();
+
+        assert!(
+            matches!(error, StoreError::InvalidData(_)),
+            "{case}: {error:?}"
+        );
+        assert_eq!(std::fs::read(&journal).unwrap(), journal_before);
+        assert_eq!(std::fs::read(&state).unwrap(), state_before);
+        assert_eq!(std::fs::read(&meta).unwrap(), meta_before);
+        assert_eq!(
+            std::fs::read(home.join("SCHEMA_VERSION")).unwrap(),
+            schema_before
+        );
+        assert_eq!(
+            git_output(&home, &["diff", "--cached", "--name-only"]),
+            index_before
+        );
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
 }
 
 #[test]

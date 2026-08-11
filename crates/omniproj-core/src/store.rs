@@ -378,6 +378,18 @@ struct MigrationV2Journal {
     phase: MigrationV2Phase,
     project_ids: Vec<ProjectId>,
     created_state_ids: Vec<ProjectId>,
+    preserved_state_proofs: Vec<PreservedStateProof>,
+    audit_targets: Vec<AuditTargetSnapshot>,
+    pending_ignore_contents: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PriorMigrationV2Journal {
+    target_schema_version: u32,
+    phase: MigrationV2Phase,
+    project_ids: Vec<ProjectId>,
+    created_state_ids: Vec<ProjectId>,
     audit_targets: Vec<AuditTargetSnapshot>,
     pending_ignore_contents: Option<String>,
 }
@@ -409,6 +421,14 @@ struct LegacyMigrationV2Journal {
     project_ids: Vec<ProjectId>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreservedStateProof {
+    project_id: ProjectId,
+    expected: AuditPathIdentity,
+    head_required: bool,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LegacyProjectMetaV1 {
@@ -435,10 +455,36 @@ fn decode_migration_journal(
         validate_migration_journal(home, path, &journal)?;
         return Ok(journal);
     }
+    if let Ok(prior) = toml::from_str::<PriorMigrationV2Journal>(text) {
+        let head_required = compatibility_phase_requires_state_head(prior.phase);
+        let mut journal = MigrationV2Journal {
+            target_schema_version: prior.target_schema_version,
+            phase: prior.phase,
+            preserved_state_proofs: Vec::new(),
+            project_ids: prior.project_ids,
+            created_state_ids: prior.created_state_ids,
+            audit_targets: prior.audit_targets,
+            pending_ignore_contents: prior.pending_ignore_contents,
+        };
+        validate_migration_journal_base_shape(path, &journal)?;
+        journal.preserved_state_proofs = preserved_state_proofs_for_compatibility(
+            home,
+            &journal.project_ids,
+            &journal.created_state_ids,
+            head_required,
+        )?;
+        validate_migration_journal_shape(path, &journal)?;
+        normalize_legacy_schema_phase(home, &mut journal)?;
+        validate_migration_journal(home, path, &journal)?;
+        write_migration_journal(path, &journal)?;
+        return Ok(journal);
+    }
     if let Ok(round2) = toml::from_str::<Round2MigrationV2Journal>(text) {
+        let head_required = compatibility_phase_requires_state_head(round2.phase);
         let mut journal = MigrationV2Journal {
             target_schema_version: round2.target_schema_version,
             phase: round2.phase,
+            preserved_state_proofs: Vec::new(),
             project_ids: round2.project_ids,
             created_state_ids: round2.created_state_ids,
             audit_targets: round2
@@ -448,9 +494,17 @@ fn decode_migration_journal(
                 .collect::<Result<_, _>>()?,
             pending_ignore_contents: round2.pending_ignore_contents,
         };
+        validate_migration_journal_base_shape(path, &journal)?;
+        journal.preserved_state_proofs = preserved_state_proofs_for_compatibility(
+            home,
+            &journal.project_ids,
+            &journal.created_state_ids,
+            head_required,
+        )?;
         validate_migration_journal_shape(path, &journal)?;
         normalize_legacy_schema_phase(home, &mut journal)?;
         validate_migration_journal(home, path, &journal)?;
+        write_migration_journal(path, &journal)?;
         return Ok(journal);
     }
     if let Ok(round1) = toml::from_str::<Round1MigrationV2Journal>(text) {
@@ -581,16 +635,24 @@ fn upgrade_round1_migration_journal(
     path: &Path,
     round1: Round1MigrationV2Journal,
 ) -> Result<MigrationV2Journal, StoreError> {
+    let original_phase = round1.phase;
     let mut journal = MigrationV2Journal {
         target_schema_version: round1.target_schema_version,
         phase: MigrationV2Phase::JournalCreated,
         project_ids: round1.project_ids,
         created_state_ids: round1.created_state_ids,
+        preserved_state_proofs: Vec::new(),
         audit_targets: Vec::new(),
         pending_ignore_contents: None,
     };
+    validate_migration_journal_base_shape(path, &journal)?;
+    journal.preserved_state_proofs = preserved_state_proofs_for_compatibility(
+        home,
+        &journal.project_ids,
+        &journal.created_state_ids,
+        compatibility_phase_requires_state_head(original_phase),
+    )?;
     validate_migration_journal_shape(path, &journal)?;
-    let original_phase = round1.phase;
     let project_targets = legacy_project_audit_targets_from_history(home, &journal)?;
 
     match original_phase {
@@ -654,10 +716,86 @@ fn validate_migration_journal(
     journal: &MigrationV2Journal,
 ) -> Result<(), StoreError> {
     validate_migration_journal_shape(path, journal)?;
+    validate_preserved_state_proofs(home, journal)?;
     validate_audit_target_paths(home, &journal.audit_targets)?;
     validate_authoritative_migration_snapshots(home, path, journal)?;
     validate_snapshot_phase_state(home, journal)?;
     validate_migration_phase_milestone(home, journal)
+}
+
+fn compatibility_phase_requires_state_head(phase: MigrationV2Phase) -> bool {
+    matches!(
+        phase,
+        MigrationV2Phase::ProjectsAudited
+            | MigrationV2Phase::SchemaWritePrepared
+            | MigrationV2Phase::SchemaWritten
+            | MigrationV2Phase::SchemaStampPending
+            | MigrationV2Phase::SchemaStamped
+            | MigrationV2Phase::SchemaAudited
+    )
+}
+
+fn preserved_state_proofs_for_compatibility(
+    home: &Path,
+    project_ids: &[ProjectId],
+    created_state_ids: &[ProjectId],
+    head_required: bool,
+) -> Result<Vec<PreservedStateProof>, StoreError> {
+    let created: std::collections::HashSet<_> = created_state_ids.iter().collect();
+    project_ids
+        .iter()
+        .filter(|project_id| !created.contains(project_id))
+        .map(|project_id| preserved_state_proof(home, project_id, head_required))
+        .collect()
+}
+
+fn preserved_state_proof(
+    home: &Path,
+    project_id: &ProjectId,
+    head_required: bool,
+) -> Result<PreservedStateProof, StoreError> {
+    let (_, setup) = migration_record_and_setup(home, project_id)?;
+    let canonical = setup
+        .render()
+        .map_err(|error| StoreError::InvalidData(error.to_string()))?;
+    let relative = PathBuf::from(format!("projects/{project_id}/notes/project.md"));
+    let state_path = home.join(&relative);
+    validate_store_file_target(home, &state_path)?;
+    let existing =
+        std::fs::read_to_string(&state_path).map_err(|_| StoreError::MigrationConflict {
+            path: state_path.clone(),
+        })?;
+    if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup)
+        || existing.as_bytes() != canonical.as_bytes()
+    {
+        return Err(StoreError::MigrationConflict { path: state_path });
+    }
+    if head_required && git_head_bytes(home, &relative)?.as_deref() != Some(canonical.as_bytes()) {
+        return Err(StoreError::MigrationConflict { path: state_path });
+    }
+    Ok(PreservedStateProof {
+        project_id: project_id.clone(),
+        expected: regular_identity(canonical.as_bytes()),
+        head_required,
+    })
+}
+
+fn validate_preserved_state_proofs(
+    home: &Path,
+    journal: &MigrationV2Journal,
+) -> Result<(), StoreError> {
+    for proof in &journal.preserved_state_proofs {
+        let authoritative = preserved_state_proof(home, &proof.project_id, proof.head_required)?;
+        if proof.expected != authoritative.expected {
+            return Err(StoreError::MigrationConflict {
+                path: home
+                    .join("projects")
+                    .join(proof.project_id.as_str())
+                    .join("notes/project.md"),
+            });
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -750,25 +888,6 @@ fn validate_project_milestone(
         ProjectMilestone::ExpectedInHead => validate_outputs_match_head(home, &targets)?,
     }
 
-    let created: std::collections::HashSet<_> = journal.created_state_ids.iter().collect();
-    for project_id in &journal.project_ids {
-        if created.contains(project_id) {
-            continue;
-        }
-        let (_, setup) = migration_record_and_setup(home, project_id)?;
-        let state_path = home
-            .join("projects")
-            .join(project_id.as_str())
-            .join("notes/project.md");
-        validate_store_file_target(home, &state_path)?;
-        let existing =
-            std::fs::read_to_string(&state_path).map_err(|_| StoreError::MigrationConflict {
-                path: state_path.clone(),
-            })?;
-        if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup) {
-            return Err(StoreError::MigrationConflict { path: state_path });
-        }
-    }
     Ok(())
 }
 
@@ -786,6 +905,36 @@ fn validate_schema_milestone(
 }
 
 fn validate_migration_journal_shape(
+    path: &Path,
+    journal: &MigrationV2Journal,
+) -> Result<(), StoreError> {
+    validate_migration_journal_base_shape(path, journal)?;
+    let project_ids: std::collections::HashSet<_> = journal.project_ids.iter().collect();
+    let created_ids: std::collections::HashSet<_> = journal.created_state_ids.iter().collect();
+    let proof_ids: std::collections::HashSet<_> = journal
+        .preserved_state_proofs
+        .iter()
+        .map(|proof| &proof.project_id)
+        .collect();
+    if proof_ids.len() != journal.preserved_state_proofs.len()
+        || proof_ids.len() + created_ids.len() != project_ids.len()
+        || !proof_ids
+            .iter()
+            .all(|id| project_ids.contains(id) && !created_ids.contains(id))
+        || journal.preserved_state_proofs.iter().any(|proof| {
+            !valid_audit_identity(&proof.expected)
+                || !matches!(proof.expected, AuditPathIdentity::RegularFile { .. })
+        })
+    {
+        return Err(StoreError::InvalidData(format!(
+            "{} has invalid preserved-state proofs",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_migration_journal_base_shape(
     path: &Path,
     journal: &MigrationV2Journal,
 ) -> Result<(), StoreError> {
@@ -938,6 +1087,7 @@ fn upgrade_legacy_migration_journal(
     }
 
     let mut created_state_ids = Vec::new();
+    let mut preserved_state_proofs = Vec::new();
     for project_id in &legacy.project_ids {
         validate_legacy_migration_metadata(home, project_id)?;
         let (_, setup) = migration_record_and_setup(home, project_id)?;
@@ -958,9 +1108,15 @@ fn upgrade_legacy_migration_journal(
             {
                 return Err(StoreError::MigrationConflict { path: state_path });
             }
-            if on_disk != 1 && !path_matches_head(home, &relative_state)? {
+            let head_required = on_disk != 1;
+            if head_required && !path_matches_head(home, &relative_state)? {
                 return Err(StoreError::MigrationConflict { path: state_path });
             }
+            preserved_state_proofs.push(PreservedStateProof {
+                project_id: project_id.clone(),
+                expected: regular_identity(canonical.as_bytes()),
+                head_required,
+            });
         } else if on_disk == 1 {
             created_state_ids.push(project_id.clone());
         } else {
@@ -1001,6 +1157,7 @@ fn upgrade_legacy_migration_journal(
         phase,
         project_ids: legacy.project_ids,
         created_state_ids,
+        preserved_state_proofs,
         audit_targets: Vec::new(),
         pending_ignore_contents: None,
     };
@@ -1022,6 +1179,9 @@ fn upgrade_legacy_migration_journal(
                         path: home.join(relative_state),
                     });
                 }
+            }
+            for proof in &mut journal.preserved_state_proofs {
+                proof.head_required = true;
             }
             journal.phase = MigrationV2Phase::ProjectsAudited;
         }
@@ -1273,6 +1433,7 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
         }
         let project_ids = migration_project_ids(home)?;
         let mut created_state_ids = Vec::new();
+        let mut preserved_state_proofs = Vec::new();
         for project_id in &project_ids {
             let (record, setup) = migration_record_and_setup(home, project_id)?;
             let state_path = home
@@ -1282,9 +1443,19 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
             validate_store_file_target(home, &state_path)?;
             if state_path.exists() {
                 let existing = std::fs::read_to_string(&state_path)?;
-                if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup) {
+                let canonical = setup
+                    .render()
+                    .map_err(|error| StoreError::InvalidData(error.to_string()))?;
+                if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup)
+                    || existing.as_bytes() != canonical.as_bytes()
+                {
                     return Err(StoreError::MigrationConflict { path: state_path });
                 }
+                preserved_state_proofs.push(PreservedStateProof {
+                    project_id: project_id.clone(),
+                    expected: regular_identity(canonical.as_bytes()),
+                    head_required: false,
+                });
             } else {
                 created_state_ids.push(project_id.clone());
             }
@@ -1295,6 +1466,7 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
             phase: MigrationV2Phase::JournalCreated,
             project_ids,
             created_state_ids,
+            preserved_state_proofs,
             audit_targets: Vec::new(),
             pending_ignore_contents: None,
         };
@@ -1527,9 +1699,19 @@ fn refresh_migration_projects(
         validate_store_file_target(home, &state_path)?;
         if state_path.exists() {
             let existing = std::fs::read_to_string(&state_path)?;
-            if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup) {
+            let canonical = setup
+                .render()
+                .map_err(|error| StoreError::InvalidData(error.to_string()))?;
+            if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup)
+                || existing.as_bytes() != canonical.as_bytes()
+            {
                 return Err(StoreError::MigrationConflict { path: state_path });
             }
+            journal.preserved_state_proofs.push(PreservedStateProof {
+                project_id: project_id.clone(),
+                expected: regular_identity(canonical.as_bytes()),
+                head_required: false,
+            });
         } else {
             journal.created_state_ids.push(project_id.clone());
         }
@@ -1539,6 +1721,9 @@ fn refresh_migration_projects(
     if !added.is_empty() {
         journal.project_ids.sort();
         journal.created_state_ids.sort();
+        journal
+            .preserved_state_proofs
+            .sort_by(|left, right| left.project_id.cmp(&right.project_id));
     }
     Ok(!added.is_empty())
 }
