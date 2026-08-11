@@ -379,3 +379,34 @@ Code commit: `f676075751fb8a80d34c1e9ad07e9e310d1d4dfa` (`fix(core): persist pre
 - `preserved_state_proofs` must be unique and exactly cover `project_ids - created_state_ids`; each entry is path-bound through its typed project id, permits only a regular-file identity, and re-derives the authoritative identity from Git-backed v1 metadata plus the deterministic setup renderer.
 - Proofs created for schema-1 prior/journal-created Human state require exact worktree bytes but not `HEAD`. Schema 2 and compatibility phases at or beyond `projects_audited` require both exact worktree and `HEAD` bytes, and that requirement survives every normalized retry.
 - The immediately prior tagged format is distinguishable only by the absent proof field. Compatibility first validates its old base shape, then derives proofs from current evidence, runs the complete current validation pipeline, and only then rewrites. Audited/later provenance that cannot prove `HEAD` is rejected rather than downgraded.
+
+## Fresh Correction Round 10
+
+Code commit: `eacd19055bd5c4a9d70961b08ae94ff26f0cdc98` (`fix(core): derive migration state proof policy`).
+
+### Changed files
+
+- `crates/omniproj-core/src/store.rs`: treats persisted `head_required` as a claim rather than authority; derives the authoritative policy from canonical state plus strict v1 metadata in Git history before the migration marker boundary; recognizes the migration's own missing-state/v1-meta to canonical-state/v2-meta commit as created state; and applies the same derivation to current validation, prior-current compatibility, legacy no-phase upgrades, new journals, and project rescans.
+- `crates/omniproj-core/tests/schema_v2_migration.rs`: adds multi-start tamper regressions for both `true -> false` and `false -> true`, including post-normalization Git history changes and pre-retry snapshots of the journal, state, metadata, schema, and index.
+
+### RED evidence
+
+1. `tampered_false_head_policy_cannot_disable_audited_state_proof` failed because retry returned `Ok(home)` after the journal policy was changed to `false` and the previously tracked state was committed out of `HEAD`.
+2. `tampered_true_head_policy_cannot_invent_untracked_state_provenance` failed because retry returned `Ok(home)` after an untracked state's policy was changed to `true` and the state was committed only after normalization.
+
+### GREEN evidence and final verification
+
+- Both tamper regressions now return typed `MigrationConflict` before rewrite and preserve all captured bytes and index state.
+- Legitimate untracked `false`, audited tracked `true`, prior-current safe upgrade/ambiguous rejection, and all legacy no-phase interruption recoveries remain green.
+- The full migration suite passed 47/47; migration plus registry passed 63/63.
+- `cargo test -p omniproj-core --lib project_state -- --nocapture`: 9 passed, 0 failed.
+- `cargo test -p omniproj-core --lib`: 89 passed, 0 failed.
+- `cargo test -p omniproj-core --tests`: 152 passed, 0 failed across unit and integration suites.
+- `cargo check --workspace`: exit 0; only the existing staged-migration deprecation warnings remain.
+- `cargo fmt --all --check` and `git diff --check`: exit 0.
+
+### Design decisions and concerns
+
+- The first committed addition of `/.migration-v2` to `.gitignore` is the provenance boundary. Only a strict ancestor containing exact deterministic state bytes alongside matching strict v1 metadata can authorize `head_required = true`; later commits cannot manufacture pre-migration provenance.
+- A persisted policy that differs from this derivation conflicts regardless of whether the stronger or weaker value would currently pass. Current `HEAD` is used only to enforce an authoritatively derived `true`, never to derive the policy.
+- Multiple marker-addition histories, merge-shaped boundary commits, noncanonical pre-boundary state, and contradictory tracked/created evidence are rejected conservatively as migration conflicts.
