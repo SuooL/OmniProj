@@ -944,11 +944,21 @@ fn upgrade_legacy_migration_journal(
         let relative_state = PathBuf::from(format!("projects/{project_id}/notes/project.md"));
         let state_path = home.join(&relative_state);
         if state_path.exists() {
-            let existing = std::fs::read_to_string(&state_path)?;
-            if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup) {
+            validate_store_file_target(home, &state_path)?;
+            let existing = std::fs::read_to_string(&state_path).map_err(|_| {
+                StoreError::MigrationConflict {
+                    path: state_path.clone(),
+                }
+            })?;
+            let canonical = setup
+                .render()
+                .map_err(|error| StoreError::InvalidData(error.to_string()))?;
+            if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup)
+                || existing.as_bytes() != canonical.as_bytes()
+            {
                 return Err(StoreError::MigrationConflict { path: state_path });
             }
-            if !path_matches_head(home, &relative_state)? {
+            if on_disk != 1 && !path_matches_head(home, &relative_state)? {
                 return Err(StoreError::MigrationConflict { path: state_path });
             }
         } else if on_disk == 1 {
@@ -1004,6 +1014,15 @@ fn upgrade_legacy_migration_journal(
             }
             validate_round1_ignore_audited(home)?;
             validate_outputs_match_head(home, &targets)?;
+            for project_id in &journal.project_ids {
+                let relative_state =
+                    PathBuf::from(format!("projects/{project_id}/notes/project.md"));
+                if !path_matches_head(home, &relative_state)? {
+                    return Err(StoreError::MigrationConflict {
+                        path: home.join(relative_state),
+                    });
+                }
+            }
             journal.phase = MigrationV2Phase::ProjectsAudited;
         }
     }

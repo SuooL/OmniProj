@@ -1383,7 +1383,52 @@ fn legacy_migration_journals_resume_from_verifiable_interruption_states() {
 }
 
 #[test]
-fn ambiguous_legacy_journal_state_is_a_typed_conflict_and_is_not_rewritten() {
+fn legacy_journal_preserves_preexisting_untracked_canonical_project_state() {
+    let _guard = env_guard();
+    let home = unique_home("legacy-journal-preexisting-canonical-state");
+    seed_v1_store(&home);
+    let project = home.join("projects").join(PROJECT_ID);
+    let state = project.join("notes/project.md");
+    let human = project.join("notes/Human.md");
+    std::fs::write(&state, SETUP_STATE).unwrap();
+    std::fs::write(&human, b"Human bytes outside migration scope\n").unwrap();
+    write_legacy_migration_journal(&home, &[PROJECT_ID]);
+    let state_before = std::fs::read(&state).unwrap();
+    let human_before = std::fs::read(&human).unwrap();
+    std::env::set_var("OMNIPROJ_HOME", &home);
+
+    ensure_home().unwrap();
+
+    assert_eq!(std::fs::read(home.join("SCHEMA_VERSION")).unwrap(), b"2\n");
+    assert!(!home.join(".migration-v2").exists());
+    assert_eq!(std::fs::read(&state).unwrap(), state_before);
+    assert_eq!(std::fs::read(&human).unwrap(), human_before);
+    assert_eq!(
+        git_names(&home, "HEAD^"),
+        vec![format!("projects/{PROJECT_ID}/meta.toml")],
+        "only migrated metadata belongs in the project audit commit"
+    );
+    assert_eq!(
+        git_output(
+            &home,
+            &[
+                "status",
+                "--short",
+                "--",
+                &format!("projects/{PROJECT_ID}/notes/project.md"),
+                &format!("projects/{PROJECT_ID}/notes/Human.md"),
+            ],
+        ),
+        format!(
+            "?? projects/{PROJECT_ID}/notes/Human.md\n?? projects/{PROJECT_ID}/notes/project.md\n"
+        )
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn noncanonical_legacy_journal_state_is_a_typed_conflict_and_is_not_rewritten() {
     let _guard = env_guard();
     let home = unique_home("ambiguous-legacy-journal");
     seed_v1_store(&home);
@@ -1398,13 +1443,18 @@ fn ambiguous_legacy_journal_state_is_a_typed_conflict_and_is_not_rewritten() {
         .join("projects")
         .join(PROJECT_ID)
         .join("notes/project.md");
-    let before = std::fs::read(&state).unwrap();
+    let noncanonical = SETUP_STATE.replacen("revision = 0", "revision=0", 1);
+    assert_eq!(
+        omniproj_core::ProjectStateDoc::parse(&noncanonical).unwrap(),
+        omniproj_core::ProjectStateDoc::parse(SETUP_STATE).unwrap()
+    );
+    std::fs::write(&state, &noncanonical).unwrap();
     std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
 
     let error = ensure_home().unwrap_err();
 
     assert!(matches!(error, StoreError::MigrationConflict { .. }));
-    assert_eq!(std::fs::read(&state).unwrap(), before);
+    assert_eq!(std::fs::read(&state).unwrap(), noncanonical.as_bytes());
     assert_eq!(
         std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
         "1\n"
