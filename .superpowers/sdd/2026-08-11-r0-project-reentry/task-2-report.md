@@ -100,3 +100,44 @@ No `Cargo.toml` or `Cargo.lock` changes were required.
 - The mutation audit journal lives below the store's own `.git` directory, contains only a message and validated store-relative paths, and is removed only after the exact-path commit succeeds. Recovery audits durable state but never replays the mutation, so registration retries return `Existing` and stale relink/observation retries remain CAS conflicts.
 - Store-lock contention remains a checked error (`WouldBlock`) rather than implicit waiting. This is existing `with_store_txn` behavior and prevents startup cleanup from crossing an active registration.
 - Legacy nonempty staging trees remain intentionally preserved as forensic partials, matching the original Task 2 boundary.
+
+## Fix Round 2
+
+Fix commit: `63741e268acd25d6203631e549f2785f51c58a4d` (`fix(core): harden store recovery protocols`).
+
+### Changed files
+
+- `crates/omniproj-core/src/store.rs`: adds strict legacy/Round-1 migration-journal decoders, verifiable legacy upgrade, SHA-256 prior/expected audit snapshots, typed `AuditConflict`, explicit ignore/project write-prepared phases, pending-audit prepared/applied recovery, one-lock fresh/existing startup, and exact-path initialization commits.
+- `crates/omniproj-core/src/project.rs`: supplies desired mutation snapshots before metadata replacement/registration rename, marks applied mutations only after durable exposure, and adds deterministic rename/parent-fsync failpoints.
+- `crates/omniproj-core/tests/schema_v2_migration.rs`: covers three verifiable legacy interruption states, ambiguous/malformed legacy journals, same-path project metadata and `.gitignore` Human edits, and snapshot-safe retry.
+- `crates/omniproj-core/tests/project_source_registry.rs`: covers same-path registration-state conflicts plus prepared registration recovery before and after directory rename.
+
+No `Cargo.toml` or `Cargo.lock` changes were required.
+
+### RED evidence
+
+1. `cargo test -p omniproj-core --test schema_v2_migration legacy_migration_journals_resume_from_verifiable_interruption_states -- --exact --nocapture`: the first old-format journal failed with missing `phase`; the companion ambiguous-state test returned generic `InvalidData` rather than `MigrationConflict`.
+2. `cargo test -p omniproj-core --test project_source_registry registration_audit_recovery_rejects_a_same_path_human_edit_before_git_add -- --exact --nocapture`: `ensure_home().unwrap_err()` received `Ok`, proving recovery restaged and committed the Human replacement.
+3. `cargo test -p omniproj-core --test schema_v2_migration migration_audit_recovery_rejects_a_same_path_human_edit_before_git_add -- --exact --nocapture`: `ensure_home().unwrap_err()` received `Ok`, proving a valid Human metadata rename was committed.
+4. `cargo test -p omniproj-core --test schema_v2_migration migration_gitignore_recovery_rejects_a_same_path_human_edit_before_git_add -- --exact --nocapture`: retry returned `Ok` and included the Human `.gitignore` edit.
+5. `cargo test -p omniproj-core store::tests::fresh_initialization_holds_the_store_lock_before_git_becomes_visible -- --exact --nocapture`: the concurrent startup returned `Ok` instead of checked `WouldBlock`.
+6. `cargo test -p omniproj-core store::tests::fresh_initialization_commits_only_tool_created_paths -- --exact --nocapture`: initial `HEAD` contained pre-existing `Human.md`.
+7. The two exact registry tests for `registration_directory_rename_failure` and `registration_parent_fsync_failure` both failed because registration returned success; the failpoints and prepared/applied distinction did not exist.
+
+### GREEN evidence and final verification
+
+- `cargo test -p omniproj-core --test schema_v2_migration --test project_source_registry`: 28 passed, 0 failed.
+- `cargo test -p omniproj-core project_state::tests -- --nocapture`: 9 passed, 0 failed.
+- `cargo test -p omniproj-core --lib`: 82 passed, 0 failed.
+- `cargo test -p omniproj-core --tests`: 110 passed, 0 failed across unit and integration suites.
+- `cargo check --workspace`: exit 0; only the existing staged-migration deprecation warnings remain.
+- `cargo fmt --all --check`: exit 0.
+- `git diff --check`: exit 0 before the fix commit.
+
+### Design decisions and concerns
+
+- Old two-field journals are decoded only by an exact `deny_unknown_fields` legacy shape. Recovery compares project metadata/state against `HEAD` and deterministic v2 bytes; a generated state indistinguishable from pre-existing untracked state is deliberately a typed `MigrationConflict` rather than a guess.
+- Audit snapshots contain validated relative paths plus prior/expected SHA-256 identities. Recovery validates the worktree before any `git add`; changed targets remain unstaged and produce `AuditConflict`. Migration also validates each phase's exact allowed path set.
+- Pending audits use `prepared` and `applied`. A prepared mutation matching all prior identities is cleared without replay; matching all expected identities is promoted and audited; any mixed/unknown state conflicts. Registration rename failure therefore clears safely, while parent-fsync failure recognizes the already-visible complete directory.
+- `ensure_home` now acquires the checked store lock before the fresh/existing decision. Its locked helper performs init, schema migration, pending recovery, and cleanup without nested lock acquisition. Initial Git audit stages only tool-created `.gitignore` (when absent) and `SCHEMA_VERSION`.
+- The pending journal remains inside `.git`, so it is outside all worktree staging. Existing nonblocking lock semantics and retained nonempty forensic staging trees are unchanged.
