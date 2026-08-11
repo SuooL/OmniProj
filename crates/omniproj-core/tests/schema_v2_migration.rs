@@ -186,6 +186,15 @@ fn corrupt_tagged_expected_sha256(path: &Path, relative_path: &str, phase: Optio
     std::fs::write(path, toml::to_string(&document).unwrap()).unwrap();
 }
 
+fn rewrite_tagged_journal_phase_without_targets(path: &Path, phase: &str) {
+    let mut document: toml::Value = std::fs::read_to_string(path).unwrap().parse().unwrap();
+    let table = document.as_table_mut().unwrap();
+    table.insert("phase".into(), toml::Value::String(phase.into()));
+    table.insert("audit_targets".into(), toml::Value::Array(Vec::new()));
+    table.remove("pending_ignore_contents");
+    std::fs::write(path, toml::to_string(&document).unwrap()).unwrap();
+}
+
 fn sha256(contents: &[u8]) -> String {
     format!("{:x}", Sha256::digest(contents))
 }
@@ -692,6 +701,198 @@ fn tagged_projects_prepared_rejects_non_authoritative_expected_hashes_before_wri
             std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
             "1\n"
         );
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+}
+
+#[test]
+fn tagged_and_round2_projects_audited_require_proven_project_outputs() {
+    let _guard = env_guard();
+    let fixtures = [
+        (
+            "tagged",
+            format!(
+                "target_schema_version = 2\nphase = \"projects_audited\"\nproject_ids = [{PROJECT_ID:?}]\ncreated_state_ids = [{PROJECT_ID:?}]\naudit_targets = []\n"
+            ),
+        ),
+        (
+            // No-target audited phases have the same wire representation in the tagged and
+            // Round-2 schemas. This differently ordered fixture comes from the Round-2 shape.
+            "round2",
+            format!(
+                "phase = \"projects_audited\"\ntarget_schema_version = 2\ncreated_state_ids = [{PROJECT_ID:?}]\nproject_ids = [{PROJECT_ID:?}]\naudit_targets = []\n"
+            ),
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (format, journal) in fixtures {
+        for ignore_state in ["untouched", "audited"] {
+            let home = unique_home(&format!("{format}-{ignore_state}-false-projects-audited"));
+            seed_v1_store(&home);
+            let gitignore = home.join(".gitignore");
+            if ignore_state == "audited" {
+                let mut audited_ignore = std::fs::read_to_string(&gitignore).unwrap();
+                audited_ignore.push_str("/.migration-v2\n");
+                std::fs::write(&gitignore, audited_ignore).unwrap();
+                run_git(&home, &["add", "--", ".gitignore"]);
+                run_git(
+                    &home,
+                    &[
+                        "-c",
+                        "user.name=omniproj-test",
+                        "-c",
+                        "user.email=omniproj-test@local",
+                        "commit",
+                        "-q",
+                        "-m",
+                        "audit migration ignore only",
+                        "--",
+                        ".gitignore",
+                    ],
+                );
+            }
+            let journal_path = home.join(".migration-v2");
+            std::fs::write(&journal_path, &journal).unwrap();
+            let meta = home.join("projects").join(PROJECT_ID).join("meta.toml");
+            let state = home
+                .join("projects")
+                .join(PROJECT_ID)
+                .join("notes/project.md");
+            let meta_before = std::fs::read(&meta).unwrap();
+            let schema_before = std::fs::read(home.join("SCHEMA_VERSION")).unwrap();
+            let ignore_before = std::fs::read(&gitignore).unwrap();
+            std::env::set_var("OMNIPROJ_HOME", &home);
+
+            let rejected = ensure_home().is_err();
+            let unchanged = std::fs::read(&meta).ok().as_deref() == Some(meta_before.as_slice())
+                && !state.exists()
+                && std::fs::read(&journal_path).ok().as_deref() == Some(journal.as_bytes())
+                && std::fs::read(home.join("SCHEMA_VERSION")).ok().as_deref()
+                    == Some(schema_before.as_slice())
+                && std::fs::read(home.join(".gitignore")).ok().as_deref()
+                    == Some(ignore_before.as_slice())
+                && git_output(&home, &["diff", "--cached", "--name-only"]).is_empty();
+            if !rejected || !unchanged {
+                failures.push(format!(
+                    "{format}/{ignore_state}: rejected={rejected}, unchanged={unchanged}"
+                ));
+            }
+
+            std::env::remove_var("OMNIPROJ_HOME");
+            std::fs::remove_dir_all(home).unwrap();
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("; "));
+}
+
+#[test]
+fn ignore_audited_requires_the_expected_ignore_bytes_to_be_committed() {
+    let _guard = env_guard();
+    let home = unique_home("false-ignore-audited");
+    seed_v1_store(&home);
+    let gitignore = home.join(".gitignore");
+    let mut expected = std::fs::read_to_string(&gitignore).unwrap();
+    expected.push_str("/.migration-v2\n");
+    std::fs::write(&gitignore, &expected).unwrap();
+    let journal_path = home.join(".migration-v2");
+    let journal = format!(
+        "target_schema_version = 2\nphase = \"ignore_audited\"\nproject_ids = [{PROJECT_ID:?}]\ncreated_state_ids = [{PROJECT_ID:?}]\naudit_targets = []\n"
+    );
+    std::fs::write(&journal_path, &journal).unwrap();
+    let meta = home.join("projects").join(PROJECT_ID).join("meta.toml");
+    let meta_before = std::fs::read(&meta).unwrap();
+    let schema_before = std::fs::read(home.join("SCHEMA_VERSION")).unwrap();
+    std::env::set_var("OMNIPROJ_HOME", &home);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(
+        error,
+        StoreError::InvalidData(_) | StoreError::AuditConflict { .. }
+    ));
+    assert_eq!(std::fs::read(&gitignore).unwrap(), expected.as_bytes());
+    assert_eq!(std::fs::read(&meta).unwrap(), meta_before);
+    assert!(!home
+        .join("projects")
+        .join(PROJECT_ID)
+        .join("notes/project.md")
+        .exists());
+    assert_eq!(std::fs::read(&journal_path).unwrap(), journal.as_bytes());
+    assert_eq!(
+        std::fs::read(home.join("SCHEMA_VERSION")).unwrap(),
+        schema_before
+    );
+    assert_eq!(git_output(&home, &["diff", "--cached", "--name-only"]), "");
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn tagged_schema_audited_requires_exact_schema_bytes_in_worktree_and_head() {
+    let _guard = env_guard();
+    let mut failures = Vec::new();
+    for case in ["uncommitted", "modified", "missing"] {
+        let home = unique_home(&format!("false-schema-audited-{case}"));
+        seed_v1_store(&home);
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        let failpoint = if case == "uncommitted" {
+            "migration_after_schema_stamp"
+        } else {
+            "migration_after_schema_audit_commit"
+        };
+        std::env::set_var("OMNIPROJ_TEST_FAILPOINT", failpoint);
+        assert!(ensure_home().is_err());
+        std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+        let journal_path = home.join(".migration-v2");
+        rewrite_tagged_journal_phase_without_targets(&journal_path, "schema_audited");
+        let schema_path = home.join("SCHEMA_VERSION");
+        match case {
+            "uncommitted" => {}
+            "modified" => std::fs::write(&schema_path, b"2 \n").unwrap(),
+            "missing" => std::fs::remove_file(&schema_path).unwrap(),
+            _ => unreachable!(),
+        }
+        let journal_before = std::fs::read(&journal_path).unwrap();
+        let schema_before = std::fs::read(&schema_path).ok();
+        let index_before = git_output(&home, &["diff", "--cached", "--name-only"]);
+
+        let rejected = ensure_home().is_err();
+        let unchanged = std::fs::read(&journal_path).ok().as_deref()
+            == Some(journal_before.as_slice())
+            && std::fs::read(&schema_path).ok() == schema_before
+            && git_output(&home, &["diff", "--cached", "--name-only"]) == index_before;
+        if !rejected || !unchanged {
+            failures.push(format!(
+                "{case}: rejected={rejected}, unchanged={unchanged}"
+            ));
+        }
+
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+    assert!(failures.is_empty(), "{}", failures.join("; "));
+}
+
+#[test]
+fn legitimate_tagged_audited_phase_journals_still_converge() {
+    let _guard = env_guard();
+    for failpoint in [
+        "migration_after_project_audit_commit",
+        "migration_after_schema_audit_commit",
+    ] {
+        let home = unique_home(&format!("legitimate-audited-{failpoint}"));
+        seed_v1_store(&home);
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        std::env::set_var("OMNIPROJ_TEST_FAILPOINT", failpoint);
+        assert!(ensure_home().is_err());
+        std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+
+        ensure_home().unwrap();
+
+        assert_eq!(std::fs::read(home.join("SCHEMA_VERSION")).unwrap(), b"2\n");
+        assert!(!home.join(".migration-v2").exists());
+        assert_eq!(git_output(&home, &["diff", "--cached", "--name-only"]), "");
         std::env::remove_var("OMNIPROJ_HOME");
         std::fs::remove_dir_all(home).unwrap();
     }

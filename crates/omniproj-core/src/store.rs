@@ -656,7 +656,133 @@ fn validate_migration_journal(
     validate_migration_journal_shape(path, journal)?;
     validate_audit_target_paths(home, &journal.audit_targets)?;
     validate_authoritative_migration_snapshots(home, path, journal)?;
-    validate_snapshot_phase_state(home, journal)
+    validate_snapshot_phase_state(home, journal)?;
+    validate_migration_phase_milestone(home, journal)
+}
+
+#[derive(Clone, Copy)]
+enum ProjectMilestone {
+    Prior,
+    PriorOrExpected,
+    Expected,
+    ExpectedInHead,
+}
+
+fn validate_migration_phase_milestone(
+    home: &Path,
+    journal: &MigrationV2Journal,
+) -> Result<(), StoreError> {
+    match journal.phase {
+        MigrationV2Phase::JournalCreated => {
+            migration_ignore_contents(home)?;
+            validate_project_milestone(home, journal, ProjectMilestone::Prior, false)?;
+            validate_schema_milestone(home, SnapshotSide::Prior, false)
+        }
+        MigrationV2Phase::IgnoreWritePrepared | MigrationV2Phase::IgnoreWritten => {
+            validate_project_milestone(home, journal, ProjectMilestone::Prior, false)?;
+            validate_schema_milestone(home, SnapshotSide::Prior, false)
+        }
+        MigrationV2Phase::IgnoreAudited => {
+            validate_round1_ignore_audited(home)?;
+            validate_project_milestone(home, journal, ProjectMilestone::PriorOrExpected, false)?;
+            validate_schema_milestone(home, SnapshotSide::Prior, false)
+        }
+        MigrationV2Phase::ProjectsWritePrepared => {
+            validate_round1_ignore_audited(home)?;
+            validate_project_milestone(home, journal, ProjectMilestone::PriorOrExpected, false)?;
+            validate_schema_milestone(home, SnapshotSide::Prior, false)
+        }
+        MigrationV2Phase::ProjectsWritten => {
+            validate_round1_ignore_audited(home)?;
+            validate_project_milestone(home, journal, ProjectMilestone::Expected, false)?;
+            validate_schema_milestone(home, SnapshotSide::Prior, false)
+        }
+        MigrationV2Phase::ProjectsAudited => {
+            validate_round1_ignore_audited(home)?;
+            validate_project_milestone(home, journal, ProjectMilestone::ExpectedInHead, true)?;
+            validate_schema_milestone(home, SnapshotSide::Prior, false)
+        }
+        MigrationV2Phase::SchemaWritePrepared | MigrationV2Phase::SchemaWritten => {
+            validate_round1_ignore_audited(home)?;
+            validate_project_milestone(home, journal, ProjectMilestone::ExpectedInHead, true)
+        }
+        MigrationV2Phase::SchemaAudited => {
+            validate_round1_ignore_audited(home)?;
+            validate_project_milestone(home, journal, ProjectMilestone::ExpectedInHead, true)?;
+            validate_schema_milestone(home, SnapshotSide::Expected, true)
+        }
+        MigrationV2Phase::SchemaStampPending | MigrationV2Phase::SchemaStamped => {
+            Err(StoreError::InvalidData(
+                "legacy schema phase was not normalized before validation".into(),
+            ))
+        }
+    }
+}
+
+fn validate_project_milestone(
+    home: &Path,
+    journal: &MigrationV2Journal,
+    milestone: ProjectMilestone,
+    exact_project_set: bool,
+) -> Result<(), StoreError> {
+    let actual = migration_project_ids(home)?;
+    let contains_all = journal
+        .project_ids
+        .iter()
+        .all(|project_id| actual.contains(project_id));
+    if !contains_all || (exact_project_set && actual.len() != journal.project_ids.len()) {
+        return Err(StoreError::MigrationConflict {
+            path: home.join("projects"),
+        });
+    }
+
+    let targets = legacy_project_audit_targets_from_history(home, journal)?;
+    match milestone {
+        ProjectMilestone::Prior => {
+            validate_audit_targets(home, &targets, SnapshotSide::Prior)?;
+        }
+        ProjectMilestone::PriorOrExpected => {
+            validate_targets_are_prior_or_expected(home, &targets)?;
+        }
+        ProjectMilestone::Expected => {
+            validate_audit_targets(home, &targets, SnapshotSide::Expected)?;
+        }
+        ProjectMilestone::ExpectedInHead => validate_outputs_match_head(home, &targets)?,
+    }
+
+    let created: std::collections::HashSet<_> = journal.created_state_ids.iter().collect();
+    for project_id in &journal.project_ids {
+        if created.contains(project_id) {
+            continue;
+        }
+        let (_, setup) = migration_record_and_setup(home, project_id)?;
+        let state_path = home
+            .join("projects")
+            .join(project_id.as_str())
+            .join("notes/project.md");
+        validate_store_file_target(home, &state_path)?;
+        let existing =
+            std::fs::read_to_string(&state_path).map_err(|_| StoreError::MigrationConflict {
+                path: state_path.clone(),
+            })?;
+        if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup) {
+            return Err(StoreError::MigrationConflict { path: state_path });
+        }
+    }
+    Ok(())
+}
+
+fn validate_schema_milestone(
+    home: &Path,
+    side: SnapshotSide,
+    require_head: bool,
+) -> Result<(), StoreError> {
+    let target = schema_audit_target_from_history(home)?;
+    validate_audit_targets(home, std::slice::from_ref(&target), side)?;
+    if require_head {
+        validate_outputs_match_head(home, std::slice::from_ref(&target))?;
+    }
+    Ok(())
 }
 
 fn validate_migration_journal_shape(
@@ -868,6 +994,19 @@ fn upgrade_legacy_migration_journal(
         audit_targets: Vec::new(),
         pending_ignore_contents: None,
     };
+    if on_disk == 1 {
+        let targets = legacy_project_audit_targets_from_history(home, &journal)?;
+        if !audit_targets_match(home, &targets, SnapshotSide::Prior)? {
+            if !audit_targets_match(home, &targets, SnapshotSide::Expected)? {
+                return Err(StoreError::AuditConflict {
+                    path: path.to_owned(),
+                });
+            }
+            validate_round1_ignore_audited(home)?;
+            validate_outputs_match_head(home, &targets)?;
+            journal.phase = MigrationV2Phase::ProjectsAudited;
+        }
+    }
     normalize_legacy_schema_phase(home, &mut journal)?;
     validate_migration_journal(home, path, &journal)?;
     write_migration_journal(path, &journal)?;
