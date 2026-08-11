@@ -296,13 +296,17 @@ fn audit_error(output: std::process::Output) -> StoreError {
 }
 
 fn validate_relative_audit_path(path: &Path) -> Result<(), StoreError> {
+    let mut has_normal_component = false;
     let safe = !path.is_absolute()
-        && path.components().all(|component| {
-            matches!(
-                component,
-                std::path::Component::Normal(_) | std::path::Component::CurDir
-            )
-        });
+        && path.components().all(|component| match component {
+            std::path::Component::Normal(_) => {
+                has_normal_component = true;
+                true
+            }
+            std::path::Component::CurDir => true,
+            _ => false,
+        })
+        && has_normal_component;
     if safe {
         Ok(())
     } else {
@@ -563,6 +567,53 @@ mod tests {
             StoreError::AuditCommit(stderr) => assert!(stderr.contains("not a git repository")),
             StoreError::Io(error) => panic!("expected git stderr, got I/O error: {error}"),
         }
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn checked_commit_rejects_root_equivalent_paths_without_staging_human_edits() {
+        let _g = crate::env_guard();
+        let home = unique_home("checked-commit-root");
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        ensure_home().unwrap();
+        let human = home.join("projects/project-2026/Human.md");
+
+        atomic_write(&human, b"original human text").unwrap();
+        git_output(&home, &["add", "--", "projects/project-2026/Human.md"]);
+        git_output(
+            &home,
+            &[
+                "-c",
+                "user.name=omniproj-test",
+                "-c",
+                "user.email=omniproj-test@local",
+                "commit",
+                "-q",
+                "-m",
+                "seed human document",
+            ],
+        );
+        atomic_write(&human, b"uncommitted Human edit").unwrap();
+
+        for root_equivalent in [PathBuf::from("."), PathBuf::new()] {
+            let error = commit_paths_checked("must not stage all", &[root_equivalent]).unwrap_err();
+            match error {
+                StoreError::AuditCommit(message) => assert!(message.contains("audit path")),
+                StoreError::Io(error) => {
+                    panic!("expected validation error, got I/O error: {error}")
+                }
+            }
+            assert_eq!(
+                git_output(
+                    &home,
+                    &["status", "--short", "--", "projects/project-2026/Human.md"]
+                ),
+                " M projects/project-2026/Human.md\n"
+            );
+            assert_eq!(git_output(&home, &["diff", "--cached", "--name-only"]), "");
+        }
+
         std::env::remove_var("OMNIPROJ_HOME");
         std::fs::remove_dir_all(&home).unwrap();
     }
