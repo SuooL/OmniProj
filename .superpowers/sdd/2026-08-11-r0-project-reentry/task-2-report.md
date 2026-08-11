@@ -442,3 +442,34 @@ Code commit: `5a5932244365fc7ad4957895ac8f0201d484d787` (`fix(core): derive migr
 - Journal partition fields are claims, not provenance. Current and compatibility validation independently derive the complete project partition, then require `created_state_ids` to equal exactly the migration-created set and preserved proofs to equal exactly the two pre-migration sets; `head_required = false` is permitted only for `PreMigrationUntracked`, and `true` only for `PreMigrationTracked`.
 - A canonical state that first appears after the committed marker while recovery is only at `ignore_audited` has no explicit tool-write transition and is therefore non-created; a journal cannot make it an audit target by moving its id between partition fields.
 - Legitimate uncommitted creation remains recoverable only through a complete, history-derived `missing -> canonical state` plus strict `v1 -> v2 metadata` transition persisted in a prepared/written snapshot. Later recovery uses the exact one-parent migration commit transition in Git history. Snapshotless Round-1 compatibility requires the metadata half of that transition to be visibly complete before it can synthesize the current representation.
+
+## Fresh Correction Round 12
+
+Code commit: `9c472fe6b75f655f6286dbc7e482040452e6a04c` (`fix(core): fail closed on snapshotless state provenance`).
+
+### Changed files
+
+- `crates/omniproj-core/src/store.rs`: removes the Round-11 snapshotless compatibility inference that treated exact deterministic v2 metadata as evidence that an already-present claimed-created state was tool-authored; Round-1 `ignore_audited` now conflicts whenever such a state target already exists and only synthesizes a current prepared transition while the state remains missing.
+- `crates/omniproj-core/tests/schema_v2_migration.rs`: converts the ambiguous Round-1 partial-write fixture into an exact Human-recreation conflict regression with complete immutability assertions, and adds a positive missing-state compatibility recovery test.
+
+### RED evidence
+
+- `cargo test -p omniproj-core --test schema_v2_migration round1_ignore_audited_cannot_claim_human_recreated_exact_outputs -- --exact --nocapture` failed because `ensure_home().unwrap_err()` received `Ok(home)` after a Human recreated both exact canonical project-state bytes and exact deterministic v2 metadata under a snapshotless Round-1 `ignore_audited` journal that claimed the state as created.
+
+### GREEN evidence and final verification
+
+- The adversarial retry now returns typed `MigrationConflict` while preserving journal, state, metadata, schema, index, and `HEAD` exactly.
+- `round1_ignore_audited_with_missing_created_state_still_recovers` passes: a genuinely not-yet-created target can be normalized into the current prepared transition and written by the migration.
+- Snapshot-backed current recovery, Round-1 `projects_written`, and independently `HEAD`-proven audited/schema phases remain green.
+- `cargo test -p omniproj-core --test schema_v2_migration --test project_source_registry`: 67 passed, 0 failed.
+- `cargo test -p omniproj-core --lib project_state -- --nocapture`: 9 passed, 0 failed.
+- `cargo test -p omniproj-core --lib`: 89 passed, 0 failed.
+- `cargo test -p omniproj-core --tests`: 156 passed, 0 failed across unit and integration suites.
+- `cargo check --workspace`: exit 0; only the existing staged-migration deprecation warnings remain.
+- `cargo fmt --all --check` and `git diff --check`: exit 0 before the code commit.
+
+### Design decisions and concerns
+
+- Exact current bytes are not provenance. With no persisted snapshot and no independent `HEAD` milestone, the migration cannot distinguish a crashed tool write from a Human reconstruction of the same canonical state and metadata, so the compatibility decoder fails closed.
+- Round-1 `ignore_audited` remains safely recoverable only when claimed-created state is still missing. The normalized current journal then records an explicit authoritative missing-to-canonical transition before the tool writes the file.
+- Round-1 `projects_written` retains exact deterministic-output validation, while `projects_audited` and later phases retain exact worktree-plus-`HEAD` proof. These stronger milestones are not weakened by the `ignore_audited` fail-closed rule.
