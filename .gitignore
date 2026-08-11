@@ -11,4 +11,5 @@ spike/digest-*.txt
 .trellis/.runtime/
 .trellis/**/__pycache__/
 .superpowers/
+.worktrees/
 .Rhistory
