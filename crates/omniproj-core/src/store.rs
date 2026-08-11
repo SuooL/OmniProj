@@ -467,12 +467,8 @@ fn decode_migration_journal(
             pending_ignore_contents: prior.pending_ignore_contents,
         };
         validate_migration_journal_base_shape(path, &journal)?;
-        journal.preserved_state_proofs = preserved_state_proofs_for_compatibility(
-            home,
-            &journal.project_ids,
-            &journal.created_state_ids,
-            head_required,
-        )?;
+        journal.preserved_state_proofs =
+            preserved_state_proofs_for_compatibility(home, &journal, head_required)?;
         validate_migration_journal_shape(path, &journal)?;
         normalize_legacy_schema_phase(home, &mut journal)?;
         validate_migration_journal(home, path, &journal)?;
@@ -495,12 +491,8 @@ fn decode_migration_journal(
             pending_ignore_contents: round2.pending_ignore_contents,
         };
         validate_migration_journal_base_shape(path, &journal)?;
-        journal.preserved_state_proofs = preserved_state_proofs_for_compatibility(
-            home,
-            &journal.project_ids,
-            &journal.created_state_ids,
-            head_required,
-        )?;
+        journal.preserved_state_proofs =
+            preserved_state_proofs_for_compatibility(home, &journal, head_required)?;
         validate_migration_journal_shape(path, &journal)?;
         normalize_legacy_schema_phase(home, &mut journal)?;
         validate_migration_journal(home, path, &journal)?;
@@ -646,13 +638,6 @@ fn upgrade_round1_migration_journal(
         pending_ignore_contents: None,
     };
     validate_migration_journal_base_shape(path, &journal)?;
-    journal.preserved_state_proofs = preserved_state_proofs_for_compatibility(
-        home,
-        &journal.project_ids,
-        &journal.created_state_ids,
-        compatibility_phase_requires_state_head(original_phase),
-    )?;
-    validate_migration_journal_shape(path, &journal)?;
     let project_targets = legacy_project_audit_targets_from_history(home, &journal)?;
 
     match original_phase {
@@ -662,6 +647,7 @@ fn upgrade_round1_migration_journal(
         MigrationV2Phase::IgnoreAudited => {
             validate_round1_ignore_audited(home)?;
             validate_targets_are_prior_or_expected(home, &project_targets)?;
+            validate_snapshotless_created_state_transitions(home, &journal, &project_targets)?;
             journal.audit_targets = project_targets;
             journal.phase = MigrationV2Phase::ProjectsWritePrepared;
         }
@@ -705,9 +691,41 @@ fn upgrade_round1_migration_journal(
         | MigrationV2Phase::SchemaWritePrepared
         | MigrationV2Phase::SchemaWritten => unreachable!("rejected above"),
     }
+    journal.preserved_state_proofs = preserved_state_proofs_for_compatibility(
+        home,
+        &journal,
+        compatibility_phase_requires_state_head(original_phase),
+    )?;
+    validate_migration_journal_shape(path, &journal)?;
     validate_migration_journal(home, path, &journal)?;
     write_migration_journal(path, &journal)?;
     Ok(journal)
+}
+
+fn validate_snapshotless_created_state_transitions(
+    home: &Path,
+    journal: &MigrationV2Journal,
+    project_targets: &[AuditTargetSnapshot],
+) -> Result<(), StoreError> {
+    for project_id in &journal.created_state_ids {
+        let state_path = project_state_path(home, project_id);
+        if !state_path.exists()
+            || state_history_provenance(home, project_id)? == StateProvenance::CreatedByMigration
+        {
+            continue;
+        }
+        let relative_meta = PathBuf::from(format!("projects/{project_id}/meta.toml"));
+        let meta_target = project_targets
+            .iter()
+            .find(|target| target.relative_path == relative_meta)
+            .ok_or_else(|| StoreError::MigrationConflict {
+                path: home.join(&relative_meta),
+            })?;
+        if audit_path_identity(&home.join(&relative_meta))? != meta_target.expected {
+            return Err(StoreError::MigrationConflict { path: state_path });
+        }
+    }
+    Ok(())
 }
 
 fn validate_migration_journal(
@@ -716,7 +734,7 @@ fn validate_migration_journal(
     journal: &MigrationV2Journal,
 ) -> Result<(), StoreError> {
     validate_migration_journal_shape(path, journal)?;
-    validate_preserved_state_proofs(home, journal)?;
+    validate_state_provenance_partition(home, journal)?;
     validate_audit_target_paths(home, &journal.audit_targets)?;
     validate_authoritative_migration_snapshots(home, path, journal)?;
     validate_snapshot_phase_state(home, journal)?;
@@ -737,16 +755,29 @@ fn compatibility_phase_requires_state_head(phase: MigrationV2Phase) -> bool {
 
 fn preserved_state_proofs_for_compatibility(
     home: &Path,
-    project_ids: &[ProjectId],
-    created_state_ids: &[ProjectId],
+    journal: &MigrationV2Journal,
     head_required: bool,
 ) -> Result<Vec<PreservedStateProof>, StoreError> {
-    let created: std::collections::HashSet<_> = created_state_ids.iter().collect();
-    project_ids
+    let partition = authoritative_state_partition(home, journal)?;
+    let authoritative_created: std::collections::HashSet<_> = partition
         .iter()
-        .filter(|project_id| !created.contains(project_id))
-        .map(|project_id| {
-            let proof = preserved_state_proof(home, project_id)?;
+        .filter_map(|(project_id, provenance)| {
+            (*provenance == StateProvenance::CreatedByMigration).then_some(*project_id)
+        })
+        .collect();
+    let claimed_created: std::collections::HashSet<_> = journal.created_state_ids.iter().collect();
+    if authoritative_created != claimed_created {
+        return Err(StoreError::MigrationConflict {
+            path: home.join(MIGRATION_V2_JOURNAL),
+        });
+    }
+    partition
+        .into_iter()
+        .filter_map(|(project_id, provenance)| {
+            (provenance != StateProvenance::CreatedByMigration).then_some((project_id, provenance))
+        })
+        .map(|(project_id, provenance)| {
+            let proof = preserved_state_proof_for_provenance(home, project_id, provenance)?;
             if head_required && !proof.head_required {
                 return Err(StoreError::MigrationConflict {
                     path: project_state_path(home, project_id),
@@ -760,6 +791,23 @@ fn preserved_state_proofs_for_compatibility(
 fn preserved_state_proof(
     home: &Path,
     project_id: &ProjectId,
+) -> Result<PreservedStateProof, StoreError> {
+    let provenance = match state_history_provenance(home, project_id)? {
+        StateProvenance::PreMigrationTracked => StateProvenance::PreMigrationTracked,
+        StateProvenance::PreMigrationUntracked => StateProvenance::PreMigrationUntracked,
+        StateProvenance::CreatedByMigration => {
+            return Err(StoreError::MigrationConflict {
+                path: project_state_path(home, project_id),
+            });
+        }
+    };
+    preserved_state_proof_for_provenance(home, project_id, provenance)
+}
+
+fn preserved_state_proof_for_provenance(
+    home: &Path,
+    project_id: &ProjectId,
+    provenance: StateProvenance,
 ) -> Result<PreservedStateProof, StoreError> {
     let (_, setup) = migration_record_and_setup(home, project_id)?;
     let canonical = setup
@@ -777,10 +825,10 @@ fn preserved_state_proof(
     {
         return Err(StoreError::MigrationConflict { path: state_path });
     }
-    let head_required = match authoritative_state_provenance(home, project_id)? {
-        StateHistoryProvenance::PreMigrationTracked => true,
-        StateHistoryProvenance::PreMigrationUntracked => false,
-        StateHistoryProvenance::MigrationCreated => {
+    let head_required = match provenance {
+        StateProvenance::PreMigrationTracked => true,
+        StateProvenance::PreMigrationUntracked => false,
+        StateProvenance::CreatedByMigration => {
             return Err(StoreError::MigrationConflict { path: state_path });
         }
     };
@@ -794,17 +842,50 @@ fn preserved_state_proof(
     })
 }
 
-fn validate_preserved_state_proofs(
+fn validate_state_provenance_partition(
     home: &Path,
     journal: &MigrationV2Journal,
 ) -> Result<(), StoreError> {
-    for proof in &journal.preserved_state_proofs {
-        let authoritative = preserved_state_proof(home, &proof.project_id)?;
+    let partition = authoritative_state_partition(home, journal)?;
+    let claimed_created: std::collections::HashSet<_> = journal.created_state_ids.iter().collect();
+    let authoritative_created: std::collections::HashSet<_> = partition
+        .iter()
+        .filter_map(|(project_id, provenance)| {
+            (*provenance == StateProvenance::CreatedByMigration).then_some(*project_id)
+        })
+        .collect();
+    if claimed_created != authoritative_created {
+        return Err(StoreError::MigrationConflict {
+            path: home.join(MIGRATION_V2_JOURNAL),
+        });
+    }
+
+    let claimed_proofs: std::collections::HashMap<_, _> = journal
+        .preserved_state_proofs
+        .iter()
+        .map(|proof| (&proof.project_id, proof))
+        .collect();
+    let authoritative_preserved: Vec<_> = partition
+        .into_iter()
+        .filter(|(_, provenance)| *provenance != StateProvenance::CreatedByMigration)
+        .collect();
+    if claimed_proofs.len() != authoritative_preserved.len() {
+        return Err(StoreError::MigrationConflict {
+            path: home.join(MIGRATION_V2_JOURNAL),
+        });
+    }
+    for (project_id, provenance) in authoritative_preserved {
+        let Some(proof) = claimed_proofs.get(project_id) else {
+            return Err(StoreError::MigrationConflict {
+                path: project_state_path(home, project_id),
+            });
+        };
+        let authoritative = preserved_state_proof_for_provenance(home, project_id, provenance)?;
         if proof.expected != authoritative.expected
             || proof.head_required != authoritative.head_required
         {
             return Err(StoreError::MigrationConflict {
-                path: project_state_path(home, &proof.project_id),
+                path: project_state_path(home, project_id),
             });
         }
     }
@@ -1107,12 +1188,11 @@ fn upgrade_legacy_migration_journal(
         let relative_state = PathBuf::from(format!("projects/{project_id}/notes/project.md"));
         let state_path = home.join(&relative_state);
         if state_path.exists() {
-            match authoritative_state_provenance(home, project_id)? {
-                StateHistoryProvenance::MigrationCreated => {
+            match state_history_provenance(home, project_id)? {
+                StateProvenance::CreatedByMigration => {
                     created_state_ids.push(project_id.clone());
                 }
-                StateHistoryProvenance::PreMigrationTracked
-                | StateHistoryProvenance::PreMigrationUntracked => {
+                StateProvenance::PreMigrationTracked | StateProvenance::PreMigrationUntracked => {
                     let proof = preserved_state_proof(home, project_id)?;
                     if on_disk != 1 && !proof.head_required {
                         return Err(StoreError::MigrationConflict { path: state_path });
@@ -1263,10 +1343,10 @@ fn git_revision_bytes(
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum StateHistoryProvenance {
+enum StateProvenance {
     PreMigrationTracked,
     PreMigrationUntracked,
-    MigrationCreated,
+    CreatedByMigration,
 }
 
 fn project_state_path(home: &Path, project_id: &ProjectId) -> PathBuf {
@@ -1371,10 +1451,10 @@ fn migration_history_boundary(home: &Path) -> Result<Option<String>, StoreError>
     Ok(additions.pop())
 }
 
-fn authoritative_state_provenance(
+fn state_history_provenance(
     home: &Path,
     project_id: &ProjectId,
-) -> Result<StateHistoryProvenance, StoreError> {
+) -> Result<StateProvenance, StoreError> {
     let (record, setup) = migration_record_and_setup(home, project_id)?;
     let canonical = setup
         .render()
@@ -1439,13 +1519,85 @@ fn authoritative_state_provenance(
     }
 
     match (pre_migration_tracked, migration_created) {
-        (true, false) => Ok(StateHistoryProvenance::PreMigrationTracked),
-        (false, true) => Ok(StateHistoryProvenance::MigrationCreated),
-        (false, false) => Ok(StateHistoryProvenance::PreMigrationUntracked),
+        (true, false) => Ok(StateProvenance::PreMigrationTracked),
+        (false, true) => Ok(StateProvenance::CreatedByMigration),
+        (false, false) => Ok(StateProvenance::PreMigrationUntracked),
         (true, true) => Err(StoreError::MigrationConflict {
             path: home.join(relative_state),
         }),
     }
+}
+
+fn authoritative_state_partition<'a>(
+    home: &Path,
+    journal: &'a MigrationV2Journal,
+) -> Result<Vec<(&'a ProjectId, StateProvenance)>, StoreError> {
+    journal
+        .project_ids
+        .iter()
+        .map(|project_id| {
+            authoritative_state_provenance(home, journal, project_id)
+                .map(|provenance| (project_id, provenance))
+        })
+        .collect()
+}
+
+fn authoritative_state_provenance(
+    home: &Path,
+    journal: &MigrationV2Journal,
+    project_id: &ProjectId,
+) -> Result<StateProvenance, StoreError> {
+    match state_history_provenance(home, project_id)? {
+        StateProvenance::PreMigrationTracked => Ok(StateProvenance::PreMigrationTracked),
+        StateProvenance::CreatedByMigration => Ok(StateProvenance::CreatedByMigration),
+        StateProvenance::PreMigrationUntracked => {
+            let state_path = project_state_path(home, project_id);
+            validate_store_file_target(home, &state_path)?;
+            match std::fs::symlink_metadata(&state_path) {
+                Err(error) if error.kind() == ErrorKind::NotFound => {
+                    Ok(StateProvenance::CreatedByMigration)
+                }
+                Err(error) => Err(StoreError::Io(error)),
+                Ok(metadata) if !metadata.file_type().is_file() => {
+                    Err(StoreError::MigrationConflict { path: state_path })
+                }
+                Ok(_) if has_explicit_migration_state_transition(home, journal, project_id)? => {
+                    Ok(StateProvenance::CreatedByMigration)
+                }
+                Ok(_) => Ok(StateProvenance::PreMigrationUntracked),
+            }
+        }
+    }
+}
+
+fn has_explicit_migration_state_transition(
+    home: &Path,
+    journal: &MigrationV2Journal,
+    project_id: &ProjectId,
+) -> Result<bool, StoreError> {
+    if !matches!(
+        journal.phase,
+        MigrationV2Phase::ProjectsWritePrepared | MigrationV2Phase::ProjectsWritten
+    ) {
+        return Ok(false);
+    }
+    let authoritative = MigrationV2Journal {
+        target_schema_version: 2,
+        phase: journal.phase,
+        project_ids: vec![project_id.clone()],
+        created_state_ids: vec![project_id.clone()],
+        preserved_state_proofs: Vec::new(),
+        audit_targets: Vec::new(),
+        pending_ignore_contents: None,
+    };
+    let expected = legacy_project_audit_targets_from_history(home, &authoritative)?;
+    Ok(expected.iter().all(|expected_target| {
+        journal.audit_targets.iter().any(|target| {
+            target.relative_path == expected_target.relative_path
+                && target.prior == expected_target.prior
+                && target.expected == expected_target.expected
+        })
+    }))
 }
 
 fn legacy_project_audit_targets_from_history(
