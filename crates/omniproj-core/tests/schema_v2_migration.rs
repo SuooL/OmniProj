@@ -1266,21 +1266,91 @@ fn round1_post_project_and_schema_phases_resume_when_outputs_are_verifiable() {
 }
 
 #[test]
-fn round1_ignore_audited_partial_write_resumes_only_deterministic_outputs() {
+fn round1_ignore_audited_cannot_claim_human_recreated_exact_outputs() {
     let _guard = env_guard();
-    let home = unique_home("round1-ignore-audited-partial");
+    let home = unique_home("round1-ignore-audited-human-exact-outputs");
     seed_v1_store(&home);
+    let relative_state = format!("projects/{PROJECT_ID}/notes/project.md");
+    let state = home.join(&relative_state);
+    let relative_meta = format!("projects/{PROJECT_ID}/meta.toml");
+    let meta = home.join(&relative_meta);
     std::env::set_var("OMNIPROJ_HOME", &home);
     std::env::set_var("OMNIPROJ_TEST_FAILPOINT", "migration_after_metadata_write");
     assert!(ensure_home().is_err());
-    write_round1_migration_journal(&home, "ignore_audited");
     std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+
+    let canonical_state = std::fs::read(&state).unwrap();
+    let deterministic_v2_meta = std::fs::read(&meta).unwrap();
+    std::fs::remove_file(&state).unwrap();
+    std::fs::write(&state, &canonical_state).unwrap();
+    std::fs::write(&meta, &deterministic_v2_meta).unwrap();
+    write_round1_migration_journal(&home, "ignore_audited");
+
+    let journal = home.join(".migration-v2");
+    let journal_before = std::fs::read(&journal).unwrap();
+    let state_before = std::fs::read(&state).unwrap();
+    let meta_before = std::fs::read(&meta).unwrap();
+    let schema_before = std::fs::read(home.join("SCHEMA_VERSION")).unwrap();
+    let index_before = git_output(&home, &["diff", "--cached", "--name-only"]);
+    let head_before = git_output(&home, &["rev-parse", "HEAD"]);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::MigrationConflict { .. }));
+    assert_eq!(std::fs::read(&journal).unwrap(), journal_before);
+    assert_eq!(std::fs::read(&state).unwrap(), state_before);
+    assert_eq!(std::fs::read(&meta).unwrap(), meta_before);
+    assert_eq!(
+        std::fs::read(home.join("SCHEMA_VERSION")).unwrap(),
+        schema_before
+    );
+    assert_eq!(
+        git_output(&home, &["diff", "--cached", "--name-only"]),
+        index_before
+    );
+    assert_eq!(git_output(&home, &["rev-parse", "HEAD"]), head_before);
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn round1_ignore_audited_with_missing_created_state_still_recovers() {
+    let _guard = env_guard();
+    let home = unique_home("round1-ignore-audited-missing-created-state");
+    seed_v1_store(&home);
+    std::fs::write(
+        home.join(".gitignore"),
+        "# existing store ignore\nprojects/*/cache/\n/.migration-v2\n",
+    )
+    .unwrap();
+    run_git(&home, &["add", "--", ".gitignore"]);
+    run_git(
+        &home,
+        &[
+            "-c",
+            "user.name=omniproj-test",
+            "-c",
+            "user.email=omniproj-test@local",
+            "commit",
+            "-q",
+            "-m",
+            "audit migration marker",
+        ],
+    );
+    write_round1_migration_journal(&home, "ignore_audited");
+    std::env::set_var("OMNIPROJ_HOME", &home);
 
     ensure_home().unwrap();
 
+    assert_eq!(std::fs::read(home.join("SCHEMA_VERSION")).unwrap(), b"2\n");
     assert_eq!(
-        std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
-        "2\n"
+        std::fs::read(
+            home.join("projects")
+                .join(PROJECT_ID)
+                .join("notes/project.md")
+        )
+        .unwrap(),
+        SETUP_STATE.as_bytes()
     );
     assert!(!home.join(".migration-v2").exists());
     std::env::remove_var("OMNIPROJ_HOME");

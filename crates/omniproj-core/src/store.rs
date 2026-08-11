@@ -647,7 +647,12 @@ fn upgrade_round1_migration_journal(
         MigrationV2Phase::IgnoreAudited => {
             validate_round1_ignore_audited(home)?;
             validate_targets_are_prior_or_expected(home, &project_targets)?;
-            validate_snapshotless_created_state_transitions(home, &journal, &project_targets)?;
+            for project_id in &journal.created_state_ids {
+                let state_path = project_state_path(home, project_id);
+                if state_path.exists() {
+                    return Err(StoreError::MigrationConflict { path: state_path });
+                }
+            }
             journal.audit_targets = project_targets;
             journal.phase = MigrationV2Phase::ProjectsWritePrepared;
         }
@@ -700,32 +705,6 @@ fn upgrade_round1_migration_journal(
     validate_migration_journal(home, path, &journal)?;
     write_migration_journal(path, &journal)?;
     Ok(journal)
-}
-
-fn validate_snapshotless_created_state_transitions(
-    home: &Path,
-    journal: &MigrationV2Journal,
-    project_targets: &[AuditTargetSnapshot],
-) -> Result<(), StoreError> {
-    for project_id in &journal.created_state_ids {
-        let state_path = project_state_path(home, project_id);
-        if !state_path.exists()
-            || state_history_provenance(home, project_id)? == StateProvenance::CreatedByMigration
-        {
-            continue;
-        }
-        let relative_meta = PathBuf::from(format!("projects/{project_id}/meta.toml"));
-        let meta_target = project_targets
-            .iter()
-            .find(|target| target.relative_path == relative_meta)
-            .ok_or_else(|| StoreError::MigrationConflict {
-                path: home.join(&relative_meta),
-            })?;
-        if audit_path_identity(&home.join(&relative_meta))? != meta_target.expected {
-            return Err(StoreError::MigrationConflict { path: state_path });
-        }
-    }
-    Ok(())
 }
 
 fn validate_migration_journal(
