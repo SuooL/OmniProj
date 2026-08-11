@@ -215,3 +215,40 @@ Code commit: `b32ac6d` (`fix(core): preserve recovery journal compatibility`).
 - The four Round-2 phases that persisted snapshots (`ignore_write_prepared`, `ignore_written`, `projects_write_prepared`, and `projects_written`) are covered directly. Its schema phases had no snapshot targets and remain handled by the existing strict legacy-phase upgrade.
 - Fresh initialization now requires `SCHEMA_VERSION` to be absent before `git init`. A regular pre-existing `.gitignore` is preserved and excluded from the initial audit; symlink/directory schema or ignore paths conflict without following or replacing them. A real commit-hook failure/retry proves the Human `.gitignore` is not included in the tool commit.
 - Every persisted mutation/audit target now requires a `Missing` or `RegularFile` prior and a `RegularFile` expected identity. Tagged directory/symlink priors and a Round-2 hash that currently names a symlink are rejected before writes or `git add`. Pending journals remain inside `.git`; the one-lock recovery flow and exact-path audit boundary are unchanged.
+
+## Correction Round 5
+
+Code commit: `77a8c80` (`fix(core): validate recovery writes against trusted paths`).
+
+### Changed files
+
+- `crates/omniproj-core/src/store.rs`: validates Round-2 expected snapshots against deterministic write bytes and Git-backed v1 project baselines; adds canonical-root, no-follow ancestor validation; checks persisted audit paths during decode; guards store atomic writes before temporary-file creation and destination rename; and rechecks exact commit paths before Git add and commit.
+- `crates/omniproj-core/src/project.rs`: applies checked store writes and directory guards to registration staging/final paths and all audited metadata replacements.
+- `crates/omniproj-core/src/project_state.rs`: routes store-owned state writes through the checked atomic primitive while preserving the public save contract that creates an absent store root.
+- `crates/omniproj-core/tests/schema_v2_migration.rs` and `project.rs` unit tests: cover wrong-but-valid Round-2 expected hashes and ancestor-symlink escapes with byte, target, journal, and index invariants.
+
+### RED evidence
+
+1. `cargo test -p omniproj-core --test schema_v2_migration round2_ignore_prepared_rejects_an_expected_hash_that_disagrees_with_its_write_bytes -- --exact --nocapture` failed because recovery appended `/.migration-v2` to `.gitignore` before rejecting the false 64-hex expected hash.
+2. `cargo test -p omniproj-core --test schema_v2_migration round2_projects_prepared_rejects_non_authoritative_meta_and_state_hashes_before_writes -- --exact --nocapture` failed because recovery replaced strict v1 metadata with v2 bytes before detecting the corrupted snapshot; the fixture iterates both metadata and migration-created state targets.
+3. `cargo test -p omniproj-core --test schema_v2_migration migration_rejects_a_notes_ancestor_symlink_before_writing_external_state -- --exact --nocapture` failed because an external `project.md` was created through the symlinked `notes/` ancestor.
+4. `cargo test -p omniproj-core --lib registration_rejects_a_staging_project_root_symlink_before_external_writes -- --nocapture` failed because registration created external `notes/project.md` through a swapped staging-root symlink.
+
+### GREEN evidence and final verification
+
+- Both authoritative-snapshot regressions and all five `round2_` migration tests passed after the decoder validation change.
+- Both ancestor-symlink regressions passed with external sentinel bytes unchanged, no external state/metadata target, the symlink intact, and an empty relevant Git index.
+- `cargo test -p omniproj-core --test schema_v2_migration --test project_source_registry`: 47 passed, 0 failed.
+- `cargo test -p omniproj-core --lib project_state -- --nocapture`: 9 passed, 0 failed.
+- `cargo test -p omniproj-core --lib`: 89 passed, 0 failed.
+- `cargo test -p omniproj-core --tests`: 136 passed, 0 failed across unit and integration suites.
+- `cargo check --workspace`: exit 0; only the existing staged-migration deprecation warnings remain.
+- `cargo fmt --all --check`: exit 0.
+- `git diff --check`: exit 0 before the code commit and report commit.
+
+### Design decisions and concerns
+
+- Round-2 ignore recovery accepts an expected identity only when it hashes the persisted `pending_ignore_contents`. Project recovery reconstructs strict v1 metadata from Git history, deterministically renders v2 metadata and any migration-created state, and requires persisted prior/expected identities to match that authoritative plan before phase advance, journal rewrite, file write, or staging.
+- Store targets are resolved lexically below the configured home and checked from its canonical root with `symlink_metadata`; every existing intermediate component must be a real directory. Mutation leaves remain missing or regular files, while directory operations separately require real directories or an explicitly allowed missing leaf.
+- The no-follow guard runs during snapshot/decoder validation, around directory creation, before temporary-file creation and destination rename, before registration directory rename/fsync, and before Git add/commit. The audit journal itself remains under the store's real `.git` directory and is never a worktree audit target.
+- The first project-state regression run exposed the prior public behavior of saving below an absent store root. The final implementation restores only that root creation at the public entry point; initialized migration and registration paths retain the stricter guarded contract.
