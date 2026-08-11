@@ -6,6 +6,8 @@
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
+use crate::ids::ProjectId;
+
 fn short_sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -60,6 +62,22 @@ pub fn notes_dir(hash: &str) -> PathBuf {
 /// (gitignored at store init). Verify reports land here (spec §5.2).
 pub fn cache_dir(hash: &str) -> PathBuf {
     project_dir(hash).join("cache")
+}
+
+pub fn project_dir_for(project_id: &ProjectId) -> PathBuf {
+    project_dir(project_id.as_str())
+}
+
+pub fn auto_dir_for(project_id: &ProjectId) -> PathBuf {
+    project_dir_for(project_id).join("auto")
+}
+
+pub fn notes_dir_for(project_id: &ProjectId) -> PathBuf {
+    project_dir_for(project_id).join("notes")
+}
+
+pub fn cache_dir_for(project_id: &ProjectId) -> PathBuf {
+    project_dir_for(project_id).join("cache")
 }
 
 /// `~/.omniproj/projects/<hash>/learned.md` — per-project heuristics distilled from

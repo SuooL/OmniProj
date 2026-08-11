@@ -11,6 +11,7 @@ pub mod paths;
 pub mod plan;
 pub mod privacy;
 pub mod project;
+pub mod project_state;
 pub mod store;
 pub mod user_model;
 
@@ -19,14 +20,23 @@ pub use ids::{CommitmentTransitionId, ProjectId, ProjectSourceId, WorkItemId};
 pub use model::{Message, Role, Session, Source};
 pub use notes::{next_path, NextDoc, NextItem, TaskStatus};
 pub use paths::{
-    auto_dir, cache_dir, content_hash, learned_path, notes_dir, omniproj_home, project_dir,
-    project_hash,
+    auto_dir, auto_dir_for, cache_dir, cache_dir_for, content_hash, learned_path, notes_dir,
+    notes_dir_for, omniproj_home, project_dir, project_dir_for, project_hash,
 };
 pub use plan::{plan_path, PlanDoc, PlanEntry, PlanStatus};
 pub use privacy::{default_deny_globs, redact_secrets, PrivacyPolicy};
+#[allow(deprecated)]
 pub use project::{
-    find_by_cwd, list_projects, load_meta, register, remove_project, set_last_distilled, Cadence,
-    Fingerprint, ProjectMeta,
+    canonical_source_owner, find_by_cwd, find_project_by_cwd, list_project_records, list_projects,
+    load_meta, load_project, record_source_observation, register, register_project,
+    relink_primary_git_source, remove_project, set_last_distilled, Cadence, CaptureCursor,
+    Fingerprint, ProjectMeta, ProjectRecord, ProjectSource, ProjectSourceKind, ProjectSourceStatus,
+    ProjectStoreError, RecordSourceObservationInput, RegisterOutcome, RegisterProjectInput,
+    RelinkSourceInput, SourceObservationOutcome,
+};
+pub use project_state::{
+    CommitmentTransition, CommitmentTransitionKind, ProjectStateDoc, ProjectStateError,
+    ProjectStatus, WorkItem, WorkItemStatus,
 };
 #[allow(deprecated)]
 pub use store::{
