@@ -141,3 +141,43 @@ No `Cargo.toml` or `Cargo.lock` changes were required.
 - Pending audits use `prepared` and `applied`. A prepared mutation matching all prior identities is cleared without replay; matching all expected identities is promoted and audited; any mixed/unknown state conflicts. Registration rename failure therefore clears safely, while parent-fsync failure recognizes the already-visible complete directory.
 - `ensure_home` now acquires the checked store lock before the fresh/existing decision. Its locked helper performs init, schema migration, pending recovery, and cleanup without nested lock acquisition. Initial Git audit stages only tool-created `.gitignore` (when absent) and `SCHEMA_VERSION`.
 - The pending journal remains inside `.git`, so it is outside all worktree staging. Existing nonblocking lock semantics and retained nonempty forensic staging trees are unchanged.
+
+## Fix Round 3
+
+Fix commit: `8b4498c748b4fae06bb9b356f93299069311e426` (`fix(core): secure initialization and migration recovery`).
+
+### Changed files
+
+- `crates/omniproj-core/src/store.rs`: puts fresh initialization under the pending-audit prepared/applied protocol; recovers deterministic partial initialization before schema dispatch; adds schema write-prepared/written snapshots; upgrades verifiable Round-1 phases from Git-backed v1 inputs; replaces content-only hashes with tagged missing/regular/directory/symlink identities; and rejects non-regular mutation targets before any replacement or staging.
+- `crates/omniproj-core/tests/schema_v2_migration.rs`: adds schema same-path conflict and write/phase crash coverage, Round-1 project/schema phase recovery and Human-v2 conflict coverage, plus dangling symlink, same-bytes symlink, and directory-target regressions.
+- `crates/omniproj-core/src/store.rs` unit tests: add a real fresh-init commit-hook failure recovery test and deterministic prepared-window failpoints both after the `.gitignore` write and after the schema write.
+
+No `Cargo.toml` or `Cargo.lock` changes were required.
+
+### RED evidence
+
+1. `cargo test -p omniproj-core --lib fresh_initialization_recovers_an_exact_audit_after_commit_failure -- --nocapture`: failed because `.git/omniproj-pending-audit.toml` did not exist after the rejected initial commit.
+2. `cargo test -p omniproj-core --test schema_v2_migration schema_stamp_write_before_phase_advance_is_recoverable -- --exact --nocapture`: the new write-before-phase failpoint did not interrupt migration; `ensure_home()` unexpectedly returned `Ok`.
+3. `cargo test -p omniproj-core --test schema_v2_migration schema_audit_recovery_rejects_same_path_human_bytes_before_git_add -- --exact --nocapture`: `ensure_home().unwrap_err()` received `Ok`; parseable Human bytes `"2 \n"` were accepted and committed.
+4. `cargo test -p omniproj-core --test schema_v2_migration round1_ -- --nocapture`: `projects_written` failed with an invalid empty target set, while `ignore_audited` plus a valid Human v2 rename unexpectedly returned `Ok` and was audited.
+5. `cargo test -p omniproj-core --test schema_v2_migration migration_rejects_ -- --nocapture`: all three file-type regressions failed; dangling and same-bytes symlinks were replaced successfully, and a directory produced a non-typed I/O error.
+6. `cargo test -p omniproj-core --lib fresh_initialization_recovers_a_prepared_partial_write -- --nocapture`: first failed because the post-`.gitignore` failpoint did not exist, then failed at the post-schema/pre-applied window until both prepared states used deterministic recovery.
+
+### GREEN evidence and final verification
+
+- `cargo test -p omniproj-core --test schema_v2_migration`: 22 passed, 0 failed.
+- `cargo test -p omniproj-core --test project_source_registry`: 15 passed, 0 failed.
+- `cargo test -p omniproj-core --lib project_state -- --nocapture`: 9 passed, 0 failed.
+- `cargo test -p omniproj-core --lib`: 84 passed, 0 failed.
+- `cargo test -p omniproj-core --tests`: 121 passed, 0 failed across unit and integration suites.
+- `cargo check --workspace`: exit 0; only the existing staged-migration deprecation warnings remain.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0 before the code commit and again before report finalization.
+
+### Design decisions and concerns
+
+- Fresh initialization records its exact tool-created targets before either write. The normal applied path uses the same pending-audit recovery as registry mutations. The narrowly identified fresh-init prepared path can reconstruct only the fixed initialization bytes, validates every target as prior-or-expected, and then exact-commits; it never stages or rewrites pre-existing Human paths.
+- Schema stamping is now a one-target `schema_write_prepared`/`schema_written` snapshot transition. Both a crash after writing `2\n` but before phase advance and an audit-hook failure converge; any alternate bytes, even parseable `2`, produce `AuditConflict` before `git add`.
+- Round-1 recovery does not derive expected output from current v2 worktree bytes. It finds a strict v1 record in that path's Git history, runs the deterministic converter, validates prior/expected identities, and for already-audited phases also requires `HEAD` to match expected output. A valid Human v2 edit therefore remains unstaged and conflicts.
+- Snapshot identity uses `symlink_metadata`: `missing`, `regular_file { sha256 }`, `directory`, or `symlink { target }`. Mutation snapshots allow only missing/regular prior states and regular expected states; special files are typed conflicts, and symlink targets are never read or overwritten.
+- Pending journals remain below `.git`; all commits still stage exact validated relative paths. Store startup retains one nonblocking lock with no nested acquisition. No new external dependency or future-facing abstraction was introduced.
