@@ -181,3 +181,37 @@ No `Cargo.toml` or `Cargo.lock` changes were required.
 - Round-1 recovery does not derive expected output from current v2 worktree bytes. It finds a strict v1 record in that path's Git history, runs the deterministic converter, validates prior/expected identities, and for already-audited phases also requires `HEAD` to match expected output. A valid Human v2 edit therefore remains unstaged and conflicts.
 - Snapshot identity uses `symlink_metadata`: `missing`, `regular_file { sha256 }`, `directory`, or `symlink { target }`. Mutation snapshots allow only missing/regular prior states and regular expected states; special files are typed conflicts, and symlink targets are never read or overwritten.
 - Pending journals remain below `.git`; all commits still stage exact validated relative paths. Store startup retains one nonblocking lock with no nested acquisition. No new external dependency or future-facing abstraction was introduced.
+
+## Correction Implementer Round 4
+
+Code commit: `b32ac6d` (`fix(core): preserve recovery journal compatibility`).
+
+### Changed files
+
+- `crates/omniproj-core/src/store.rs`: adds exact `deny_unknown_fields` Round-2 SHA snapshot decoders for migration and pending-audit journals; maps absent/regular SHA priors to tagged identities; validates phase state before recovery; rejects persisted special-file priors; and preflights fresh-init schema/ignore paths before Git initialization.
+- `crates/omniproj-core/tests/schema_v2_migration.rs`: covers all four Round-2 snapshot-bearing migration phases, malformed/ambiguous fixtures, symlink-safe compatibility, fresh-init special-file handling through store unit tests, and tampered migration/pending special-prior journals.
+- `crates/omniproj-core/tests/project_source_registry.rs`: covers Round-2 pending-audit recovery from both `prepared` and `applied` fixtures.
+
+### RED evidence
+
+1. `cargo test -p omniproj-core --test schema_v2_migration round2_snapshot_migration_journals_resume_from_every_write_phase -- --exact --nocapture` failed at `ignore_write_prepared` with `InvalidData(... is malformed or does not match a supported migration journal format)`.
+2. `cargo test -p omniproj-core --test project_source_registry round2_pending_audits_resume_from_prepared_and_applied -- --exact --nocapture` failed at `prepared` because `expected_sha256` was unknown to the tagged-only decoder.
+3. `cargo test -p omniproj-core --lib fresh_initialization_rejects_a_preexisting_schema_before_git_init -- --nocapture` failed because `unwrap_err()` received `Ok(home)` after a pre-existing `SCHEMA_VERSION = 9` was overwritten.
+4. `cargo test -p omniproj-core --test schema_v2_migration persisted_ -- --nocapture` failed all three tests: a schema symlink prior was accepted and replaced, a project directory prior reached later runtime validation instead of decode rejection, and a pending directory prior was accepted and its journal cleared.
+
+### GREEN evidence and final verification
+
+- `cargo test -p omniproj-core --test schema_v2_migration --test project_source_registry`: 44 passed, 0 failed.
+- `cargo test -p omniproj-core --lib project_state -- --nocapture`: 9 passed, 0 failed.
+- `cargo test -p omniproj-core --lib`: 88 passed, 0 failed.
+- `cargo test -p omniproj-core --tests`: 132 passed, 0 failed across unit and integration suites.
+- `cargo check --workspace`: exit 0; only the existing staged-migration deprecation warnings remain.
+- `cargo fmt --all --check`: exit 0.
+- `git diff --check`: exit 0 before the code commit.
+
+### Design decisions and concerns
+
+- Round-2 compatibility accepts only the exact flat `relative_path`/`prior_sha256`/`expected_sha256` shape. A missing prior maps to `Missing`; a valid prior hash maps to `RegularFile`. Hash syntax, duplicate/relative paths, exact migration target sets, phase coherence, and actual prior/expected state are still checked before recovery. Mixed tagged/flat or malformed fixtures remain untouched and unstaged.
+- The four Round-2 phases that persisted snapshots (`ignore_write_prepared`, `ignore_written`, `projects_write_prepared`, and `projects_written`) are covered directly. Its schema phases had no snapshot targets and remain handled by the existing strict legacy-phase upgrade.
+- Fresh initialization now requires `SCHEMA_VERSION` to be absent before `git init`. A regular pre-existing `.gitignore` is preserved and excluded from the initial audit; symlink/directory schema or ignore paths conflict without following or replacing them. A real commit-hook failure/retry proves the Human `.gitignore` is not included in the tool commit.
+- Every persisted mutation/audit target now requires a `Missing` or `RegularFile` prior and a `RegularFile` expected identity. Tagged directory/symlink priors and a Round-2 hash that currently names a symlink are rejected before writes or `git add`. Pending journals remain inside `.git`; the one-lock recovery flow and exact-path audit boundary are unchanged.
