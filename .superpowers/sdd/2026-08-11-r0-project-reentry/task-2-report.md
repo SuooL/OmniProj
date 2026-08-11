@@ -347,3 +347,35 @@ Code commit: `61ccdeda77394631ebb22eac2c9df1970b8eb3f5` (`fix(core): preserve le
 - Exact canonical bytes are the classification boundary: semantic parse equality alone is insufficient, so alternate whitespace or any other byte difference remains a typed `MigrationConflict` and is not rewritten.
 - The relaxation applies only while upgrading the no-phase compatibility journal against schema 1 with project metadata still at its prior identity. If metadata proves the project audit already occurred, every project state must still match `HEAD`; schema-2 compatibility recovery is unchanged.
 - Non-created canonical state is excluded from `created_state_ids` and all migration audit targets, preserving its original tracking semantics.
+
+## Fresh Correction Round 9
+
+Code commit: `f676075751fb8a80d34c1e9ad07e9e310d1d4dfa` (`fix(core): persist preserved migration state proofs`).
+
+### Changed files
+
+- `crates/omniproj-core/src/store.rs`: persists one strict `preserved_state_proofs` entry for every non-created project state, binding the project id to its deterministic canonical regular-file identity and the compatibility recovery's `HEAD` requirement; validates the exact proof set, worktree bytes, parse result, authoritative deterministic identity, and optional `HEAD` bytes on every retry before mutation; and adds a deny-unknown decoder for the immediately prior tagged format.
+- `crates/omniproj-core/tests/schema_v2_migration.rs`: adds two normalization/interruption/retry sequences, safe and ambiguous prior-current compatibility cases, malformed proof-set cases, and updates the exact Round-2 fixture conversion to omit the new current-only field.
+
+### RED evidence
+
+1. `cargo test -p omniproj-core --test schema_v2_migration normalized_legacy_journal_retains_exact_untracked_state_proof_across_retries -- --exact --nocapture` failed because retry returned `Ok(home)` after the normalized journal's Human state was replaced by parse-equivalent but noncanonical bytes.
+2. `cargo test -p omniproj-core --test schema_v2_migration normalized_audited_legacy_journal_retains_state_head_proof_across_retries -- --exact --nocapture` failed because retry returned `Ok(home)` after an initially `HEAD`-proven canonical state was removed from tracking and committed out of `HEAD`.
+
+### GREEN evidence and final verification
+
+- Both multi-start regressions pass with typed `MigrationConflict` and byte-identical journal, state, metadata, schema, and index snapshots on retry.
+- The prior tagged current journal upgrades only from verifiable state; an audited/later missing-proof journal with an untracked non-created state remains ambiguous and conflicts. Missing, duplicate, wrong-kind, and unknown-field proof fixtures are rejected before rewrite.
+- The full migration suite passed 45/45, including tagged, Round-2, Round-1, and two-field/no-phase compatibility.
+- `cargo test -p omniproj-core --test schema_v2_migration --test project_source_registry`: 61 passed, 0 failed.
+- `cargo test -p omniproj-core --lib project_state -- --nocapture`: 9 passed, 0 failed.
+- `cargo test -p omniproj-core --lib`: 89 passed, 0 failed.
+- `cargo test -p omniproj-core --tests`: 150 passed, 0 failed across unit and integration suites.
+- `cargo check --workspace`: exit 0; only the existing staged-migration deprecation warnings remain.
+- `cargo fmt --all --check` and `git diff --check`: exit 0.
+
+### Design decisions and concerns
+
+- `preserved_state_proofs` must be unique and exactly cover `project_ids - created_state_ids`; each entry is path-bound through its typed project id, permits only a regular-file identity, and re-derives the authoritative identity from Git-backed v1 metadata plus the deterministic setup renderer.
+- Proofs created for schema-1 prior/journal-created Human state require exact worktree bytes but not `HEAD`. Schema 2 and compatibility phases at or beyond `projects_audited` require both exact worktree and `HEAD` bytes, and that requirement survives every normalized retry.
+- The immediately prior tagged format is distinguishable only by the absent proof field. Compatibility first validates its old base shape, then derives proofs from current evidence, runs the complete current validation pipeline, and only then rewrites. Audited/later provenance that cannot prove `HEAD` is rejected rather than downgraded.
