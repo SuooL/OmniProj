@@ -10,4 +10,5 @@ spike/digest-*.txt
 # Local AI-tooling runtime state (never repo content)
 .trellis/.runtime/
 .trellis/**/__pycache__/
+.superpowers/
 .Rhistory
