@@ -4,6 +4,7 @@
 //! Everything else (capture, distill, cli) depends inward on these types.
 
 pub mod factsheet;
+pub mod ids;
 pub mod model;
 pub mod notes;
 pub mod paths;
@@ -14,6 +15,7 @@ pub mod store;
 pub mod user_model;
 
 pub use factsheet::{FactSheet, GitFacts};
+pub use ids::{CommitmentTransitionId, ProjectId, ProjectSourceId, WorkItemId};
 pub use model::{Message, Role, Session, Source};
 pub use notes::{next_path, NextDoc, NextItem, TaskStatus};
 pub use paths::{
@@ -26,8 +28,10 @@ pub use project::{
     find_by_cwd, list_projects, load_meta, register, remove_project, set_last_distilled, Cadence,
     Fingerprint, ProjectMeta,
 };
+#[allow(deprecated)]
 pub use store::{
-    commit_all, ensure_home, store_txn, worktree_diff, CURRENT_SCHEMA_VERSION, SCHEMA_VERSION_FILE,
+    atomic_write, commit_all, commit_paths_checked, ensure_home, store_txn, with_store_txn,
+    worktree_diff, StoreError, CURRENT_SCHEMA_VERSION, SCHEMA_VERSION_FILE,
 };
 pub use user_model::{
     user_model_path, Dimension, UserModel, DIMENSIONS, USER_MODEL_DIM_CAP_CHARS,
