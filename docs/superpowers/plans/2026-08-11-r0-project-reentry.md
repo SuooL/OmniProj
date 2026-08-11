@@ -799,7 +799,7 @@ Every command takes one top-level `input` argument. Nested request DTOs and all 
 
 Remove notification plugin initialization, reminder worker, attention-count tooltip, and notification capability. Keep the neutral Open/Quit tray. Add `tauri-plugin-dialog` initialization and `dialog:allow-open`. Set the desktop minimum width to `640` so the specified `<800px` full-page path is testable.
 
-Keep `legacy.rs` as source archive but do not declare it as a module from `lib.rs`; this prevents outdated deferred commands from compiling into the shipped binary while retaining their implementation for later redesign. Add a source-level test that asserts the R0 command registry contains none of `advance`, `clarify`, `refine`, `graph`, `decision`, `attention`, `settings`, `reminder`, or `attribute`.
+Keep `legacy.rs` as source archive but do not declare it as a module from `lib.rs`; this prevents outdated deferred commands from compiling into the shipped binary while retaining their implementation for later redesign. Add a behavior-level IPC integration test that invokes representative deferred command names (`advance_task`, `get_graph`, `get_plan`, `get_attention`, and `test_reminder`) against the built R0 handler and asserts they are rejected as unregistered, while every R0 command is accepted by the handler boundary. Do not use source-text or symbol-presence assertions.
 
 Run: `cargo test -p omniproj-desktop --test r0_commands handler_ -- --nocapture`
 
