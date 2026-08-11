@@ -471,3 +471,138 @@ fn child_invalid_rfc3339_probe() {
         assert!(since.message.contains("RFC3339"));
     }
 }
+
+#[cfg(unix)]
+fn run_malformed_status_probe(case: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::new("malformed-status");
+    let source = fixture.path.join("source");
+    let bin = fixture.path.join("bin");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&bin).unwrap();
+    let git = bin.join("git");
+    fs::write(
+        &git,
+        r#"#!/bin/sh
+case " $* " in
+  *" rev-parse --is-bare-repository "*) printf 'false\n' ;;
+  *" symbolic-ref --short -q HEAD "*) printf 'main\n' ;;
+  *" rev-parse --verify HEAD "*) printf '1111111111111111111111111111111111111111\n' ;;
+  *" log -1 "*) printf '1111111111111111111111111111111111111111\0371111111\037subject\0372025-01-01T00:00:00Z' ;;
+  *" status --porcelain=v1 -z --untracked-files=all "*)
+    case "$OMNIPROJ_MALFORMED_STATUS" in
+      blank_blank) printf '   path\000' ;;
+      single_question) printf '?  path\000' ;;
+      single_bang) printf ' ! path\000' ;;
+      illegal_combination) printf 'AC new\000old\000' ;;
+      unknown_code) printf 'Z  path\000' ;;
+      truncated_normal) printf 'M  path' ;;
+      rename_missing_second_nul) printf 'R  new\000old' ;;
+      copy_empty_second_path) printf 'C  new\000\000' ;;
+      trailing_non_nul) printf 'M  path\000tail' ;;
+      *) exit 73 ;;
+    esac
+    ;;
+  *) exit 74 ;;
+esac
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "child_malformed_status_probe", "--nocapture"])
+        .env("OMNIPROJ_MALFORMED_STATUS", case)
+        .env("OMNIPROJ_MALFORMED_STATUS_SOURCE", source)
+        .env("PATH", bin)
+        .output()
+        .expect("run malformed-status probe");
+    assert!(
+        output.status.success(),
+        "malformed status {case} was not rejected:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn malformed_porcelain_statuses_are_typed_errors_without_panics() {
+    for case in [
+        "blank_blank",
+        "single_question",
+        "single_bang",
+        "illegal_combination",
+        "unknown_code",
+        "truncated_normal",
+        "rename_missing_second_nul",
+        "copy_empty_second_path",
+        "trailing_non_nul",
+    ] {
+        run_malformed_status_probe(case);
+    }
+}
+
+#[test]
+fn child_malformed_status_probe() {
+    let Some(source) = std::env::var_os("OMNIPROJ_MALFORMED_STATUS_SOURCE") else {
+        return;
+    };
+    let result = observe_repository(Path::new(&source), "2026-08-11T12:00:00Z");
+    let error = result.expect_err("malformed status must not produce an observation");
+    assert_eq!(error.kind, RepositoryReadErrorKind::InvalidOutput);
+}
+
+#[cfg(unix)]
+#[test]
+fn accepts_real_porcelain_v1_state_matrix() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = Fixture::new("status-matrix");
+    fixture.init();
+    for name in [
+        "unstaged.txt",
+        "staged.txt",
+        "both.txt",
+        "delete-index.txt",
+        "delete-worktree.txt",
+        "rename-source.txt",
+        "type-unstaged.txt",
+        "type-staged.txt",
+    ] {
+        fixture.write(name, "base\n");
+    }
+    fixture.git(&["add", "."]);
+    fixture.commit_at("status matrix base", "2025-01-01T00:00:00Z");
+
+    fixture.write("unstaged.txt", "worktree\n");
+    fixture.write("staged.txt", "index\n");
+    fixture.git(&["add", "staged.txt"]);
+    fixture.write("both.txt", "index\n");
+    fixture.git(&["add", "both.txt"]);
+    fixture.write("both.txt", "worktree\n");
+    fixture.write("new-staged.txt", "new\n");
+    fixture.git(&["add", "new-staged.txt"]);
+    fixture.write("added-modified.txt", "index\n");
+    fixture.git(&["add", "added-modified.txt"]);
+    fixture.write("added-modified.txt", "worktree\n");
+    fixture.git(&["rm", "-q", "delete-index.txt"]);
+    fs::remove_file(fixture.path.join("delete-worktree.txt")).unwrap();
+    fixture.write("intent-to-add.txt", "intent\n");
+    fixture.git(&["add", "-N", "intent-to-add.txt"]);
+    fixture.git(&["mv", "rename-source.txt", "rename-target.txt"]);
+    fixture.write("untracked.txt", "untracked\n");
+
+    fs::remove_file(fixture.path.join("type-unstaged.txt")).unwrap();
+    symlink("unstaged.txt", fixture.path.join("type-unstaged.txt")).unwrap();
+    fs::remove_file(fixture.path.join("type-staged.txt")).unwrap();
+    symlink("staged.txt", fixture.path.join("type-staged.txt")).unwrap();
+    fixture.git(&["add", "type-staged.txt"]);
+
+    let observed = observe_without_source_writes(&fixture.path);
+    assert_eq!(observed.changed_files, 12);
+    assert_eq!(observed.staged_files, 7);
+    assert_eq!(observed.unstaged_files, 6);
+    assert_eq!(observed.untracked_files, 1);
+}

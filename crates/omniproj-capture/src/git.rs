@@ -305,6 +305,41 @@ fn hex_bytes(bytes: &[u8]) -> String {
     encoded
 }
 
+/// Validate the XY state table from porcelain v1. The boolean result says whether
+/// the NUL record must be followed by the second path used by rename/copy states.
+fn validate_status_pair(index: u8, worktree: u8) -> Result<bool, RepositoryReadError> {
+    if matches!((index, worktree), (b'?', b'?') | (b'!', b'!')) {
+        return Ok(false);
+    }
+    if matches!(
+        (index, worktree),
+        (b'D', b'D')
+            | (b'A', b'U')
+            | (b'U', b'D')
+            | (b'U', b'A')
+            | (b'D', b'U')
+            | (b'A', b'A')
+            | (b'U', b'U')
+    ) {
+        return Ok(false);
+    }
+
+    let ordinary = match index {
+        b' ' => matches!(worktree, b'M' | b'T' | b'A' | b'D' | b'R' | b'C'),
+        b'M' | b'T' | b'A' => matches!(worktree, b' ' | b'M' | b'T' | b'D'),
+        b'D' => matches!(worktree, b' ' | b'M' | b'T' | b'R' | b'C'),
+        b'R' | b'C' => matches!(worktree, b' ' | b'M' | b'T' | b'D'),
+        _ => false,
+    };
+    if !ordinary {
+        return Err(read_error(
+            RepositoryReadErrorKind::InvalidOutput,
+            "Git returned an invalid porcelain status pair",
+        ));
+    }
+    Ok(matches!(index, b'R' | b'C') || matches!(worktree, b'R' | b'C'))
+}
+
 fn parse_status(status: &[u8]) -> Result<ParsedStatus, RepositoryReadError> {
     let mut changed = 0;
     let mut staged = 0;
@@ -333,13 +368,7 @@ fn parse_status(status: &[u8]) -> Result<ParsedStatus, RepositoryReadError> {
             ));
         }
         let (index, worktree) = (record[0], record[1]);
-        let valid = |value| b" MADRCU?!T".contains(&value);
-        if !valid(index) || !valid(worktree) {
-            return Err(read_error(
-                RepositoryReadErrorKind::InvalidOutput,
-                "Git returned an unknown porcelain status code",
-            ));
-        }
+        let is_rename_or_copy = validate_status_pair(index, worktree)?;
         let path = &record[3..];
         if path.is_empty() {
             return Err(read_error(
@@ -347,7 +376,6 @@ fn parse_status(status: &[u8]) -> Result<ParsedStatus, RepositoryReadError> {
                 "Git returned an empty porcelain path",
             ));
         }
-        let is_rename_or_copy = matches!(index, b'R' | b'C') || matches!(worktree, b'R' | b'C');
         let original_path = if is_rename_or_copy {
             let original_end = status[cursor..]
                 .iter()
@@ -378,12 +406,6 @@ fn parse_status(status: &[u8]) -> Result<ParsedStatus, RepositoryReadError> {
                 untracked += 1;
             }
             (b'!', b'!') => {}
-            (b'?', _) | (_, b'?') | (b'!', _) | (_, b'!') => {
-                return Err(read_error(
-                    RepositoryReadErrorKind::InvalidOutput,
-                    "Git returned an invalid porcelain status pair",
-                ));
-            }
             _ => {
                 changed += 1;
                 if index != b' ' {
