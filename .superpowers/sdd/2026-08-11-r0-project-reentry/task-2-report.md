@@ -410,3 +410,35 @@ Code commit: `eacd19055bd5c4a9d70961b08ae94ff26f0cdc98` (`fix(core): derive migr
 - The first committed addition of `/.migration-v2` to `.gitignore` is the provenance boundary. Only a strict ancestor containing exact deterministic state bytes alongside matching strict v1 metadata can authorize `head_required = true`; later commits cannot manufacture pre-migration provenance.
 - A persisted policy that differs from this derivation conflicts regardless of whether the stronger or weaker value would currently pass. Current `HEAD` is used only to enforce an authoritatively derived `true`, never to derive the policy.
 - Multiple marker-addition histories, merge-shaped boundary commits, noncanonical pre-boundary state, and contradictory tracked/created evidence are rejected conservatively as migration conflicts.
+
+## Fresh Correction Round 11
+
+Code commit: `5a5932244365fc7ad4957895ac8f0201d484d787` (`fix(core): derive migration state provenance partition`).
+
+### Changed files
+
+- `crates/omniproj-core/src/store.rs`: derives an authoritative per-project `StateProvenance` partition (`CreatedByMigration`, `PreMigrationUntracked`, or `PreMigrationTracked`) from the migration marker boundary, strict state/metadata history, and an explicit authoritative state-plus-metadata migration transition; requires `created_state_ids` and preserved proofs to match that partition exactly before any transition or audit; and applies the same derivation before upgrading prior-current, Round-2, Round-1, and legacy journals.
+- `crates/omniproj-core/tests/schema_v2_migration.rs`: adds two multi-start partition-tamper/Human-recreation regressions with journal, state, metadata, schema, index, and `HEAD` immutability assertions, plus a positive migration-created crash-recovery/audit regression.
+
+### RED evidence
+
+1. `cargo test -p omniproj-core --test schema_v2_migration tampered_partition_cannot_reclassify_preserved_untracked_state_as_migration_created -- --exact --nocapture` failed because `ensure_home().unwrap_err()` received `Ok(home)` after a normalized `head_required = false` proof was removed and the same project id was moved into `created_state_ids`.
+2. `cargo test -p omniproj-core --test schema_v2_migration ignore_audited_retry_cannot_claim_human_recreated_canonical_state -- --exact --nocapture` failed because `ensure_home().unwrap_err()` received `Ok(home)` after the migration-created file was removed at an `ignore_audited` recovery boundary and a Human recreated exact canonical bytes while the journal still claimed the id as created.
+
+### GREEN evidence and final verification
+
+- Both adversarial retries now return typed `MigrationConflict` before journal rewrite, file mutation, staging, or commit, preserving journal, state, metadata, schema, index, and `HEAD` snapshots exactly.
+- `genuine_migration_created_state_still_recovers_and_is_audited` passes after the project-state-write failpoint, proving the authoritative prepared state-plus-metadata transition retains legitimate recovery.
+- The full migration suite passed 50/50, including tagged, Round-2, Round-1, and two-field/no-phase compatibility. Three initial Round-1 compatibility regressions were resolved by requiring snapshotless formats with an already-present claimed-created state to prove that the same project's metadata is already at its authoritative v2 transition before normalization.
+- `cargo test -p omniproj-core --test schema_v2_migration --test project_source_registry`: 66 passed, 0 failed.
+- `cargo test -p omniproj-core --lib project_state -- --nocapture`: 9 passed, 0 failed.
+- `cargo test -p omniproj-core --lib`: 89 passed, 0 failed.
+- `cargo test -p omniproj-core --tests`: 155 passed, 0 failed across unit and integration suites.
+- `cargo check --workspace`: exit 0; only the existing staged-migration deprecation warnings remain.
+- `cargo fmt --all --check` and `git diff --check`: exit 0 before the code commit.
+
+### Design decisions and concerns
+
+- Journal partition fields are claims, not provenance. Current and compatibility validation independently derive the complete project partition, then require `created_state_ids` to equal exactly the migration-created set and preserved proofs to equal exactly the two pre-migration sets; `head_required = false` is permitted only for `PreMigrationUntracked`, and `true` only for `PreMigrationTracked`.
+- A canonical state that first appears after the committed marker while recovery is only at `ignore_audited` has no explicit tool-write transition and is therefore non-created; a journal cannot make it an audit target by moving its id between partition fields.
+- Legitimate uncommitted creation remains recoverable only through a complete, history-derived `missing -> canonical state` plus strict `v1 -> v2 metadata` transition persisted in a prepared/written snapshot. Later recovery uses the exact one-parent migration commit transition in Git history. Snapshotless Round-1 compatibility requires the metadata half of that transition to be visibly complete before it can synthesize the current representation.
