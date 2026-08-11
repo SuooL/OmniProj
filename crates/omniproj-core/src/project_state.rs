@@ -136,9 +136,7 @@ pub struct ProjectStateDoc {
     pub review_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-    #[serde(default)]
     pub work_items: Vec<WorkItem>,
-    #[serde(default)]
     pub commitment_transitions: Vec<CommitmentTransition>,
     #[serde(skip)]
     markdown_body: String,
@@ -355,6 +353,20 @@ mod tests {
             ProjectStateDoc::parse(&input),
             Err(ProjectStateError::UnsupportedSchema(2))
         ));
+    }
+
+    #[test]
+    fn parser_requires_persisted_collection_fields() {
+        for required in ["work_items = []\n", "commitment_transitions = []\n"] {
+            let input = SETUP.replacen(required, "", 1);
+            assert!(
+                matches!(
+                    ProjectStateDoc::parse(&input),
+                    Err(ProjectStateError::InvalidDocument(_))
+                ),
+                "missing {required:?} was accepted"
+            );
+        }
     }
 
     #[test]

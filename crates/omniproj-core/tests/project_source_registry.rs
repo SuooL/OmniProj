@@ -7,10 +7,11 @@ use std::sync::{Mutex, MutexGuard};
 
 use omniproj_core::{
     canonical_source_owner, ensure_home, find_project_by_cwd, list_project_records, list_projects,
-    load_meta, record_source_observation, register_project, relink_primary_git_source, Cadence,
-    CaptureCursor, ProjectId, ProjectRecord, ProjectSource, ProjectSourceId, ProjectSourceKind,
-    ProjectSourceStatus, ProjectStoreError, RecordSourceObservationInput, RegisterOutcome,
-    RegisterProjectInput, RelinkSourceInput, SourceObservationOutcome,
+    load_meta, load_project, record_source_observation, register_project,
+    relink_primary_git_source, Cadence, CaptureCursor, ProjectId, ProjectRecord, ProjectSource,
+    ProjectSourceId, ProjectSourceKind, ProjectSourceStatus, ProjectStoreError,
+    RecordSourceObservationInput, RegisterOutcome, RegisterProjectInput, RelinkSourceInput,
+    SourceObservationOutcome, StoreError,
 };
 
 const CREATED_AT: &str = "2026-08-10T12:00:00Z";
@@ -58,6 +59,18 @@ fn cleanup(home: PathBuf, sources: impl IntoIterator<Item = PathBuf>) {
     for source in sources {
         std::fs::remove_dir_all(source).unwrap();
     }
+}
+
+#[cfg(unix)]
+fn install_failing_commit_hook(home: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let hook = home.join(".git/hooks/pre-commit");
+    std::fs::write(&hook, "#!/bin/sh\necho forced audit failure >&2\nexit 1\n").unwrap();
+    let mut permissions = std::fs::metadata(&hook).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&hook, permissions).unwrap();
+    hook
 }
 
 #[test]
@@ -164,6 +177,62 @@ fn canonical_owner_lookup_is_read_only() {
 }
 
 #[test]
+fn loading_v2_metadata_rejects_duplicate_sources_bad_timestamps_and_incoherent_fields() {
+    let _guard = env_guard();
+    let (home, source_path) = setup("strict-v2-record");
+    let valid = register(&source_path, "Strict record");
+    let meta_path = home
+        .join("projects")
+        .join(valid.id.as_str())
+        .join("meta.toml");
+
+    let mut invalid_records = Vec::new();
+
+    let mut duplicate_source = valid.clone();
+    let mut duplicate = duplicate_source.sources[0].clone();
+    duplicate.is_primary = false;
+    duplicate_source.sources.push(duplicate);
+    invalid_records.push(("duplicate source id", duplicate_source));
+
+    let mut bad_project_timestamp = valid.clone();
+    bad_project_timestamp.created_at = "not-rfc3339".into();
+    invalid_records.push(("project created_at", bad_project_timestamp));
+
+    let mut bad_source_timestamp = valid.clone();
+    bad_source_timestamp.sources[0].last_observed_at = Some("not-rfc3339".into());
+    invalid_records.push(("source last_observed_at", bad_source_timestamp));
+
+    let mut empty_name = valid.clone();
+    empty_name.name.clear();
+    invalid_records.push(("empty project name", empty_name));
+
+    let mut empty_location = valid.clone();
+    empty_location.sources[0].location.clear();
+    invalid_records.push(("empty source location", empty_location));
+
+    let mut available_with_error = valid.clone();
+    available_with_error.sources[0].last_error_category = Some("stale_error".into());
+    invalid_records.push(("available source with error", available_with_error));
+
+    let mut missing_without_error = valid.clone();
+    missing_without_error.sources[0].status = ProjectSourceStatus::Missing;
+    invalid_records.push(("missing source without error", missing_without_error));
+
+    for (case, record) in invalid_records {
+        std::fs::write(&meta_path, toml::to_string_pretty(&record).unwrap()).unwrap();
+        assert!(
+            matches!(
+                load_project(&valid.id),
+                Err(ProjectStoreError::InvalidRecord { .. })
+            ),
+            "{case} was accepted"
+        );
+    }
+
+    cleanup(home, [source_path]);
+}
+
+#[test]
 fn registration_failpoints_never_expose_a_partial_project_and_retry_succeeds() {
     let _guard = env_guard();
     for failpoint in [
@@ -187,6 +256,176 @@ fn registration_failpoints_never_expose_a_partial_project_and_retry_succeeds() {
         assert_eq!(list_project_records().unwrap(), vec![created]);
         cleanup(home, [source]);
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn registration_audit_failure_is_recovered_without_replaying_or_staging_human_edits() {
+    let _guard = env_guard();
+    let (home, source) = setup("register-audit-recovery");
+    std::fs::write(home.join("human-draft.md"), b"Human draft bytes\n").unwrap();
+    let hook = install_failing_commit_hook(&home);
+
+    let error = register_project(RegisterProjectInput {
+        location: &source,
+        name: "Audit recovery",
+        created_at: CREATED_AT,
+    })
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        ProjectStoreError::Store(StoreError::AuditCommit(_))
+    ));
+    let durable = list_project_records().unwrap();
+    assert_eq!(durable.len(), 1, "the renamed project must remain durable");
+    assert!(home.join(".git/omniproj-pending-audit.toml").exists());
+    std::fs::remove_file(hook).unwrap();
+
+    ensure_home().unwrap();
+    let retried = register_project(RegisterProjectInput {
+        location: &source,
+        name: "must not replace",
+        created_at: CREATED_AT,
+    })
+    .unwrap();
+    assert!(matches!(retried, RegisterOutcome::Existing(ref id) if id == &durable[0].id));
+    assert_eq!(
+        git_names(&home, "HEAD"),
+        vec![
+            format!("projects/{}/meta.toml", durable[0].id),
+            format!("projects/{}/notes/project.md", durable[0].id),
+        ]
+    );
+    assert_eq!(
+        std::fs::read(home.join("human-draft.md")).unwrap(),
+        b"Human draft bytes\n"
+    );
+    assert!(git_output(&home, &["status", "--short", "--", "human-draft.md"]).starts_with("??"));
+    assert!(!home.join(".git/omniproj-pending-audit.toml").exists());
+    cleanup(home, [source]);
+}
+
+#[cfg(unix)]
+#[test]
+fn relink_audit_failure_recovers_exact_metadata_and_stale_retry_stays_a_conflict() {
+    let _guard = env_guard();
+    let (home, old_source) = setup("relink-audit-recovery");
+    let new_source = unique_path("relink-audit-recovery-new");
+    std::fs::create_dir_all(&new_source).unwrap();
+    let created = register(&old_source, "Relink recovery");
+    let state = home
+        .join("projects")
+        .join(created.id.as_str())
+        .join("notes/project.md");
+    std::fs::write(&state, b"Human state edit\n").unwrap();
+    let source = created.primary_git_source().unwrap().clone();
+    let hook = install_failing_commit_hook(&home);
+
+    let error = relink_primary_git_source(RelinkSourceInput {
+        project_id: &created.id,
+        expected_source_revision: source.revision,
+        expected_location: &source.location,
+        new_location: &new_source,
+    })
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        ProjectStoreError::Store(StoreError::AuditCommit(_))
+    ));
+    assert_eq!(
+        load_project(&created.id)
+            .unwrap()
+            .primary_git_source()
+            .unwrap()
+            .revision,
+        1
+    );
+    std::fs::remove_file(hook).unwrap();
+
+    let retry = relink_primary_git_source(RelinkSourceInput {
+        project_id: &created.id,
+        expected_source_revision: source.revision,
+        expected_location: &source.location,
+        new_location: &new_source,
+    })
+    .unwrap_err();
+    assert!(matches!(retry, ProjectStoreError::RevisionConflict { .. }));
+    ensure_home().unwrap();
+    assert_eq!(
+        git_names(&home, "HEAD"),
+        vec![format!("projects/{}/meta.toml", created.id)]
+    );
+    assert_eq!(std::fs::read(&state).unwrap(), b"Human state edit\n");
+    assert!(git_output(
+        &home,
+        &[
+            "status",
+            "--short",
+            "--",
+            &format!("projects/{}/notes/project.md", created.id)
+        ]
+    )
+    .starts_with(" M"));
+    cleanup(home, [old_source, new_source]);
+}
+
+#[cfg(unix)]
+#[test]
+fn observation_audit_failure_recovers_exact_metadata_without_replaying_the_cas_update() {
+    let _guard = env_guard();
+    let (home, source_path) = setup("observation-audit-recovery");
+    let created = register(&source_path, "Observation recovery");
+    let source = created.primary_git_source().unwrap().clone();
+    std::fs::write(home.join("human-draft.md"), b"Human draft bytes\n").unwrap();
+    let hook = install_failing_commit_hook(&home);
+
+    let error = record_source_observation(RecordSourceObservationInput {
+        project_id: &created.id,
+        source_id: &source.id,
+        expected_source_revision: source.revision,
+        expected_location: &source.location,
+        attempted_at: "2026-08-10T13:00:00Z",
+        outcome: SourceObservationOutcome::Failure {
+            status: ProjectSourceStatus::Missing,
+            error_category: "source_missing",
+        },
+    })
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        ProjectStoreError::Store(StoreError::AuditCommit(_))
+    ));
+    assert_eq!(
+        load_project(&created.id)
+            .unwrap()
+            .primary_git_source()
+            .unwrap()
+            .revision,
+        1
+    );
+    std::fs::remove_file(hook).unwrap();
+
+    ensure_home().unwrap();
+    let retry = record_source_observation(RecordSourceObservationInput {
+        project_id: &created.id,
+        source_id: &source.id,
+        expected_source_revision: source.revision,
+        expected_location: &source.location,
+        attempted_at: "2026-08-10T13:00:00Z",
+        outcome: SourceObservationOutcome::Failure {
+            status: ProjectSourceStatus::Missing,
+            error_category: "source_missing",
+        },
+    })
+    .unwrap_err();
+    assert!(matches!(retry, ProjectStoreError::RevisionConflict { .. }));
+    assert_eq!(
+        git_names(&home, "HEAD"),
+        vec![format!("projects/{}/meta.toml", created.id)]
+    );
+    assert!(git_output(&home, &["status", "--short", "--", "human-draft.md"]).starts_with("??"));
+    cleanup(home, [source_path]);
 }
 
 #[test]

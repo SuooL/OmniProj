@@ -11,6 +11,7 @@ const LEGACY_PATH: &str = "/Users/research/legacy-project";
 const LEGACY_NEXT: &str = "# Next\n\n- [ ] Preserve this Human note.\n";
 const LEGACY_PLAN: &str = "# Plan\n\nA hand-authored plan.\n";
 const LEGACY_BRIEFING: &str = "# Briefing\n\nAgent-authored legacy briefing.\n";
+const SETUP_STATE: &str = "+++\nschema_version = 1\nrevision = 0\nstatus = \"setup\"\nstatus_changed_at = \"2026-08-10T12:00:00Z\"\ncreated_at = \"2026-08-10T12:00:00Z\"\nupdated_at = \"2026-08-10T12:00:00Z\"\nwork_items = []\ncommitment_transitions = []\n+++\n\n# Project notes\n";
 
 fn unique_home(tag: &str) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -79,6 +80,32 @@ fn seed_v1_store(home: &Path) {
     );
 }
 
+fn add_v1_project(home: &Path, project_id: &str, location: &str) {
+    let project = home.join("projects").join(project_id);
+    std::fs::create_dir_all(project.join("notes")).unwrap();
+    std::fs::create_dir_all(project.join("auto")).unwrap();
+    std::fs::create_dir_all(project.join("cache")).unwrap();
+    std::fs::write(
+        project.join("meta.toml"),
+        format!(
+            "path = {location:?}\nname = \"Added During Migration\"\nhash = {project_id:?}\nadded_at = {CREATED_AT:?}\n"
+        ),
+    )
+    .unwrap();
+}
+
+#[cfg(unix)]
+fn install_failing_commit_hook(home: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let hook = home.join(".git/hooks/pre-commit");
+    std::fs::write(&hook, "#!/bin/sh\necho forced audit failure >&2\nexit 1\n").unwrap();
+    let mut permissions = std::fs::metadata(&hook).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&hook, permissions).unwrap();
+    hook
+}
+
 #[test]
 fn migrates_v1_store_to_v2_without_rewriting_legacy_documents() {
     let _guard = env_guard();
@@ -114,7 +141,7 @@ fn migrates_v1_store_to_v2_without_rewriting_legacy_documents() {
     );
     assert_eq!(
         std::fs::read_to_string(project.join("notes/project.md")).unwrap(),
-        "+++\nschema_version = 1\nrevision = 0\nstatus = \"setup\"\nstatus_changed_at = \"2026-08-10T12:00:00Z\"\ncreated_at = \"2026-08-10T12:00:00Z\"\nupdated_at = \"2026-08-10T12:00:00Z\"\nwork_items = []\ncommitment_transitions = []\n+++\n\n# Project notes\n"
+        SETUP_STATE
     );
 
     let before = managed_bytes(&home);
@@ -235,4 +262,171 @@ fn migration_refuses_an_unrecognized_project_state_without_overwriting_it() {
 
     std::env::remove_var("OMNIPROJ_HOME");
     std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn stale_journal_cannot_downgrade_a_newer_or_malformed_schema_stamp() {
+    let _guard = env_guard();
+    for stamp in ["3\n", "not-a-version\n"] {
+        let home = unique_home("stale-journal-stamp");
+        seed_v1_store(&home);
+        std::fs::write(home.join("SCHEMA_VERSION"), stamp).unwrap();
+        let journal = b"target_schema_version = 2\nproject_ids = []\n";
+        std::fs::write(home.join(".migration-v2"), journal).unwrap();
+        let gitignore_before = std::fs::read(home.join(".gitignore")).unwrap();
+        let head_before = git_names(&home, "HEAD");
+        std::env::set_var("OMNIPROJ_HOME", &home);
+
+        let error = ensure_home().unwrap_err();
+
+        assert!(matches!(error, StoreError::InvalidData(_)));
+        assert_eq!(
+            std::fs::read(home.join("SCHEMA_VERSION")).unwrap(),
+            stamp.as_bytes()
+        );
+        assert_eq!(std::fs::read(home.join(".migration-v2")).unwrap(), journal);
+        assert_eq!(
+            std::fs::read(home.join(".gitignore")).unwrap(),
+            gitignore_before
+        );
+        assert_eq!(git_names(&home, "HEAD"), head_before);
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn migration_retries_gitignore_audit_after_a_real_commit_failure() {
+    let _guard = env_guard();
+    let home = unique_home("gitignore-audit-retry");
+    seed_v1_store(&home);
+    let hook = install_failing_commit_hook(&home);
+    std::env::set_var("OMNIPROJ_HOME", &home);
+
+    let first = ensure_home().unwrap_err();
+
+    assert!(matches!(first, StoreError::AuditCommit(_)));
+    assert!(home.join(".migration-v2").exists());
+    std::fs::remove_file(hook).unwrap();
+    ensure_home().unwrap();
+    assert_eq!(
+        git_output(&home, &["status", "--short", "--", ".gitignore"]),
+        ""
+    );
+    assert!(
+        git_output(&home, &["log", "--format=%s", "--", ".gitignore"])
+            .contains("ignore v2 migration journal")
+    );
+
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn migration_rescans_projects_added_after_journal_creation() {
+    let _guard = env_guard();
+    let home = unique_home("journal-rescan");
+    seed_v1_store(&home);
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    std::env::set_var(
+        "OMNIPROJ_TEST_FAILPOINT",
+        "migration_after_journal_creation",
+    );
+    assert!(ensure_home().is_err());
+    let added_id = "c8a9e19ef3c91246";
+    add_v1_project(&home, added_id, "/Users/research/added-during-migration");
+
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+    ensure_home().unwrap();
+
+    let added = ProjectId::parse(added_id).unwrap();
+    assert_eq!(load_project(&added).unwrap().id, added);
+    assert!(home
+        .join("projects")
+        .join(added_id)
+        .join("notes/project.md")
+        .exists());
+    assert_eq!(
+        std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
+        "2\n"
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn migration_resume_rejects_malformed_v2_source_metadata() {
+    let _guard = env_guard();
+    let home = unique_home("malformed-v2-resume");
+    seed_v1_store(&home);
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    std::env::set_var("OMNIPROJ_TEST_FAILPOINT", "migration_after_metadata_write");
+    assert!(ensure_home().is_err());
+    let meta = home.join("projects").join(PROJECT_ID).join("meta.toml");
+    let mut text = std::fs::read_to_string(&meta).unwrap();
+    let start = text.rfind("created_at = ").unwrap();
+    let end = start + text[start..].find('\n').unwrap();
+    text.replace_range(start..end, "created_at = \"not-rfc3339\"");
+    std::fs::write(&meta, &text).unwrap();
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+
+    assert!(ensure_home().is_err());
+
+    assert_eq!(std::fs::read_to_string(&meta).unwrap(), text);
+    assert_eq!(
+        std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
+        "1\n"
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn migration_audits_only_project_state_created_by_that_migration() {
+    let _guard = env_guard();
+    let home = unique_home("preexisting-setup-state");
+    seed_v1_store(&home);
+    let state = home
+        .join("projects")
+        .join(PROJECT_ID)
+        .join("notes/project.md");
+    std::fs::write(&state, SETUP_STATE).unwrap();
+    std::env::set_var("OMNIPROJ_HOME", &home);
+
+    ensure_home().unwrap();
+
+    assert_eq!(
+        git_names(&home, "HEAD^"),
+        vec![format!("projects/{PROJECT_ID}/meta.toml")]
+    );
+    assert_eq!(
+        git_output(
+            &home,
+            &[
+                "status",
+                "--short",
+                "--",
+                &format!("projects/{PROJECT_ID}/notes/project.md")
+            ]
+        ),
+        format!("?? projects/{PROJECT_ID}/notes/project.md\n")
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+fn git_output(home: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(home)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
 }

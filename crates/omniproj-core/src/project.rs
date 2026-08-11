@@ -3,6 +3,7 @@
 //! in `~/.omniproj`, never in the user's repo (charter §5 原则2).
 #![allow(deprecated)]
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::{fmt, io};
 
@@ -13,7 +14,24 @@ use crate::ids::{ProjectId, ProjectSourceId};
 use crate::paths::project_hash;
 use crate::paths::{omniproj_home, project_dir, project_dir_for};
 use crate::project_state::ProjectStateDoc;
-use crate::store::{atomic_write, commit_paths_checked, ensure_home, with_store_txn, StoreError};
+use crate::store::{
+    atomic_write, begin_pending_audit, ensure_home, finish_pending_audit, with_store_txn,
+    StoreError,
+};
+
+#[cfg(test)]
+type RegistrationTestPause = (
+    std::sync::Arc<std::sync::Barrier>,
+    std::sync::Arc<std::sync::Barrier>,
+);
+#[cfg(test)]
+static REGISTRATION_TEST_PAUSE: std::sync::OnceLock<
+    std::sync::Mutex<Option<RegistrationTestPause>>,
+> = std::sync::OnceLock::new();
+#[cfg(test)]
+static LEGACY_CURSOR_TEST_PAUSE: std::sync::OnceLock<
+    std::sync::Mutex<Option<RegistrationTestPause>>,
+> = std::sync::OnceLock::new();
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -234,32 +252,85 @@ pub(crate) fn validate_project_record(
     path: &Path,
     record: &ProjectRecord,
 ) -> Result<(), ProjectStoreError> {
-    if record.sources.is_empty() {
-        return Err(ProjectStoreError::InvalidRecord {
-            path: path.to_owned(),
-            message: "project must contain at least one source".into(),
-        });
+    let invalid = |message: &str| ProjectStoreError::InvalidRecord {
+        path: path.to_owned(),
+        message: message.into(),
+    };
+    if record.name.trim().is_empty() {
+        return Err(invalid("project name must not be empty"));
+    }
+    if chrono::DateTime::parse_from_rfc3339(&record.created_at).is_err() {
+        return Err(invalid("project created_at must be RFC3339"));
     }
     if record
-        .sources
-        .iter()
-        .any(|source| source.project_id != record.id)
+        .capture_cursor
+        .last_distilled
+        .as_deref()
+        .is_some_and(|value| chrono::DateTime::parse_from_rfc3339(value).is_err())
     {
-        return Err(ProjectStoreError::InvalidRecord {
-            path: path.to_owned(),
-            message: "source project_id does not match project id".into(),
-        });
+        return Err(invalid("capture_cursor last_distilled must be RFC3339"));
     }
-    let primary_git_sources = record
+    if record.sources.is_empty() {
+        return Err(invalid("project must contain at least one source"));
+    }
+    let mut source_ids = HashSet::new();
+    for source in &record.sources {
+        if source.project_id != record.id {
+            return Err(invalid("source project_id does not match project id"));
+        }
+        if !source_ids.insert(source.id.clone()) {
+            return Err(invalid("project contains duplicate source ids"));
+        }
+        if source.location.trim().is_empty() {
+            return Err(invalid("source location must not be empty"));
+        }
+        for (field, value) in [
+            ("source created_at", Some(source.created_at.as_str())),
+            (
+                "source last_observed_at",
+                source.last_observed_at.as_deref(),
+            ),
+            (
+                "source last_successful_refresh_at",
+                source.last_successful_refresh_at.as_deref(),
+            ),
+        ] {
+            if value.is_some_and(|value| chrono::DateTime::parse_from_rfc3339(value).is_err()) {
+                return Err(invalid(&format!("{field} must be RFC3339")));
+            }
+        }
+        if source
+            .last_error_category
+            .as_deref()
+            .is_some_and(|category| category.trim().is_empty())
+        {
+            return Err(invalid("source last_error_category must not be empty"));
+        }
+        match source.status {
+            ProjectSourceStatus::Available if source.last_error_category.is_some() => {
+                return Err(invalid(
+                    "available source must not retain an error category",
+                ));
+            }
+            ProjectSourceStatus::Moved
+            | ProjectSourceStatus::Unreadable
+            | ProjectSourceStatus::Missing
+                if source.last_error_category.is_none() =>
+            {
+                return Err(invalid("unavailable source must record an error category"));
+            }
+            _ => {}
+        }
+    }
+    let primary_sources: Vec<_> = record
         .sources
         .iter()
-        .filter(|source| source.is_primary && source.kind == ProjectSourceKind::GitRepo)
-        .count();
-    if primary_git_sources != 1 {
-        return Err(ProjectStoreError::InvalidRecord {
-            path: path.to_owned(),
-            message: "project must contain exactly one primary Git source".into(),
-        });
+        .filter(|source| source.is_primary)
+        .collect();
+    if primary_sources.len() != 1 || primary_sources[0].kind != ProjectSourceKind::GitRepo {
+        return Err(invalid(
+            "project must contain exactly one primary Git source",
+        ));
     }
     Ok(())
 }
@@ -384,6 +455,7 @@ pub fn register_project(
         for subdir in ["auto", "notes", "cache"] {
             std::fs::create_dir_all(staging.join(subdir))?;
         }
+        registration_test_pause_after_staging_skeleton();
         ProjectStateDoc::new_setup(input.created_at)
             .map_err(|error| ProjectStoreError::InvalidInput(error.to_string()))?
             .save_to_path(&staging.join("notes/project.md"))
@@ -392,18 +464,17 @@ pub fn register_project(
         write_record_to_path(&record, &staging.join("meta.toml"))?;
         registry_failpoint("registration_after_metadata_write")?;
         sync_directory(&staging)?;
+        let audit_paths = [
+            PathBuf::from(format!("projects/{project_id}/meta.toml")),
+            PathBuf::from(format!("projects/{project_id}/notes/project.md")),
+        ];
         registry_failpoint("registration_before_directory_rename")?;
+        begin_pending_audit(&omniproj_home(), "project: register source", &audit_paths)?;
 
         let final_dir = project_dir_for(&project_id);
         std::fs::rename(&staging, &final_dir)?;
         sync_directory(&projects_root)?;
-        commit_paths_checked(
-            "project: register source",
-            &[
-                PathBuf::from(format!("projects/{project_id}/meta.toml")),
-                PathBuf::from(format!("projects/{project_id}/notes/project.md")),
-            ],
-        )?;
+        finish_pending_audit(&omniproj_home())?;
         Ok(RegisterOutcome::Created(record))
     })
 }
@@ -568,11 +639,11 @@ fn write_record_to_path(record: &ProjectRecord, path: &Path) -> Result<(), Proje
 }
 
 fn save_and_audit_record(record: &ProjectRecord, message: &str) -> Result<(), ProjectStoreError> {
+    let home = omniproj_home();
+    let audit_paths = [PathBuf::from(format!("projects/{}/meta.toml", record.id))];
+    begin_pending_audit(&home, message, &audit_paths)?;
     write_record_to_path(record, &project_record_path(&record.id))?;
-    commit_paths_checked(
-        message,
-        &[PathBuf::from(format!("projects/{}/meta.toml", record.id))],
-    )?;
+    finish_pending_audit(&home)?;
     Ok(())
 }
 
@@ -606,6 +677,33 @@ fn registry_failpoint(name: &str) -> Result<(), ProjectStoreError> {
     } else {
         Ok(())
     }
+}
+
+#[cfg(test)]
+fn registration_test_pause_after_staging_skeleton() {
+    let pause = REGISTRATION_TEST_PAUSE
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .take();
+    if let Some((reached, release)) = pause {
+        reached.wait();
+        release.wait();
+    }
+}
+
+#[cfg(not(test))]
+fn registration_test_pause_after_staging_skeleton() {}
+
+#[cfg(test)]
+fn install_registration_test_pause(
+    reached: std::sync::Arc<std::sync::Barrier>,
+    release: std::sync::Arc<std::sync::Barrier>,
+) {
+    *REGISTRATION_TEST_PAUSE
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some((reached, release));
 }
 
 /// Per-project metadata. Tool-managed but human-readable/editable.
@@ -772,14 +870,45 @@ pub fn set_last_distilled(
     let Ok(id) = ProjectId::parse(hash) else {
         return;
     };
-    let Ok(mut record) = load_project(&id) else {
+    if ensure_home().is_err() {
         return;
-    };
-    record.capture_cursor.last_distilled = Some(now.to_string());
-    record.capture_cursor.last_head = head.map(str::to_string);
-    record.capture_cursor.last_status_digest = status_digest.map(str::to_string);
-    record.capture_cursor.last_session_mtime = session_mtime;
-    let _ = write_record_to_path(&record, &project_record_path(&id));
+    }
+    legacy_cursor_test_pause();
+    let _ = with_store_txn(|| {
+        let mut record = load_project(&id)?;
+        record.capture_cursor.last_distilled = Some(now.to_string());
+        record.capture_cursor.last_head = head.map(str::to_string);
+        record.capture_cursor.last_status_digest = status_digest.map(str::to_string);
+        record.capture_cursor.last_session_mtime = session_mtime;
+        save_and_audit_record(&record, "project: update capture cursor")
+    });
+}
+
+#[cfg(test)]
+fn legacy_cursor_test_pause() {
+    let pause = LEGACY_CURSOR_TEST_PAUSE
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .take();
+    if let Some((reached, release)) = pause {
+        reached.wait();
+        release.wait();
+    }
+}
+
+#[cfg(not(test))]
+fn legacy_cursor_test_pause() {}
+
+#[cfg(test)]
+fn install_legacy_cursor_test_pause(
+    reached: std::sync::Arc<std::sync::Barrier>,
+    release: std::sync::Arc<std::sync::Barrier>,
+) {
+    *LEGACY_CURSOR_TEST_PAUSE
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some((reached, release));
 }
 
 #[allow(deprecated)]
@@ -819,6 +948,150 @@ fn best_prefix_match(cwd: &str, metas: Vec<ProjectMeta>) -> Option<ProjectMeta> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_cleanup_cannot_delete_an_active_registration_skeleton() {
+        let _guard = crate::env_guard();
+        let home = std::env::temp_dir().join(format!(
+            "omniproj-registration-cleanup-race-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let source = std::env::temp_dir().join(format!(
+            "omniproj-registration-cleanup-source-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&source).unwrap();
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        ensure_home().unwrap();
+
+        let reached = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let release = std::sync::Arc::new(std::sync::Barrier::new(2));
+        install_registration_test_pause(reached.clone(), release.clone());
+        let registration_source = source.clone();
+        let registration = std::thread::spawn(move || {
+            register_project(RegisterProjectInput {
+                location: &registration_source,
+                name: "Concurrent registration",
+                created_at: "2026-08-10T12:00:00Z",
+            })
+        });
+        reached.wait();
+
+        let concurrent_startup = ensure_home();
+        release.wait();
+        let created = match registration.join().unwrap().unwrap() {
+            RegisterOutcome::Created(record) => record,
+            RegisterOutcome::Existing(id) => panic!("unexpected existing project {id}"),
+        };
+
+        assert!(
+            concurrent_startup.is_err(),
+            "startup must respect the active registration lock"
+        );
+        let root = project_dir_for(&created.id);
+        for required in ["auto", "notes", "cache"] {
+            assert!(root.join(required).is_dir(), "missing {required} directory");
+        }
+        assert!(root.join("meta.toml").is_file());
+        assert!(root.join("notes/project.md").is_file());
+
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+        std::fs::remove_dir_all(source).unwrap();
+    }
+
+    #[test]
+    fn legacy_cursor_update_cannot_overwrite_a_concurrent_source_relink() {
+        let _guard = crate::env_guard();
+        let home = std::env::temp_dir().join(format!(
+            "omniproj-legacy-cursor-race-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let old_source = std::env::temp_dir().join(format!(
+            "omniproj-legacy-cursor-old-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let new_source = std::env::temp_dir().join(format!(
+            "omniproj-legacy-cursor-new-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&old_source).unwrap();
+        std::fs::create_dir_all(&new_source).unwrap();
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        ensure_home().unwrap();
+        let created = match register_project(RegisterProjectInput {
+            location: &old_source,
+            name: "Legacy cursor race",
+            created_at: "2026-08-10T12:00:00Z",
+        })
+        .unwrap()
+        {
+            RegisterOutcome::Created(record) => record,
+            RegisterOutcome::Existing(id) => panic!("unexpected existing project {id}"),
+        };
+        let original_source = created.primary_git_source().unwrap().clone();
+        let human_state = project_dir_for(&created.id).join("notes/project.md");
+        std::fs::write(&human_state, b"Concurrent Human state bytes\n").unwrap();
+
+        let reached = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let release = std::sync::Arc::new(std::sync::Barrier::new(2));
+        install_legacy_cursor_test_pause(reached.clone(), release.clone());
+        let project_id = created.id.clone();
+        let cursor_update = std::thread::spawn(move || {
+            set_last_distilled(
+                project_id.as_str(),
+                "2026-08-10T13:00:00Z",
+                Some("abc123"),
+                Some("clean"),
+                Some(42.0),
+            );
+        });
+        reached.wait();
+
+        relink_primary_git_source(RelinkSourceInput {
+            project_id: &created.id,
+            expected_source_revision: original_source.revision,
+            expected_location: &original_source.location,
+            new_location: &new_source,
+        })
+        .unwrap();
+        release.wait();
+        cursor_update.join().unwrap();
+
+        let final_record = load_project(&created.id).unwrap();
+        let final_source = final_record.primary_git_source().unwrap();
+        assert_eq!(final_source.revision, 1);
+        assert_eq!(
+            final_source.location,
+            std::fs::canonicalize(&new_source)
+                .unwrap()
+                .to_string_lossy()
+        );
+        assert_eq!(
+            final_record.capture_cursor.last_distilled.as_deref(),
+            Some("2026-08-10T13:00:00Z")
+        );
+        assert_eq!(
+            std::fs::read(&human_state).unwrap(),
+            b"Concurrent Human state bytes\n"
+        );
+        let audit = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&home)
+            .args(["show", "--format=", "--name-only", "HEAD"])
+            .output()
+            .unwrap();
+        assert!(audit.status.success());
+        assert_eq!(
+            String::from_utf8(audit.stdout).unwrap().trim(),
+            format!("projects/{}/meta.toml", created.id)
+        );
+
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+        std::fs::remove_dir_all(old_source).unwrap();
+        std::fs::remove_dir_all(new_source).unwrap();
+    }
 
     fn meta(path: &str) -> ProjectMeta {
         ProjectMeta {
