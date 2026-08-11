@@ -64,3 +64,57 @@ Code commit: `5a1d8dc46b814c58a947f128d740c54f30777ab5`
   when permissions are enforced and reports an explicit skip only for privileged processes that
   can bypass mode `000`; all other typed-error fixtures remain cross-platform or child-process
   isolated as annotated in the test.
+
+## Fix Round 1
+
+Code commit: `5f6bcef93a3fd4664ea58aa059babc8d3ffbc338`
+(`fix(capture): canonicalize repository observations`)
+
+### Reviewer findings and TDD evidence
+
+- Porcelain config-drift RED: the focused fixture set `status.renames=false` and expected one
+  logical staged rename. The old line parser reported `changed=6` instead of `5` because Git
+  emitted delete plus add records. The fixture also carries the ordinary path
+  `space -> café\nline.txt` and switches `core.quotePath` in both directions.
+- Porcelain GREEN: the focused config/special-path test passed 1/1 after command-level config,
+  NUL parsing, and semantic digest canonicalization. Both config states now report exactly
+  `changed=5`, `staged=3`, `unstaged=2`, `untracked=1`, and the same digest.
+- Timestamp-boundary RED: an isolated child-process fake Git was spawned for invalid input and
+  the API returned `CommandFailed` instead of the selected `InvalidOutput`; the marker proved
+  validation occurred too late.
+- Timestamp-boundary GREEN: the focused no-spawn marker test passed 1/1 for `tomorrow`, another
+  malformed value, and a naive timestamp in both public APIs. Legal offset timestamps remain
+  accepted, and `observed_at` is retained exactly as supplied.
+
+### Fix implementation
+
+- Every typed read now invokes Git with global options ordered before `-C`:
+  `--no-optional-locks -c status.renames=true -c core.quotePath=false -C <repo>`. The defensive
+  `GIT_OPTIONAL_LOCKS=0` environment setting remains on every command.
+- Status uses `--porcelain=v1 -z --untracked-files=all`. The byte parser treats NUL as the only
+  record/path delimiter, so spaces, literal arrows, non-ASCII bytes, and newlines do not alter
+  record boundaries. Rename/copy records consume their second path but contribute one logical
+  changed path.
+- `status_digest` is now computed from sorted semantic records. Each record encodes `XY` plus
+  byte lengths and hexadecimal path bytes, including both rename/copy paths; raw quoting,
+  repository config, and record order do not enter the digest.
+- `observe_repository` and `count_commits_since` strictly parse their timestamp input with
+  `chrono::DateTime::parse_from_rfc3339` before filesystem/Git inspection. Invalid input uses the
+  existing `InvalidOutput` kind with a field-specific RFC3339 message rather than expanding the
+  plan's fixed error enum.
+
+### Fresh verification
+
+- `cargo test -p omniproj-capture --test git_observation -- --nocapture`: PASS, 10 tests.
+- `cargo test -p omniproj-capture --locked`: PASS, 24 unit tests plus 10 integration tests.
+- `cargo check --workspace --locked`: PASS; only pre-existing deprecated API warnings in
+  CLI/Desktop.
+- `cargo fmt --all -- --check`: PASS.
+- `git diff --check`: PASS.
+
+### Fix Round 1 boundaries
+
+- Full-tree and `.git/index` byte-digest/mtime snapshots pass around both config variants; test
+  fixture config writes occur before each snapshot, and observation itself remains read-only.
+- Legacy `collect`, `commit_log`, and `commit_graph` remain outside the typed reader and retain
+  their prior behavior.
