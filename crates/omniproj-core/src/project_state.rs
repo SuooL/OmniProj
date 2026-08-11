@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -6,8 +6,11 @@ use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{CommitmentTransitionId, ProjectId, WorkItemId};
-use crate::paths::notes_dir_for;
-use crate::store::{atomic_write_store, StoreError};
+use crate::paths::{notes_dir_for, omniproj_home};
+use crate::store::{
+    atomic_write_store, audit_target_snapshot, begin_pending_audit, ensure_home,
+    finish_pending_audit, mark_pending_audit_applied, with_store_txn, StoreError,
+};
 
 const DOCUMENT_SCHEMA_VERSION: u32 = 1;
 const DEFAULT_MARKDOWN_BODY: &str = "\n# Project notes\n";
@@ -18,6 +21,34 @@ pub enum ProjectStateError {
     Io(std::io::Error),
     InvalidDocument(String),
     UnsupportedSchema(u32),
+    RevisionConflict {
+        expected: u64,
+        actual: u64,
+    },
+    FieldRequired {
+        field: &'static str,
+    },
+    ReasonRequired,
+    InvalidTimestamp {
+        field: &'static str,
+        value: String,
+    },
+    CurrentCommitmentExists {
+        work_item_id: WorkItemId,
+    },
+    CurrentCommitmentMismatch {
+        expected: WorkItemId,
+        actual: Option<WorkItemId>,
+    },
+    WorkItemNotFound(WorkItemId),
+    UndoConflict {
+        transition_id: CommitmentTransitionId,
+    },
+    InvalidCommand(String),
+    AuditCommitFailed {
+        durable_revision: u64,
+        source: StoreError,
+    },
     Store(StoreError),
 }
 
@@ -30,12 +61,52 @@ impl fmt::Display for ProjectStateError {
             Self::UnsupportedSchema(version) => {
                 write!(f, "unsupported project state schema version {version}")
             }
+            Self::RevisionConflict { expected, actual } => write!(
+                f,
+                "project revision conflict: expected {expected}, found {actual}"
+            ),
+            Self::FieldRequired { field } => write!(f, "{field} is required"),
+            Self::ReasonRequired => f.write_str("a nonempty reason is required"),
+            Self::InvalidTimestamp { field, value } => {
+                write!(f, "{field} must be RFC3339 and monotonic, got {value:?}")
+            }
+            Self::CurrentCommitmentExists { work_item_id } => {
+                write!(f, "current commitment {work_item_id} already exists")
+            }
+            Self::CurrentCommitmentMismatch { expected, actual } => write!(
+                f,
+                "current commitment mismatch: expected {expected}, found {actual:?}"
+            ),
+            Self::WorkItemNotFound(work_item_id) => {
+                write!(f, "work item {work_item_id} was not found")
+            }
+            Self::UndoConflict { transition_id } => write!(
+                f,
+                "transition {transition_id} is not the newest undoable transition"
+            ),
+            Self::InvalidCommand(message) => write!(f, "invalid project command: {message}"),
+            Self::AuditCommitFailed {
+                durable_revision,
+                source,
+            } => write!(
+                f,
+                "project revision {durable_revision} was saved but its audit commit failed: {source}"
+            ),
             Self::Store(error) => error.fmt(f),
         }
     }
 }
 
-impl std::error::Error for ProjectStateError {}
+impl std::error::Error for ProjectStateError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            Self::Store(error) => Some(error),
+            Self::AuditCommitFailed { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}
 
 impl From<std::io::Error> for ProjectStateError {
     fn from(error: std::io::Error) -> Self {
@@ -142,6 +213,53 @@ pub struct ProjectStateDoc {
     markdown_body: String,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ProjectMutation {
+    pub revision: u64,
+    pub state: ProjectStateDoc,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ProjectCommand {
+    SaveFraming {
+        objective: String,
+        desired_outcome: String,
+        phase: Option<String>,
+    },
+    CompleteSetup {
+        objective: String,
+        desired_outcome: String,
+        phase: Option<String>,
+        first_commitment: String,
+    },
+    SetCommitment {
+        text: String,
+    },
+    ConfirmCommitment {
+        work_item_id: WorkItemId,
+    },
+    CompleteCommitment {
+        work_item_id: WorkItemId,
+    },
+    ReplaceCommitment {
+        previous_work_item_id: WorkItemId,
+        text: String,
+        reason: String,
+    },
+    ClearCommitment {
+        work_item_id: WorkItemId,
+        reason: Option<String>,
+    },
+    SetStatus {
+        status: ProjectStatus,
+        reason: Option<String>,
+        review_at: Option<String>,
+    },
+    Undo {
+        transition_id: CommitmentTransitionId,
+    },
+}
+
 impl ProjectStateDoc {
     pub fn new_setup(created_at: &str) -> Result<Self, ProjectStateError> {
         validate_timestamp("created_at", created_at)?;
@@ -202,10 +320,13 @@ impl ProjectStateDoc {
             }
             Err(error) => return Err(ProjectStateError::Io(error)),
         };
-        Self::parse(&input)
+        let document = Self::parse(&input)?;
+        document.validate_for_project(project_id)?;
+        Ok(document)
     }
 
     pub fn save(&self, project_id: &ProjectId) -> Result<(), ProjectStateError> {
+        self.validate_for_project(project_id)?;
         let home = crate::paths::omniproj_home();
         std::fs::create_dir_all(&home).map_err(ProjectStateError::Io)?;
         self.save_to_store_path(&home, &state_path(project_id))
@@ -231,7 +352,38 @@ impl ProjectStateDoc {
         validate_timestamp("created_at", &self.created_at)?;
         validate_timestamp("updated_at", &self.updated_at)?;
         validate_optional_timestamp("review_at", self.review_at.as_deref())?;
+        validate_ordered_timestamp(
+            "created_at",
+            &self.created_at,
+            "updated_at",
+            &self.updated_at,
+        )?;
+        validate_ordered_timestamp(
+            "created_at",
+            &self.created_at,
+            "status_changed_at",
+            &self.status_changed_at,
+        )?;
+        validate_ordered_timestamp(
+            "status_changed_at",
+            &self.status_changed_at,
+            "updated_at",
+            &self.updated_at,
+        )?;
+        match self.status {
+            ProjectStatus::Waiting => {
+                validate_nonempty_option("status_reason", self.status_reason.as_deref())?;
+                if self.review_at.is_none() {
+                    return invalid("review_at is required for waiting status".into());
+                }
+            }
+            ProjectStatus::Parked => {
+                validate_nonempty_option("status_reason", self.status_reason.as_deref())?;
+            }
+            _ => {}
+        }
 
+        let mut aggregate_project_id: Option<&ProjectId> = None;
         let mut work_item_ids = HashSet::new();
         for item in &self.work_items {
             if !work_item_ids.insert(item.id.clone()) {
@@ -240,6 +392,39 @@ impl ProjectStateDoc {
             validate_timestamp("work item created_at", &item.created_at)?;
             validate_timestamp("work item updated_at", &item.updated_at)?;
             validate_optional_timestamp("work item blocked_at", item.blocked_at.as_deref())?;
+            validate_ordered_timestamp(
+                "project created_at",
+                &self.created_at,
+                "work item created_at",
+                &item.created_at,
+            )?;
+            validate_ordered_timestamp(
+                "work item created_at",
+                &item.created_at,
+                "work item updated_at",
+                &item.updated_at,
+            )?;
+            validate_ordered_timestamp(
+                "work item updated_at",
+                &item.updated_at,
+                "project updated_at",
+                &self.updated_at,
+            )?;
+            if let Some(blocked_at) = item.blocked_at.as_deref() {
+                validate_ordered_timestamp(
+                    "work item created_at",
+                    &item.created_at,
+                    "work item blocked_at",
+                    blocked_at,
+                )?;
+                validate_ordered_timestamp(
+                    "work item blocked_at",
+                    blocked_at,
+                    "work item updated_at",
+                    &item.updated_at,
+                )?;
+            }
+            validate_aggregate_project_id(&mut aggregate_project_id, &item.project_id)?;
         }
         if let Some(current) = &self.current_next_action_id {
             if !work_item_ids.contains(current) {
@@ -248,11 +433,37 @@ impl ProjectStateDoc {
         }
 
         let mut transition_ids = HashSet::new();
+        let mut transitions_by_id: HashMap<CommitmentTransitionId, &CommitmentTransition> =
+            HashMap::new();
+        let mut corrected_ids = HashSet::new();
+        let mut previous_occurred_at: Option<&str> = None;
         for transition in &self.commitment_transitions {
             if !transition_ids.insert(transition.id.clone()) {
                 return invalid(format!("duplicate transition id {}", transition.id));
             }
             validate_timestamp("transition occurred_at", &transition.occurred_at)?;
+            validate_ordered_timestamp(
+                "project created_at",
+                &self.created_at,
+                "transition occurred_at",
+                &transition.occurred_at,
+            )?;
+            validate_ordered_timestamp(
+                "transition occurred_at",
+                &transition.occurred_at,
+                "project updated_at",
+                &self.updated_at,
+            )?;
+            validate_aggregate_project_id(&mut aggregate_project_id, &transition.project_id)?;
+            if let Some(previous) = previous_occurred_at {
+                validate_ordered_timestamp(
+                    "previous transition occurred_at",
+                    previous,
+                    "transition occurred_at",
+                    &transition.occurred_at,
+                )?;
+            }
+            previous_occurred_at = Some(&transition.occurred_at);
             for referenced in [
                 transition.previous_work_item_id.as_ref(),
                 transition.next_work_item_id.as_ref(),
@@ -266,16 +477,504 @@ impl ProjectStateDoc {
                     ));
                 }
             }
-        }
-        for transition in &self.commitment_transitions {
-            if let Some(corrected) = &transition.corrects_transition_id {
-                if !transition_ids.contains(corrected) {
-                    return invalid(format!(
-                        "transition references missing corrected transition {corrected}"
-                    ));
+
+            match (&transition.kind, &transition.corrects_transition_id) {
+                (CommitmentTransitionKind::Correction, Some(corrected)) => {
+                    let target = transitions_by_id.get(corrected).ok_or_else(|| {
+                        ProjectStateError::InvalidDocument(format!(
+                            "correction references missing or later transition {corrected}"
+                        ))
+                    })?;
+                    if target.kind == CommitmentTransitionKind::Correction {
+                        return invalid(format!(
+                            "correction cannot target correction transition {corrected}"
+                        ));
+                    }
+                    if !corrected_ids.insert(corrected.clone()) {
+                        return invalid(format!(
+                            "transition {corrected} has already been corrected"
+                        ));
+                    }
                 }
+                (CommitmentTransitionKind::Correction, None) => {
+                    return invalid(
+                        "correction transition is missing corrects_transition_id".into(),
+                    );
+                }
+                (_, Some(_)) => {
+                    return invalid(
+                        "only correction transitions may have corrects_transition_id".into(),
+                    );
+                }
+                (_, None) => {}
+            }
+            transitions_by_id.insert(transition.id.clone(), transition);
+        }
+
+        let replayed = replay_effective_pointer(&self.commitment_transitions, &corrected_ids)?;
+        if replayed != self.current_next_action_id {
+            return invalid(format!(
+                "stored current next action {:?} differs from replayed history {:?}",
+                self.current_next_action_id, replayed
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_for_project(&self, project_id: &ProjectId) -> Result<(), ProjectStateError> {
+        for item in &self.work_items {
+            if &item.project_id != project_id {
+                return invalid(format!(
+                    "work item {} belongs to project {}, expected {project_id}",
+                    item.id, item.project_id
+                ));
             }
         }
+        for transition in &self.commitment_transitions {
+            if &transition.project_id != project_id {
+                return invalid(format!(
+                    "transition {} belongs to project {}, expected {project_id}",
+                    transition.id, transition.project_id
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn apply_project_command(
+    project_id: &ProjectId,
+    expected_revision: u64,
+    command: ProjectCommand,
+    occurred_at: &str,
+) -> Result<ProjectMutation, ProjectStateError> {
+    validate_command_timestamp("occurred_at", occurred_at)?;
+    ensure_home()?;
+    with_store_txn(|| {
+        let home = omniproj_home();
+        let path = state_path(project_id);
+        let prior_state = ProjectStateDoc::load(project_id)?;
+        prior_state.validate_for_project(project_id)?;
+        if prior_state.revision != expected_revision {
+            return Err(ProjectStateError::RevisionConflict {
+                expected: expected_revision,
+                actual: prior_state.revision,
+            });
+        }
+        ensure_not_before("occurred_at", occurred_at, &prior_state.updated_at)?;
+
+        let mut state = prior_state.clone();
+        apply_command_in_memory(&mut state, project_id, command, occurred_at)?;
+        state.updated_at = occurred_at.to_owned();
+        state.revision = state
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| ProjectStateError::InvalidCommand("revision overflow".into()))?;
+        state.validate()?;
+        state.validate_for_project(project_id)?;
+
+        let rendered = state.render()?;
+        let relative_path =
+            PathBuf::from(format!("projects/{}/notes/project.md", project_id.as_str()));
+        let targets = [audit_target_snapshot(
+            &home,
+            relative_path,
+            rendered.as_bytes(),
+        )?];
+        begin_pending_audit(&home, "project: update human state", &targets)?;
+        atomic_write_store(&home, &path, rendered.as_bytes())?;
+        if let Err(source) = mark_pending_audit_applied(&home) {
+            return Err(ProjectStateError::AuditCommitFailed {
+                durable_revision: state.revision,
+                source,
+            });
+        }
+        if let Err(source) = finish_pending_audit(&home) {
+            return Err(ProjectStateError::AuditCommitFailed {
+                durable_revision: state.revision,
+                source,
+            });
+        }
+
+        Ok(ProjectMutation {
+            revision: state.revision,
+            state,
+        })
+    })
+}
+
+fn apply_command_in_memory(
+    state: &mut ProjectStateDoc,
+    project_id: &ProjectId,
+    command: ProjectCommand,
+    occurred_at: &str,
+) -> Result<(), ProjectStateError> {
+    match command {
+        ProjectCommand::SaveFraming {
+            objective,
+            desired_outcome,
+            phase,
+        } => {
+            require_field("objective", &objective)?;
+            require_field("desired_outcome", &desired_outcome)?;
+            state.objective = Some(objective);
+            state.desired_outcome = Some(desired_outcome);
+            state.phase = normalize_optional(phase);
+        }
+        ProjectCommand::CompleteSetup {
+            objective,
+            desired_outcome,
+            phase,
+            first_commitment,
+        } => {
+            require_field("objective", &objective)?;
+            require_field("desired_outcome", &desired_outcome)?;
+            require_field("first_commitment", &first_commitment)?;
+            if state.status != ProjectStatus::Setup {
+                return Err(ProjectStateError::InvalidCommand(
+                    "setup has already been completed".into(),
+                ));
+            }
+            if let Some(work_item_id) = state.current_next_action_id.clone() {
+                return Err(ProjectStateError::CurrentCommitmentExists { work_item_id });
+            }
+            state.objective = Some(objective);
+            state.desired_outcome = Some(desired_outcome);
+            state.phase = normalize_optional(phase);
+            state.status = ProjectStatus::Active;
+            state.status_reason = None;
+            state.review_at = None;
+            state.status_changed_at = occurred_at.to_owned();
+            set_commitment_in_memory(state, project_id, first_commitment, occurred_at)?;
+        }
+        ProjectCommand::SetCommitment { text } => {
+            require_field("text", &text)?;
+            if let Some(work_item_id) = state.current_next_action_id.clone() {
+                return Err(ProjectStateError::CurrentCommitmentExists { work_item_id });
+            }
+            set_commitment_in_memory(state, project_id, text, occurred_at)?;
+        }
+        ProjectCommand::ConfirmCommitment { work_item_id } => {
+            require_current(state, &work_item_id)?;
+            require_item(state, &work_item_id)?;
+            push_transition(
+                state,
+                project_id,
+                CommitmentTransitionKind::Confirmed,
+                Some(work_item_id.clone()),
+                Some(work_item_id),
+                None,
+                occurred_at,
+                None,
+            );
+        }
+        ProjectCommand::CompleteCommitment { work_item_id } => {
+            require_current(state, &work_item_id)?;
+            let item = require_item_mut(state, &work_item_id)?;
+            item.status = WorkItemStatus::Done;
+            item.updated_at = occurred_at.to_owned();
+            state.current_next_action_id = None;
+            push_transition(
+                state,
+                project_id,
+                CommitmentTransitionKind::Completed,
+                Some(work_item_id),
+                None,
+                None,
+                occurred_at,
+                None,
+            );
+        }
+        ProjectCommand::ReplaceCommitment {
+            previous_work_item_id,
+            text,
+            reason,
+        } => {
+            require_field("text", &text)?;
+            if reason.trim().is_empty() {
+                return Err(ProjectStateError::ReasonRequired);
+            }
+            require_current(state, &previous_work_item_id)?;
+            require_item(state, &previous_work_item_id)?;
+            let next = new_work_item(project_id, text, occurred_at);
+            let next_id = next.id.clone();
+            state.work_items.push(next);
+            state.current_next_action_id = Some(next_id.clone());
+            push_transition(
+                state,
+                project_id,
+                CommitmentTransitionKind::Replaced,
+                Some(previous_work_item_id),
+                Some(next_id),
+                Some(reason),
+                occurred_at,
+                None,
+            );
+        }
+        ProjectCommand::ClearCommitment {
+            work_item_id,
+            reason,
+        } => {
+            require_current(state, &work_item_id)?;
+            require_item(state, &work_item_id)?;
+            state.current_next_action_id = None;
+            push_transition(
+                state,
+                project_id,
+                CommitmentTransitionKind::Cleared,
+                Some(work_item_id),
+                None,
+                normalize_optional(reason),
+                occurred_at,
+                None,
+            );
+        }
+        ProjectCommand::SetStatus {
+            status,
+            reason,
+            review_at,
+        } => {
+            let reason = match status {
+                ProjectStatus::Waiting | ProjectStatus::Parked => match reason {
+                    None => {
+                        return Err(ProjectStateError::FieldRequired {
+                            field: "status_reason",
+                        });
+                    }
+                    Some(reason) if reason.trim().is_empty() => {
+                        return Err(ProjectStateError::ReasonRequired);
+                    }
+                    Some(reason) => Some(reason),
+                },
+                _ => normalize_optional(reason),
+            };
+            if status == ProjectStatus::Waiting && review_at.is_none() {
+                return Err(ProjectStateError::FieldRequired { field: "review_at" });
+            }
+            if let Some(review_at) = review_at.as_deref() {
+                validate_command_timestamp("review_at", review_at)?;
+                ensure_not_before("review_at", review_at, occurred_at)?;
+            }
+            state.status = status;
+            state.status_reason = reason;
+            state.review_at = review_at;
+            state.status_changed_at = occurred_at.to_owned();
+        }
+        ProjectCommand::Undo { transition_id } => {
+            undo_transition(state, project_id, transition_id, occurred_at)?;
+        }
+    }
+    Ok(())
+}
+
+fn set_commitment_in_memory(
+    state: &mut ProjectStateDoc,
+    project_id: &ProjectId,
+    text: String,
+    occurred_at: &str,
+) -> Result<(), ProjectStateError> {
+    if let Some(work_item_id) = state.current_next_action_id.clone() {
+        return Err(ProjectStateError::CurrentCommitmentExists { work_item_id });
+    }
+    let item = new_work_item(project_id, text, occurred_at);
+    let item_id = item.id.clone();
+    state.work_items.push(item);
+    state.current_next_action_id = Some(item_id.clone());
+    push_transition(
+        state,
+        project_id,
+        CommitmentTransitionKind::Set,
+        None,
+        Some(item_id),
+        None,
+        occurred_at,
+        None,
+    );
+    Ok(())
+}
+
+fn undo_transition(
+    state: &mut ProjectStateDoc,
+    project_id: &ProjectId,
+    transition_id: CommitmentTransitionId,
+    occurred_at: &str,
+) -> Result<(), ProjectStateError> {
+    let target = state
+        .commitment_transitions
+        .last()
+        .filter(|transition| transition.id == transition_id)
+        .cloned()
+        .ok_or_else(|| ProjectStateError::UndoConflict {
+            transition_id: transition_id.clone(),
+        })?;
+    if target.kind == CommitmentTransitionKind::Correction {
+        return Err(ProjectStateError::UndoConflict { transition_id });
+    }
+
+    match target.kind {
+        CommitmentTransitionKind::Set => {
+            let item_id = target.next_work_item_id.as_ref().ok_or_else(|| {
+                ProjectStateError::InvalidCommand("Set transition has no next item".into())
+            })?;
+            let item = require_item_mut(state, item_id)?;
+            item.status = WorkItemStatus::Abandoned;
+            item.updated_at = occurred_at.to_owned();
+        }
+        CommitmentTransitionKind::Confirmed => {}
+        CommitmentTransitionKind::Completed => {
+            let item_id = target.previous_work_item_id.as_ref().ok_or_else(|| {
+                ProjectStateError::InvalidCommand("Completed transition has no prior item".into())
+            })?;
+            let item = require_item_mut(state, item_id)?;
+            item.status = WorkItemStatus::Doing;
+            item.updated_at = occurred_at.to_owned();
+        }
+        CommitmentTransitionKind::Replaced => {
+            let item_id = target.next_work_item_id.as_ref().ok_or_else(|| {
+                ProjectStateError::InvalidCommand("Replaced transition has no next item".into())
+            })?;
+            let item = require_item_mut(state, item_id)?;
+            item.status = WorkItemStatus::Abandoned;
+            item.updated_at = occurred_at.to_owned();
+        }
+        CommitmentTransitionKind::Cleared => {}
+        CommitmentTransitionKind::Correction => unreachable!("handled above"),
+    }
+
+    let before = state.current_next_action_id.clone();
+    let mut corrected_ids: HashSet<_> = state
+        .commitment_transitions
+        .iter()
+        .filter_map(|transition| transition.corrects_transition_id.clone())
+        .collect();
+    corrected_ids.insert(target.id.clone());
+    let after = replay_effective_pointer(&state.commitment_transitions, &corrected_ids)?;
+    state.current_next_action_id = after.clone();
+    push_transition(
+        state,
+        project_id,
+        CommitmentTransitionKind::Correction,
+        before,
+        after,
+        None,
+        occurred_at,
+        Some(target.id),
+    );
+    Ok(())
+}
+
+fn new_work_item(project_id: &ProjectId, text: String, occurred_at: &str) -> WorkItem {
+    WorkItem {
+        id: WorkItemId::new(),
+        project_id: project_id.clone(),
+        text,
+        status: WorkItemStatus::Doing,
+        blocker: None,
+        blocked_at: None,
+        created_at: occurred_at.to_owned(),
+        updated_at: occurred_at.to_owned(),
+        adopted_from_proposal_id: None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_transition(
+    state: &mut ProjectStateDoc,
+    project_id: &ProjectId,
+    kind: CommitmentTransitionKind,
+    previous_work_item_id: Option<WorkItemId>,
+    next_work_item_id: Option<WorkItemId>,
+    reason: Option<String>,
+    occurred_at: &str,
+    corrects_transition_id: Option<CommitmentTransitionId>,
+) {
+    state.commitment_transitions.push(CommitmentTransition {
+        id: CommitmentTransitionId::new(),
+        project_id: project_id.clone(),
+        kind,
+        previous_work_item_id,
+        next_work_item_id,
+        reason,
+        occurred_at: occurred_at.to_owned(),
+        corrects_transition_id,
+    });
+}
+
+fn require_item<'a>(
+    state: &'a ProjectStateDoc,
+    work_item_id: &WorkItemId,
+) -> Result<&'a WorkItem, ProjectStateError> {
+    state
+        .work_items
+        .iter()
+        .find(|item| &item.id == work_item_id)
+        .ok_or_else(|| ProjectStateError::WorkItemNotFound(work_item_id.clone()))
+}
+
+fn require_item_mut<'a>(
+    state: &'a mut ProjectStateDoc,
+    work_item_id: &WorkItemId,
+) -> Result<&'a mut WorkItem, ProjectStateError> {
+    state
+        .work_items
+        .iter_mut()
+        .find(|item| &item.id == work_item_id)
+        .ok_or_else(|| ProjectStateError::WorkItemNotFound(work_item_id.clone()))
+}
+
+fn require_current(
+    state: &ProjectStateDoc,
+    expected: &WorkItemId,
+) -> Result<(), ProjectStateError> {
+    if state.current_next_action_id.as_ref() == Some(expected) {
+        Ok(())
+    } else {
+        Err(ProjectStateError::CurrentCommitmentMismatch {
+            expected: expected.clone(),
+            actual: state.current_next_action_id.clone(),
+        })
+    }
+}
+
+fn require_field(field: &'static str, value: &str) -> Result<(), ProjectStateError> {
+    if value.trim().is_empty() {
+        Err(ProjectStateError::FieldRequired { field })
+    } else {
+        Ok(())
+    }
+}
+
+fn normalize_optional(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.trim().is_empty())
+}
+
+fn validate_command_timestamp(field: &'static str, value: &str) -> Result<(), ProjectStateError> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|_| ())
+        .map_err(|_| ProjectStateError::InvalidTimestamp {
+            field,
+            value: value.to_owned(),
+        })
+}
+
+fn ensure_not_before(
+    field: &'static str,
+    value: &str,
+    earlier: &str,
+) -> Result<(), ProjectStateError> {
+    let value_parsed =
+        DateTime::parse_from_rfc3339(value).map_err(|_| ProjectStateError::InvalidTimestamp {
+            field,
+            value: value.to_owned(),
+        })?;
+    let earlier_parsed = DateTime::parse_from_rfc3339(earlier)
+        .expect("stored timestamps were validated before command application");
+    if value_parsed < earlier_parsed {
+        Err(ProjectStateError::InvalidTimestamp {
+            field,
+            value: value.to_owned(),
+        })
+    } else {
         Ok(())
     }
 }
@@ -299,6 +998,104 @@ fn validate_timestamp(field: &str, value: &str) -> Result<(), ProjectStateError>
     DateTime::parse_from_rfc3339(value)
         .map(|_| ())
         .map_err(|_| ProjectStateError::InvalidDocument(format!("{field} is not RFC3339")))
+}
+
+fn validate_ordered_timestamp(
+    earlier_field: &str,
+    earlier: &str,
+    later_field: &str,
+    later: &str,
+) -> Result<(), ProjectStateError> {
+    let earlier = DateTime::parse_from_rfc3339(earlier).map_err(|_| {
+        ProjectStateError::InvalidDocument(format!("{earlier_field} is not RFC3339"))
+    })?;
+    let later = DateTime::parse_from_rfc3339(later)
+        .map_err(|_| ProjectStateError::InvalidDocument(format!("{later_field} is not RFC3339")))?;
+    if later < earlier {
+        return invalid(format!("{later_field} must not precede {earlier_field}"));
+    }
+    Ok(())
+}
+
+fn validate_nonempty_option(field: &str, value: Option<&str>) -> Result<(), ProjectStateError> {
+    if value.is_some_and(|value| !value.trim().is_empty()) {
+        Ok(())
+    } else {
+        invalid(format!("{field} must not be empty"))
+    }
+}
+
+fn validate_aggregate_project_id<'a>(
+    aggregate: &mut Option<&'a ProjectId>,
+    candidate: &'a ProjectId,
+) -> Result<(), ProjectStateError> {
+    match aggregate {
+        Some(expected) if *expected != candidate => invalid(format!(
+            "aggregate contains project ids {expected} and {candidate}"
+        )),
+        Some(_) => Ok(()),
+        None => {
+            *aggregate = Some(candidate);
+            Ok(())
+        }
+    }
+}
+
+fn replay_effective_pointer(
+    transitions: &[CommitmentTransition],
+    corrected_ids: &HashSet<CommitmentTransitionId>,
+) -> Result<Option<WorkItemId>, ProjectStateError> {
+    let mut current: Option<WorkItemId> = None;
+    for transition in transitions {
+        if transition.kind == CommitmentTransitionKind::Correction
+            || corrected_ids.contains(&transition.id)
+        {
+            continue;
+        }
+        match transition.kind {
+            CommitmentTransitionKind::Set => {
+                if current.is_some()
+                    || transition.previous_work_item_id.is_some()
+                    || transition.next_work_item_id.is_none()
+                {
+                    return invalid(format!("invalid Set transition {}", transition.id));
+                }
+                current = transition.next_work_item_id.clone();
+            }
+            CommitmentTransitionKind::Confirmed => {
+                if current.is_none()
+                    || transition.previous_work_item_id != current
+                    || transition.next_work_item_id != current
+                {
+                    return invalid(format!("invalid Confirmed transition {}", transition.id));
+                }
+            }
+            CommitmentTransitionKind::Completed | CommitmentTransitionKind::Cleared => {
+                if current.is_none()
+                    || transition.previous_work_item_id != current
+                    || transition.next_work_item_id.is_some()
+                {
+                    return invalid(format!(
+                        "invalid {:?} transition {}",
+                        transition.kind, transition.id
+                    ));
+                }
+                current = None;
+            }
+            CommitmentTransitionKind::Replaced => {
+                if current.is_none()
+                    || transition.previous_work_item_id != current
+                    || transition.next_work_item_id.is_none()
+                    || transition.next_work_item_id == current
+                {
+                    return invalid(format!("invalid Replaced transition {}", transition.id));
+                }
+                current = transition.next_work_item_id.clone();
+            }
+            CommitmentTransitionKind::Correction => unreachable!("corrections are skipped"),
+        }
+    }
+    Ok(current)
 }
 
 #[cfg(test)]

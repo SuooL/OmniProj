@@ -35,8 +35,8 @@ pub use project::{
     RelinkSourceInput, SourceObservationOutcome,
 };
 pub use project_state::{
-    CommitmentTransition, CommitmentTransitionKind, ProjectStateDoc, ProjectStateError,
-    ProjectStatus, WorkItem, WorkItemStatus,
+    apply_project_command, CommitmentTransition, CommitmentTransitionKind, ProjectCommand,
+    ProjectMutation, ProjectStateDoc, ProjectStateError, ProjectStatus, WorkItem, WorkItemStatus,
 };
 #[allow(deprecated)]
 pub use store::{
