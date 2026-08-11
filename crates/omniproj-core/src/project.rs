@@ -15,8 +15,9 @@ use crate::paths::project_hash;
 use crate::paths::{omniproj_home, project_dir, project_dir_for};
 use crate::project_state::ProjectStateDoc;
 use crate::store::{
-    atomic_write, audit_target_snapshot, begin_pending_audit, ensure_home, finish_pending_audit,
-    mark_pending_audit_applied, with_store_txn, StoreError,
+    atomic_write_store, audit_target_snapshot, begin_pending_audit, ensure_home,
+    finish_pending_audit, mark_pending_audit_applied, validate_store_directory_target,
+    validate_store_missing_target, with_store_txn, StoreError,
 };
 
 #[cfg(test)]
@@ -451,19 +452,33 @@ pub fn register_project(
 
         let home = omniproj_home();
         let projects_root = home.join("projects");
+        validate_store_directory_target(&home, &projects_root, true)?;
         std::fs::create_dir_all(&projects_root)?;
+        validate_store_directory_target(&home, &projects_root, false)?;
         let staging = projects_root.join(format!(".staging-{project_id}"));
+        validate_store_directory_target(&home, &staging, true)?;
+        std::fs::create_dir_all(&staging)?;
+        validate_store_directory_target(&home, &staging, false)?;
         for subdir in ["auto", "notes", "cache"] {
-            std::fs::create_dir_all(staging.join(subdir))?;
+            let path = staging.join(subdir);
+            validate_store_directory_target(&home, &path, true)?;
+            std::fs::create_dir_all(&path)?;
+            validate_store_directory_target(&home, &path, false)?;
         }
         registration_test_pause_after_staging_skeleton();
-        ProjectStateDoc::new_setup(input.created_at)
+        let state_text = ProjectStateDoc::new_setup(input.created_at)
             .map_err(|error| ProjectStoreError::InvalidInput(error.to_string()))?
-            .save_to_path(&staging.join("notes/project.md"))
+            .render()
             .map_err(|error| ProjectStoreError::InvalidInput(error.to_string()))?;
+        atomic_write_store(
+            &home,
+            &staging.join("notes/project.md"),
+            state_text.as_bytes(),
+        )?;
         registry_failpoint("registration_after_project_state_write")?;
-        write_record_to_path(&record, &staging.join("meta.toml"))?;
+        write_record_to_path(&home, &record, &staging.join("meta.toml"))?;
         registry_failpoint("registration_after_metadata_write")?;
+        validate_store_directory_target(&home, &staging, false)?;
         sync_directory(&staging)?;
         let audit_targets = [
             audit_target_snapshot(
@@ -482,8 +497,11 @@ pub fn register_project(
 
         let final_dir = project_dir_for(&project_id);
         registry_failpoint("registration_directory_rename_failure")?;
+        validate_store_directory_target(&home, &staging, false)?;
+        validate_store_missing_target(&home, &final_dir)?;
         std::fs::rename(&staging, &final_dir)?;
         registry_failpoint("registration_parent_fsync_failure")?;
+        validate_store_directory_target(&home, &projects_root, false)?;
         sync_directory(&projects_root)?;
         mark_pending_audit_applied(&home)?;
         finish_pending_audit(&home)?;
@@ -644,9 +662,13 @@ fn compare_source(
     Ok(())
 }
 
-fn write_record_to_path(record: &ProjectRecord, path: &Path) -> Result<(), ProjectStoreError> {
+fn write_record_to_path(
+    home: &Path,
+    record: &ProjectRecord,
+    path: &Path,
+) -> Result<(), ProjectStoreError> {
     let text = render_project_record(record)?;
-    atomic_write(path, text.as_bytes())?;
+    atomic_write_store(home, path, text.as_bytes())?;
     Ok(())
 }
 
@@ -660,7 +682,7 @@ fn save_and_audit_record(record: &ProjectRecord, message: &str) -> Result<(), Pr
         text.as_bytes(),
     )?];
     begin_pending_audit(&home, message, &audit_targets)?;
-    atomic_write(&project_record_path(&record.id), text.as_bytes())?;
+    atomic_write_store(&home, &project_record_path(&record.id), text.as_bytes())?;
     mark_pending_audit_applied(&home)?;
     finish_pending_audit(&home)?;
     Ok(())
@@ -1017,6 +1039,84 @@ mod tests {
         std::env::remove_var("OMNIPROJ_HOME");
         std::fs::remove_dir_all(home).unwrap();
         std::fs::remove_dir_all(source).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registration_rejects_a_staging_project_root_symlink_before_external_writes() {
+        use std::os::unix::fs::symlink;
+
+        let _guard = crate::env_guard();
+        let home = std::env::temp_dir().join(format!(
+            "omniproj-registration-staging-symlink-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let source = std::env::temp_dir().join(format!(
+            "omniproj-registration-staging-source-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let external = std::env::temp_dir().join(format!(
+            "omniproj-registration-external-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(external.join("notes")).unwrap();
+        let sentinel = external.join("sentinel.md");
+        std::fs::write(&sentinel, b"Human external sentinel\n").unwrap();
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        ensure_home().unwrap();
+
+        let reached = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let release = std::sync::Arc::new(std::sync::Barrier::new(2));
+        install_registration_test_pause(reached.clone(), release.clone());
+        let registration_source = source.clone();
+        let registration = std::thread::spawn(move || {
+            register_project(RegisterProjectInput {
+                location: &registration_source,
+                name: "Symlink attack",
+                created_at: "2026-08-10T12:00:00Z",
+            })
+        });
+        reached.wait();
+        let staging = std::fs::read_dir(home.join("projects"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".staging-"))
+            })
+            .unwrap();
+        std::fs::remove_dir_all(&staging).unwrap();
+        symlink(&external, &staging).unwrap();
+        release.wait();
+
+        let error = registration.join().unwrap().unwrap_err();
+
+        assert_eq!(
+            std::fs::read(&sentinel).unwrap(),
+            b"Human external sentinel\n"
+        );
+        assert!(!external.join("notes/project.md").exists());
+        assert!(!external.join("meta.toml").exists());
+        assert!(matches!(
+            error,
+            ProjectStoreError::Store(StoreError::AuditConflict { .. })
+                | ProjectStoreError::Store(StoreError::InvalidData(_))
+        ));
+        let staged = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&home)
+            .args(["diff", "--cached", "--name-only", "--", "projects"])
+            .output()
+            .unwrap();
+        assert!(staged.status.success());
+        assert!(staged.stdout.is_empty());
+
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+        std::fs::remove_dir_all(source).unwrap();
+        std::fs::remove_dir_all(external).unwrap();
     }
 
     #[test]

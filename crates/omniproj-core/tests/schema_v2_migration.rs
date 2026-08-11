@@ -456,6 +456,165 @@ fn malformed_and_ambiguous_round2_snapshot_journals_are_not_staged_or_rewritten(
     }
 }
 
+#[test]
+fn round2_ignore_prepared_rejects_an_expected_hash_that_disagrees_with_its_write_bytes() {
+    let _guard = env_guard();
+    let home = unique_home("round2-ignore-authoritative-expected");
+    seed_v1_store(&home);
+    let gitignore = home.join(".gitignore");
+    let prior = std::fs::read(&gitignore).unwrap();
+    let mut expected = String::from_utf8(prior.clone()).unwrap();
+    expected.push_str("/.migration-v2\n");
+    let journal = format!(
+        "target_schema_version = 2\nphase = \"ignore_write_prepared\"\nproject_ids = [{PROJECT_ID:?}]\ncreated_state_ids = [{PROJECT_ID:?}]\npending_ignore_contents = {expected:?}\n\n[[audit_targets]]\nrelative_path = \".gitignore\"\nprior_sha256 = {:?}\nexpected_sha256 = {:?}\n",
+        sha256(&prior),
+        "0".repeat(64)
+    );
+    let journal_path = home.join(".migration-v2");
+    std::fs::write(&journal_path, &journal).unwrap();
+    std::env::set_var("OMNIPROJ_HOME", &home);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(
+        error,
+        StoreError::InvalidData(_) | StoreError::AuditConflict { .. }
+    ));
+    assert_eq!(std::fs::read(&gitignore).unwrap(), prior);
+    assert_eq!(std::fs::read_to_string(&journal_path).unwrap(), journal);
+    assert_eq!(
+        git_output(
+            &home,
+            &["diff", "--cached", "--name-only", "--", ".gitignore"]
+        ),
+        ""
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn round2_projects_prepared_rejects_non_authoritative_meta_and_state_hashes_before_writes() {
+    let _guard = env_guard();
+    for corrupted_relative in [
+        format!("projects/{PROJECT_ID}/meta.toml"),
+        format!("projects/{PROJECT_ID}/notes/project.md"),
+    ] {
+        let home = unique_home("round2-project-authoritative-expected");
+        seed_v1_store(&home);
+        let meta = home.join("projects").join(PROJECT_ID).join("meta.toml");
+        let state = home
+            .join("projects")
+            .join(PROJECT_ID)
+            .join("notes/project.md");
+        let prior_meta = std::fs::read(&meta).unwrap();
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        std::env::set_var("OMNIPROJ_TEST_FAILPOINT", "migration_after_metadata_write");
+        assert!(ensure_home().is_err());
+        std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+        rewrite_snapshot_journal_as_round2(
+            &home.join(".migration-v2"),
+            "audit_targets",
+            Some("projects_write_prepared"),
+        );
+        std::fs::write(&meta, &prior_meta).unwrap();
+        std::fs::remove_file(&state).unwrap();
+        let journal_path = home.join(".migration-v2");
+        let mut document: toml::Value = std::fs::read_to_string(&journal_path)
+            .unwrap()
+            .parse()
+            .unwrap();
+        let target = document
+            .get_mut("audit_targets")
+            .unwrap()
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|target| {
+                target.get("relative_path").and_then(toml::Value::as_str)
+                    == Some(corrupted_relative.as_str())
+            })
+            .unwrap()
+            .as_table_mut()
+            .unwrap();
+        target.insert(
+            "expected_sha256".into(),
+            toml::Value::String("0".repeat(64)),
+        );
+        let journal = toml::to_string(&document).unwrap();
+        std::fs::write(&journal_path, &journal).unwrap();
+
+        let error = ensure_home().unwrap_err();
+
+        assert!(matches!(
+            error,
+            StoreError::InvalidData(_) | StoreError::AuditConflict { .. }
+        ));
+        assert_eq!(std::fs::read(&meta).unwrap(), prior_meta);
+        assert!(!state.exists());
+        assert_eq!(std::fs::read_to_string(&journal_path).unwrap(), journal);
+        assert_eq!(
+            git_output(
+                &home,
+                &[
+                    "diff",
+                    "--cached",
+                    "--name-only",
+                    "--",
+                    &format!("projects/{PROJECT_ID}")
+                ]
+            ),
+            ""
+        );
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn migration_rejects_a_notes_ancestor_symlink_before_writing_external_state() {
+    use std::os::unix::fs::symlink;
+
+    let _guard = env_guard();
+    let home = unique_home("notes-ancestor-symlink");
+    seed_v1_store(&home);
+    let notes = home.join("projects").join(PROJECT_ID).join("notes");
+    std::fs::remove_dir_all(&notes).unwrap();
+    let external = unique_home("notes-ancestor-external");
+    std::fs::create_dir(&external).unwrap();
+    let sentinel = external.join("sentinel.md");
+    std::fs::write(&sentinel, b"Human sentinel bytes\n").unwrap();
+    symlink(&external, &notes).unwrap();
+    std::env::set_var("OMNIPROJ_HOME", &home);
+
+    let error = ensure_home().unwrap_err();
+
+    assert_eq!(std::fs::read(&sentinel).unwrap(), b"Human sentinel bytes\n");
+    assert!(!external.join("project.md").exists());
+    assert!(matches!(
+        error,
+        StoreError::InvalidData(_) | StoreError::AuditConflict { .. }
+    ));
+    assert_eq!(std::fs::read_link(&notes).unwrap(), external);
+    assert_eq!(
+        git_output(
+            &home,
+            &[
+                "diff",
+                "--cached",
+                "--name-only",
+                "--",
+                &format!("projects/{PROJECT_ID}/notes/project.md")
+            ]
+        ),
+        ""
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+    std::fs::remove_dir_all(external).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn schema_write_prepared_rejects_a_persisted_symlink_prior_without_replacing_it() {

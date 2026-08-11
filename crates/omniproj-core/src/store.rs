@@ -180,11 +180,11 @@ fn ensure_home_locked(home: &Path) -> Result<(), StoreError> {
         initial_audit_targets.push(schema_target);
         begin_pending_audit(home, "init omniproj store", &initial_audit_targets)?;
         if create_gitignore {
-            atomic_write(&gitignore, INITIAL_GITIGNORE.as_bytes())?;
+            atomic_write_store(home, &gitignore, INITIAL_GITIGNORE.as_bytes())?;
             failpoint("fresh_init_after_gitignore_write")?;
         }
         // Stamp the schema version so it lands in the very first commit.
-        atomic_write(&home.join(SCHEMA_VERSION_FILE), schema_contents.as_bytes())?;
+        atomic_write_store(home, &schema_path, schema_contents.as_bytes())?;
         failpoint("fresh_init_after_schema_write_before_applied")?;
         mark_pending_audit_applied(home)?;
         finish_pending_audit(home)?;
@@ -431,6 +431,7 @@ fn decode_migration_journal(
 ) -> Result<MigrationV2Journal, StoreError> {
     if let Ok(mut journal) = toml::from_str::<MigrationV2Journal>(text) {
         validate_migration_journal(path, &journal)?;
+        validate_audit_target_paths(home, &journal.audit_targets)?;
         normalize_legacy_schema_phase(home, &mut journal)?;
         validate_migration_journal(path, &journal)?;
         return Ok(journal);
@@ -449,6 +450,8 @@ fn decode_migration_journal(
             pending_ignore_contents: round2.pending_ignore_contents,
         };
         validate_migration_journal(path, &journal)?;
+        validate_audit_target_paths(home, &journal.audit_targets)?;
+        validate_round2_authoritative_snapshots(home, path, &journal)?;
         validate_snapshot_phase_state(home, &journal)?;
         normalize_legacy_schema_phase(home, &mut journal)?;
         validate_migration_journal(path, &journal)?;
@@ -477,6 +480,53 @@ fn decode_migration_journal(
         "{} is malformed or does not match a supported migration journal format",
         path.display()
     )))
+}
+
+fn validate_round2_authoritative_snapshots(
+    home: &Path,
+    journal_path: &Path,
+    journal: &MigrationV2Journal,
+) -> Result<(), StoreError> {
+    match journal.phase {
+        MigrationV2Phase::IgnoreWritePrepared | MigrationV2Phase::IgnoreWritten => {
+            let expected = journal.pending_ignore_contents.as_ref().ok_or_else(|| {
+                StoreError::InvalidData(format!(
+                    "{} omits authoritative .gitignore write bytes",
+                    journal_path.display()
+                ))
+            })?;
+            if journal.audit_targets[0].expected != regular_identity(expected.as_bytes()) {
+                return Err(StoreError::AuditConflict {
+                    path: journal_path.to_owned(),
+                });
+            }
+        }
+        MigrationV2Phase::ProjectsWritePrepared | MigrationV2Phase::ProjectsWritten => {
+            let authoritative = legacy_project_audit_targets_from_history(home, journal)?;
+            for target in &journal.audit_targets {
+                let Some(expected) = authoritative
+                    .iter()
+                    .find(|candidate| candidate.relative_path == target.relative_path)
+                else {
+                    return Err(StoreError::AuditConflict {
+                        path: journal_path.to_owned(),
+                    });
+                };
+                if target.prior != expected.prior || target.expected != expected.expected {
+                    return Err(StoreError::AuditConflict {
+                        path: home.join(&target.relative_path),
+                    });
+                }
+            }
+            if authoritative.len() != journal.audit_targets.len() {
+                return Err(StoreError::AuditConflict {
+                    path: journal_path.to_owned(),
+                });
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn validate_snapshot_phase_state(
@@ -834,6 +884,7 @@ fn path_matches_head(home: &Path, relative: &Path) -> Result<bool, StoreError> {
     let Some(head) = git_head_bytes(home, relative)? else {
         return Ok(false);
     };
+    validate_store_path_ancestors(home, &home.join(relative))?;
     Ok(std::fs::read(home.join(relative))? == head)
 }
 
@@ -1045,7 +1096,7 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
                 .join("projects")
                 .join(project_id.as_str())
                 .join("notes/project.md");
-            validate_mutation_target_type(&state_path)?;
+            validate_store_file_target(home, &state_path)?;
             if state_path.exists() {
                 let existing = std::fs::read_to_string(&state_path)?;
                 if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup) {
@@ -1089,7 +1140,7 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
                     StoreError::InvalidData("missing prepared .gitignore contents".into())
                 })?;
                 if !audit_targets_match(home, &journal.audit_targets, SnapshotSide::Expected)? {
-                    atomic_write(&home.join(".gitignore"), expected.as_bytes())?;
+                    atomic_write_store(home, &home.join(".gitignore"), expected.as_bytes())?;
                 }
                 journal.phase = MigrationV2Phase::IgnoreWritten;
                 write_migration_journal(&journal_path, &journal)?;
@@ -1119,7 +1170,7 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
                     let (record, setup) = migration_record_and_setup(home, project_id)?;
                     let project_root = home.join("projects").join(project_id.as_str());
                     let state_path = project_root.join("notes/project.md");
-                    validate_mutation_target_type(&state_path)?;
+                    validate_store_file_target(home, &state_path)?;
                     if state_path.exists() {
                         let existing = std::fs::read_to_string(&state_path)?;
                         if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup) {
@@ -1127,7 +1178,7 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
                         }
                     } else {
                         setup
-                            .save_to_path(&state_path)
+                            .save_to_store_path(home, &state_path)
                             .map_err(|error| StoreError::InvalidData(error.to_string()))?;
                     }
                     failpoint("migration_after_project_state_write")?;
@@ -1135,7 +1186,7 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
                     let meta_path = project_root.join("meta.toml");
                     let text = render_project_record(&record)
                         .map_err(|error| StoreError::InvalidData(error.to_string()))?;
-                    atomic_write(&meta_path, text.as_bytes())?;
+                    atomic_write_store(home, &meta_path, text.as_bytes())?;
                     failpoint("migration_after_metadata_write")?;
                 }
                 journal.phase = MigrationV2Phase::ProjectsWritten;
@@ -1168,7 +1219,8 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
             MigrationV2Phase::SchemaWritePrepared => {
                 validate_targets_are_prior_or_expected(home, &journal.audit_targets)?;
                 if !audit_targets_match(home, &journal.audit_targets, SnapshotSide::Expected)? {
-                    atomic_write(home.join(SCHEMA_VERSION_FILE).as_path(), b"2\n")?;
+                    let schema_path = home.join(SCHEMA_VERSION_FILE);
+                    atomic_write_store(home, &schema_path, b"2\n")?;
                 }
                 failpoint("migration_after_schema_stamp_write_before_phase")?;
                 journal.phase = MigrationV2Phase::SchemaWritten;
@@ -1203,7 +1255,13 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
 fn write_migration_journal(path: &Path, journal: &MigrationV2Journal) -> Result<(), StoreError> {
     let text =
         toml::to_string(journal).map_err(|error| StoreError::InvalidData(error.to_string()))?;
-    atomic_write(path, text.as_bytes())
+    let home = path.parent().ok_or_else(|| {
+        StoreError::InvalidData(format!(
+            "migration journal has no store parent: {}",
+            path.display()
+        ))
+    })?;
+    atomic_write_store(home, path, text.as_bytes())
 }
 
 fn migration_audit_targets(
@@ -1240,6 +1298,7 @@ fn validate_targets_are_prior_or_expected(
     targets: &[AuditTargetSnapshot],
 ) -> Result<(), StoreError> {
     for target in targets {
+        validate_store_path_ancestors(home, &home.join(&target.relative_path))?;
         let actual = audit_path_identity(&home.join(&target.relative_path))?;
         if actual != target.prior && actual != target.expected {
             return Err(StoreError::AuditConflict {
@@ -1282,7 +1341,7 @@ fn refresh_migration_projects(
             .join("projects")
             .join(project_id.as_str())
             .join("notes/project.md");
-        validate_mutation_target_type(&state_path)?;
+        validate_store_file_target(home, &state_path)?;
         if state_path.exists() {
             let existing = std::fs::read_to_string(&state_path)?;
             if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup) {
@@ -1341,7 +1400,7 @@ fn migration_record_and_setup(
         .join("projects")
         .join(project_id.as_str())
         .join("meta.toml");
-    validate_mutation_target_type(&meta_path)?;
+    validate_store_file_target(home, &meta_path)?;
     let text = std::fs::read_to_string(&meta_path)?;
     let record = match toml::from_str::<LegacyProjectMetaV1>(&text) {
         Ok(legacy) => legacy_to_v2(project_id, legacy)?,
@@ -1412,7 +1471,7 @@ fn validate_migration_record(
 
 fn migration_ignore_contents(home: &Path) -> Result<String, StoreError> {
     let path = home.join(".gitignore");
-    validate_mutation_target_type(&path)?;
+    validate_store_file_target(home, &path)?;
     let mut text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
@@ -1480,6 +1539,23 @@ where
 
 /// Replace a file durably without exposing a partially written destination.
 pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), StoreError> {
+    atomic_write_with_guards(path, contents, || Ok(()))
+}
+
+pub(crate) fn atomic_write_store(
+    home: &Path,
+    path: &Path,
+    contents: &[u8],
+) -> Result<(), StoreError> {
+    validate_store_file_target(home, path)?;
+    atomic_write_with_guards(path, contents, || validate_store_file_target(home, path))
+}
+
+fn atomic_write_with_guards(
+    path: &Path,
+    contents: &[u8],
+    validate_target: impl Fn() -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let filename = path
         .file_name()
@@ -1501,6 +1577,7 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), StoreError> {
     ));
 
     let result = (|| -> Result<(), StoreError> {
+        validate_target()?;
         let mut file = std::fs::OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -1508,6 +1585,7 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), StoreError> {
         file.write_all(contents)?;
         file.sync_all()?;
         drop(file);
+        validate_target()?;
         std::fs::rename(&temporary, path)?;
         #[cfg(unix)]
         std::fs::File::open(parent)?.sync_all()?;
@@ -1605,6 +1683,7 @@ pub(crate) fn audit_target_snapshot(
     expected_contents: &[u8],
 ) -> Result<AuditTargetSnapshot, StoreError> {
     validate_relative_audit_path(&relative_path)?;
+    validate_store_path_ancestors(home, &home.join(&relative_path))?;
     let prior = audit_path_identity(&home.join(&relative_path))?;
     if !matches!(
         prior,
@@ -1638,6 +1717,7 @@ pub(crate) fn begin_pending_audit(
             ));
         }
     }
+    validate_audit_target_paths(home, targets)?;
     let journal_path = home.join(PENDING_AUDIT_JOURNAL);
     if journal_path.exists() {
         return Err(StoreError::InvalidData(format!(
@@ -1748,7 +1828,8 @@ fn recover_interrupted_fresh_init(home: &Path) -> Result<(), StoreError> {
                 } else {
                     INITIAL_GITIGNORE.as_bytes()
                 };
-                atomic_write(&home.join(&target.relative_path), contents)?;
+                let path = home.join(&target.relative_path);
+                atomic_write_store(home, &path, contents)?;
             }
         }
         mark_pending_audit_applied(home)?;
@@ -1792,13 +1873,32 @@ fn read_pending_audit(path: &Path) -> Result<PendingAudit, StoreError> {
             )));
         }
     }
+    let home = path
+        .parent()
+        .and_then(|parent| parent.parent())
+        .ok_or_else(|| {
+            StoreError::InvalidData(format!(
+                "pending audit has no store parent: {}",
+                path.display()
+            ))
+        })?;
+    validate_audit_target_paths(home, &journal.targets)?;
     Ok(journal)
 }
 
 fn write_pending_audit(path: &Path, journal: &PendingAudit) -> Result<(), StoreError> {
     let text =
         toml::to_string(journal).map_err(|error| StoreError::InvalidData(error.to_string()))?;
-    atomic_write(path, text.as_bytes())
+    let home = path
+        .parent()
+        .and_then(|parent| parent.parent())
+        .ok_or_else(|| {
+            StoreError::InvalidData(format!(
+                "pending audit has no store parent: {}",
+                path.display()
+            ))
+        })?;
+    atomic_write_store(home, path, text.as_bytes())
 }
 
 #[derive(Clone, Copy)]
@@ -1813,6 +1913,7 @@ fn audit_targets_match(
     side: SnapshotSide,
 ) -> Result<bool, StoreError> {
     for target in targets {
+        validate_store_path_ancestors(home, &home.join(&target.relative_path))?;
         let actual = audit_path_identity(&home.join(&target.relative_path))?;
         let wanted = match side {
             SnapshotSide::Prior => &target.prior,
@@ -1831,6 +1932,7 @@ fn validate_audit_targets(
     side: SnapshotSide,
 ) -> Result<(), StoreError> {
     for target in targets {
+        validate_store_path_ancestors(home, &home.join(&target.relative_path))?;
         let actual = audit_path_identity(&home.join(&target.relative_path))?;
         let wanted = match side {
             SnapshotSide::Prior => &target.prior,
@@ -1841,6 +1943,16 @@ fn validate_audit_targets(
                 path: home.join(&target.relative_path),
             });
         }
+    }
+    Ok(())
+}
+
+fn validate_audit_target_paths(
+    home: &Path,
+    targets: &[AuditTargetSnapshot],
+) -> Result<(), StoreError> {
+    for target in targets {
+        validate_store_file_target(home, &home.join(&target.relative_path))?;
     }
     Ok(())
 }
@@ -1870,7 +1982,8 @@ fn audit_path_identity(path: &Path) -> Result<AuditPathIdentity, StoreError> {
     })
 }
 
-fn validate_mutation_target_type(path: &Path) -> Result<(), StoreError> {
+pub(crate) fn validate_store_file_target(home: &Path, path: &Path) -> Result<(), StoreError> {
+    validate_store_path_ancestors(home, path)?;
     if matches!(
         audit_path_identity(path)?,
         AuditPathIdentity::Missing | AuditPathIdentity::RegularFile { .. }
@@ -1881,6 +1994,72 @@ fn validate_mutation_target_type(path: &Path) -> Result<(), StoreError> {
             path: path.to_owned(),
         })
     }
+}
+
+pub(crate) fn validate_store_directory_target(
+    home: &Path,
+    path: &Path,
+    allow_missing: bool,
+) -> Result<(), StoreError> {
+    validate_store_path_ancestors(home, path)?;
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_dir() => Ok(()),
+        Err(error) if allow_missing && error.kind() == ErrorKind::NotFound => Ok(()),
+        Ok(_) => Err(StoreError::AuditConflict {
+            path: path.to_owned(),
+        }),
+        Err(error) => Err(StoreError::Io(error)),
+    }
+}
+
+pub(crate) fn validate_store_missing_target(home: &Path, path: &Path) -> Result<(), StoreError> {
+    validate_store_path_ancestors(home, path)?;
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Ok(_) => Err(StoreError::AuditConflict {
+            path: path.to_owned(),
+        }),
+        Err(error) => Err(StoreError::Io(error)),
+    }
+}
+
+fn validate_store_path_ancestors(home: &Path, path: &Path) -> Result<(), StoreError> {
+    let relative = path.strip_prefix(home).map_err(|_| {
+        StoreError::InvalidData(format!(
+            "store target escapes {}: {}",
+            home.display(),
+            path.display()
+        ))
+    })?;
+    let components: Vec<_> = relative.components().collect();
+    if components.is_empty()
+        || components
+            .iter()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(StoreError::InvalidData(format!(
+            "store target is not a normalized descendant: {}",
+            path.display()
+        )));
+    }
+    let canonical_home = std::fs::canonicalize(home)?;
+    let mut current = canonical_home;
+    let mut logical = PathBuf::new();
+    for component in components.iter().take(components.len() - 1) {
+        current.push(component.as_os_str());
+        logical.push(component.as_os_str());
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Ok(_) => {
+                return Err(StoreError::AuditConflict {
+                    path: home.join(&logical),
+                });
+            }
+            Err(error) => return Err(StoreError::Io(error)),
+        }
+    }
+    Ok(())
 }
 
 fn sha256(contents: &[u8]) -> String {
@@ -1933,6 +2112,9 @@ pub fn commit_paths_checked(message: &str, relative_paths: &[PathBuf]) -> Result
     }
 
     let home = omniproj_home();
+    for path in relative_paths {
+        validate_store_file_target(&home, &home.join(path))?;
+    }
     let add = Command::new("git")
         .arg("-C")
         .arg(&home)
@@ -1956,6 +2138,10 @@ pub fn commit_paths_checked(message: &str, relative_paths: &[PathBuf]) -> Result
         Some(0) => return Ok(false),
         Some(1) => {}
         _ => return Err(audit_error(diff)),
+    }
+
+    for path in relative_paths {
+        validate_store_file_target(&home, &home.join(path))?;
     }
 
     let commit = Command::new("git")

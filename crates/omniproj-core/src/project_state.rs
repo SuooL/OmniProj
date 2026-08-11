@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{CommitmentTransitionId, ProjectId, WorkItemId};
 use crate::paths::notes_dir_for;
-use crate::store::{atomic_write, StoreError};
+use crate::store::{atomic_write_store, StoreError};
 
 const DOCUMENT_SCHEMA_VERSION: u32 = 1;
 const DEFAULT_MARKDOWN_BODY: &str = "\n# Project notes\n";
@@ -206,15 +206,21 @@ impl ProjectStateDoc {
     }
 
     pub fn save(&self, project_id: &ProjectId) -> Result<(), ProjectStateError> {
-        self.save_to_path(&state_path(project_id))
+        let home = crate::paths::omniproj_home();
+        std::fs::create_dir_all(&home).map_err(ProjectStateError::Io)?;
+        self.save_to_store_path(&home, &state_path(project_id))
     }
 
     pub fn markdown_body(&self) -> &str {
         &self.markdown_body
     }
 
-    pub(crate) fn save_to_path(&self, path: &Path) -> Result<(), ProjectStateError> {
-        atomic_write(path, self.render()?.as_bytes()).map_err(ProjectStateError::Store)
+    pub(crate) fn save_to_store_path(
+        &self,
+        home: &Path,
+        path: &Path,
+    ) -> Result<(), ProjectStateError> {
+        atomic_write_store(home, path, self.render()?.as_bytes()).map_err(ProjectStateError::Store)
     }
 
     fn validate(&self) -> Result<(), ProjectStateError> {
