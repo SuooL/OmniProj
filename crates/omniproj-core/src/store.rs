@@ -430,10 +430,9 @@ fn decode_migration_journal(
     text: &str,
 ) -> Result<MigrationV2Journal, StoreError> {
     if let Ok(mut journal) = toml::from_str::<MigrationV2Journal>(text) {
-        validate_migration_journal(path, &journal)?;
-        validate_audit_target_paths(home, &journal.audit_targets)?;
+        validate_migration_journal_shape(path, &journal)?;
         normalize_legacy_schema_phase(home, &mut journal)?;
-        validate_migration_journal(path, &journal)?;
+        validate_migration_journal(home, path, &journal)?;
         return Ok(journal);
     }
     if let Ok(round2) = toml::from_str::<Round2MigrationV2Journal>(text) {
@@ -449,12 +448,9 @@ fn decode_migration_journal(
                 .collect::<Result<_, _>>()?,
             pending_ignore_contents: round2.pending_ignore_contents,
         };
-        validate_migration_journal(path, &journal)?;
-        validate_audit_target_paths(home, &journal.audit_targets)?;
-        validate_round2_authoritative_snapshots(home, path, &journal)?;
-        validate_snapshot_phase_state(home, &journal)?;
+        validate_migration_journal_shape(path, &journal)?;
         normalize_legacy_schema_phase(home, &mut journal)?;
-        validate_migration_journal(path, &journal)?;
+        validate_migration_journal(home, path, &journal)?;
         return Ok(journal);
     }
     if let Ok(round1) = toml::from_str::<Round1MigrationV2Journal>(text) {
@@ -482,7 +478,7 @@ fn decode_migration_journal(
     )))
 }
 
-fn validate_round2_authoritative_snapshots(
+fn validate_authoritative_migration_snapshots(
     home: &Path,
     journal_path: &Path,
     journal: &MigrationV2Journal,
@@ -524,6 +520,16 @@ fn validate_round2_authoritative_snapshots(
                 });
             }
         }
+        MigrationV2Phase::SchemaWritePrepared | MigrationV2Phase::SchemaWritten => {
+            let authoritative = schema_audit_target_from_history(home)?;
+            if journal.audit_targets[0].prior != authoritative.prior
+                || journal.audit_targets[0].expected != authoritative.expected
+            {
+                return Err(StoreError::AuditConflict {
+                    path: home.join(SCHEMA_VERSION_FILE),
+                });
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -537,7 +543,12 @@ fn validate_snapshot_phase_state(
         MigrationV2Phase::IgnoreWritePrepared | MigrationV2Phase::ProjectsWritePrepared => {
             validate_targets_are_prior_or_expected(home, &journal.audit_targets)
         }
-        MigrationV2Phase::IgnoreWritten | MigrationV2Phase::ProjectsWritten => {
+        MigrationV2Phase::SchemaWritePrepared => {
+            validate_targets_are_prior_or_expected(home, &journal.audit_targets)
+        }
+        MigrationV2Phase::IgnoreWritten
+        | MigrationV2Phase::ProjectsWritten
+        | MigrationV2Phase::SchemaWritten => {
             validate_audit_targets(home, &journal.audit_targets, SnapshotSide::Expected)
         }
         _ => Ok(()),
@@ -578,7 +589,7 @@ fn upgrade_round1_migration_journal(
         audit_targets: Vec::new(),
         pending_ignore_contents: None,
     };
-    validate_migration_journal(path, &journal)?;
+    validate_migration_journal_shape(path, &journal)?;
     let original_phase = round1.phase;
     let project_targets = legacy_project_audit_targets_from_history(home, &journal)?;
 
@@ -632,12 +643,26 @@ fn upgrade_round1_migration_journal(
         | MigrationV2Phase::SchemaWritePrepared
         | MigrationV2Phase::SchemaWritten => unreachable!("rejected above"),
     }
-    validate_migration_journal(path, &journal)?;
+    validate_migration_journal(home, path, &journal)?;
     write_migration_journal(path, &journal)?;
     Ok(journal)
 }
 
-fn validate_migration_journal(path: &Path, journal: &MigrationV2Journal) -> Result<(), StoreError> {
+fn validate_migration_journal(
+    home: &Path,
+    path: &Path,
+    journal: &MigrationV2Journal,
+) -> Result<(), StoreError> {
+    validate_migration_journal_shape(path, journal)?;
+    validate_audit_target_paths(home, &journal.audit_targets)?;
+    validate_authoritative_migration_snapshots(home, path, journal)?;
+    validate_snapshot_phase_state(home, journal)
+}
+
+fn validate_migration_journal_shape(
+    path: &Path,
+    journal: &MigrationV2Journal,
+) -> Result<(), StoreError> {
     if journal.target_schema_version != 2 {
         return Err(StoreError::InvalidData(format!(
             "{} targets unsupported schema {}",
@@ -844,7 +869,7 @@ fn upgrade_legacy_migration_journal(
         pending_ignore_contents: None,
     };
     normalize_legacy_schema_phase(home, &mut journal)?;
-    validate_migration_journal(path, &journal)?;
+    validate_migration_journal(home, path, &journal)?;
     write_migration_journal(path, &journal)?;
     Ok(journal)
 }
@@ -1370,7 +1395,15 @@ fn migration_project_ids(home: &Path) -> Result<Vec<ProjectId>, StoreError> {
     let mut ids = Vec::new();
     for entry in entries {
         let entry = entry?;
-        if !entry.file_type()?.is_dir() {
+        let file_type = entry.file_type()?;
+        if !file_type.is_dir() {
+            if entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| ProjectId::parse(name).is_ok())
+            {
+                return Err(StoreError::MigrationConflict { path: entry.path() });
+            }
             continue;
         }
         match std::fs::symlink_metadata(entry.path().join("meta.toml")) {
