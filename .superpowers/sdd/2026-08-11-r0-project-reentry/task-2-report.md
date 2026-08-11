@@ -285,3 +285,35 @@ Code commit: `e2aa3b2` (`fix(core): validate all migration journal formats`).
 - Structural validation remains an early pre-normalization gate, but every successfully decoded or upgraded journal then passes one side-effect-free pipeline over the normalized current representation: exact shape/phase/target set, safe target paths and leaf types, deterministic authoritative snapshots, and actual phase state. Compatibility upgrades write their normalized journal only after this pipeline succeeds.
 - Authoritative validation now applies uniformly to tagged and flat SHA formats. Ignore targets must hash `pending_ignore_contents`; project prior/expected identities must match strict Git-backed v1 inputs and deterministic v2 bytes; schema prior/expected identities must match Git history and literal `2\n`.
 - Project enumeration obtains no data through a symlink. Invalid/tool-reserved entry names retain their prior behavior, while any entry whose name parses as a ProjectId must be a real directory or migration returns a typed conflict. The same function is used for initial discovery and every pre-stamp rescan.
+
+## Correction Round 7
+
+Code commit: `aa653fa8bbafe8f659813c4d3ceb68ede993bbcd` (`fix(core): prove migration audit milestones`).
+
+### Changed files
+
+- `crates/omniproj-core/src/store.rs`: adds a shared, side-effect-free phase-milestone proof after structural, authoritative-snapshot, and snapshot-state validation; proves ignore, project, and schema worktree/HEAD states before any recovery transition; and upgrades no-phase legacy journals to `projects_audited` only when deterministic outputs and `HEAD` prove that milestone.
+- `crates/omniproj-core/tests/schema_v2_migration.rs`: covers tagged/Round-2 false `projects_audited` journals over both untouched v1 and an ignore-only audited store, false `ignore_audited`, three false schema-audited states, and legitimate audited-phase crash recovery.
+
+### RED evidence
+
+1. `cargo test -p omniproj-core --test schema_v2_migration tagged_and_round2_projects_audited_require_proven_project_outputs -- --exact --nocapture` failed with `tagged: rejected=false, unchanged=false; round2: rejected=false, unchanged=false`; false audited journals advanced and changed an unproved v1 store.
+2. `cargo test -p omniproj-core --test schema_v2_migration ignore_audited_requires_the_expected_ignore_bytes_to_be_committed -- --exact --nocapture` failed because `unwrap_err()` received `Ok(home)` when the expected `.gitignore` bytes existed only in the worktree.
+3. `cargo test -p omniproj-core --test schema_v2_migration tagged_schema_audited_requires_exact_schema_bytes_in_worktree_and_head -- --exact --nocapture` failed with `uncommitted: rejected=false, unchanged=false; modified: rejected=false, unchanged=false`; the missing-schema table case was already rejected by the existing stamp/phase guard.
+
+### GREEN evidence and final verification
+
+- The three negative regressions pass with target, journal, schema, and index unchanged; the positive project/schema audited failpoint fixtures converge and remove the journal.
+- The first full migration run caught one old no-phase compatibility regression (38/39). Its upgrade now promotes an all-expected project state only after ignore and `HEAD` proof; the exact regression and all Round-1/Round-2 fixtures then passed.
+- `cargo test -p omniproj-core --test schema_v2_migration --test project_source_registry`: 55 passed, 0 failed.
+- `cargo test -p omniproj-core --lib project_state -- --nocapture`: 9 passed, 0 failed.
+- `cargo test -p omniproj-core --lib`: 89 passed, 0 failed.
+- Final `cargo test -p omniproj-core --tests`: 144 passed, 0 failed across unit and integration suites.
+- `cargo check --workspace`: exit 0; only the existing staged-migration deprecation warnings remain.
+- `cargo fmt --all --check` and `git diff --check`: exit 0.
+
+### Design decisions and concerns
+
+- `journal_created` requires Git-backed project priors and the prior schema; `ignore_audited` additionally requires the marker-bearing `.gitignore` to match `HEAD` while allowing each project target to be either prior or expected for partial-loop recovery.
+- `projects_audited` requires the exact project set plus every deterministic migrated metadata/migration-created state output in both worktree and `HEAD`; `schema_audited` additionally requires literal `2\n` in both worktree and `HEAD`. Schema prepared/written phases retain their prior-or-expected/expected crash windows.
+- Non-created Human project-state files remain outside the migration audit target set and are never staged or rewritten; they must still parse as the canonical pre-existing setup state. Compatibility normalization conflicts on mixed or otherwise unprovable states rather than guessing.
