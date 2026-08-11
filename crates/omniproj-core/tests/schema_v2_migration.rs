@@ -209,6 +209,25 @@ fn remove_preserved_state_proofs(path: &Path) {
     std::fs::write(path, toml::to_string(&document).unwrap()).unwrap();
 }
 
+fn rewrite_preserved_state_head_policy(path: &Path, head_required: bool) {
+    let mut document: toml::Value = std::fs::read_to_string(path).unwrap().parse().unwrap();
+    let proofs = document
+        .get_mut("preserved_state_proofs")
+        .unwrap()
+        .as_array_mut()
+        .unwrap();
+    assert_eq!(proofs.len(), 1);
+    let prior = proofs[0]
+        .as_table_mut()
+        .unwrap()
+        .insert("head_required".into(), toml::Value::Boolean(head_required));
+    assert_eq!(
+        prior.and_then(|value| value.as_bool()),
+        Some(!head_required)
+    );
+    std::fs::write(path, toml::to_string(&document).unwrap()).unwrap();
+}
+
 fn sha256(contents: &[u8]) -> String {
     format!("{:x}", Sha256::digest(contents))
 }
@@ -1544,6 +1563,139 @@ fn normalized_audited_legacy_journal_retains_state_head_proof_across_retries() {
         ],
     );
     let journal = home.join(".migration-v2");
+    let journal_before = std::fs::read(&journal).unwrap();
+    let state_before = std::fs::read(&state).unwrap();
+    let meta_before = std::fs::read(&meta).unwrap();
+    let schema_before = std::fs::read(home.join("SCHEMA_VERSION")).unwrap();
+    let index_before = git_output(&home, &["diff", "--cached", "--name-only"]);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::MigrationConflict { .. }));
+    assert_eq!(std::fs::read(&journal).unwrap(), journal_before);
+    assert_eq!(std::fs::read(&state).unwrap(), state_before);
+    assert_eq!(std::fs::read(&meta).unwrap(), meta_before);
+    assert_eq!(
+        std::fs::read(home.join("SCHEMA_VERSION")).unwrap(),
+        schema_before
+    );
+    assert_eq!(
+        git_output(&home, &["diff", "--cached", "--name-only"]),
+        index_before
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn tampered_false_head_policy_cannot_disable_audited_state_proof() {
+    let _guard = env_guard();
+    let home = unique_home("tampered-false-audited-state-policy");
+    seed_v1_store(&home);
+    let relative_state = format!("projects/{PROJECT_ID}/notes/project.md");
+    let state = home.join(&relative_state);
+    let meta = home.join("projects").join(PROJECT_ID).join("meta.toml");
+    std::fs::write(&state, SETUP_STATE).unwrap();
+    run_git(&home, &["add", "--", &relative_state]);
+    run_git(
+        &home,
+        &[
+            "-c",
+            "user.name=omniproj-test",
+            "-c",
+            "user.email=omniproj-test@local",
+            "commit",
+            "-q",
+            "-m",
+            "seed canonical project state",
+            "--",
+            &relative_state,
+        ],
+    );
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    std::env::set_var(
+        "OMNIPROJ_TEST_FAILPOINT",
+        "migration_after_project_audit_commit",
+    );
+    assert!(ensure_home().is_err());
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+    write_legacy_migration_journal(&home, &[PROJECT_ID]);
+    std::env::set_var("OMNIPROJ_TEST_FAILPOINT", "migration_after_schema_stamp");
+    assert!(ensure_home().is_err());
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+    let journal = home.join(".migration-v2");
+    rewrite_preserved_state_head_policy(&journal, false);
+    run_git(&home, &["rm", "-q", "--cached", "--", &relative_state]);
+    run_git(
+        &home,
+        &[
+            "-c",
+            "user.name=omniproj-test",
+            "-c",
+            "user.email=omniproj-test@local",
+            "commit",
+            "-q",
+            "-m",
+            "stop tracking canonical project state",
+        ],
+    );
+    let journal_before = std::fs::read(&journal).unwrap();
+    let state_before = std::fs::read(&state).unwrap();
+    let meta_before = std::fs::read(&meta).unwrap();
+    let schema_before = std::fs::read(home.join("SCHEMA_VERSION")).unwrap();
+    let index_before = git_output(&home, &["diff", "--cached", "--name-only"]);
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::MigrationConflict { .. }));
+    assert_eq!(std::fs::read(&journal).unwrap(), journal_before);
+    assert_eq!(std::fs::read(&state).unwrap(), state_before);
+    assert_eq!(std::fs::read(&meta).unwrap(), meta_before);
+    assert_eq!(
+        std::fs::read(home.join("SCHEMA_VERSION")).unwrap(),
+        schema_before
+    );
+    assert_eq!(
+        git_output(&home, &["diff", "--cached", "--name-only"]),
+        index_before
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn tampered_true_head_policy_cannot_invent_untracked_state_provenance() {
+    let _guard = env_guard();
+    let home = unique_home("tampered-true-untracked-state-policy");
+    seed_v1_store(&home);
+    let relative_state = format!("projects/{PROJECT_ID}/notes/project.md");
+    let state = home.join(&relative_state);
+    let meta = home.join("projects").join(PROJECT_ID).join("meta.toml");
+    std::fs::write(&state, SETUP_STATE).unwrap();
+    write_legacy_migration_journal(&home, &[PROJECT_ID]);
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    std::env::set_var(
+        "OMNIPROJ_TEST_FAILPOINT",
+        "migration_after_project_state_write",
+    );
+    assert!(ensure_home().is_err());
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+    let journal = home.join(".migration-v2");
+    rewrite_preserved_state_head_policy(&journal, true);
+    run_git(&home, &["add", "--", &relative_state]);
+    run_git(
+        &home,
+        &[
+            "-c",
+            "user.name=omniproj-test",
+            "-c",
+            "user.email=omniproj-test@local",
+            "commit",
+            "-q",
+            "-m",
+            "track state after migration normalization",
+        ],
+    );
     let journal_before = std::fs::read(&journal).unwrap();
     let state_before = std::fs::read(&state).unwrap();
     let meta_before = std::fs::read(&meta).unwrap();

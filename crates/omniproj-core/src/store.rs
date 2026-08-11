@@ -745,14 +745,21 @@ fn preserved_state_proofs_for_compatibility(
     project_ids
         .iter()
         .filter(|project_id| !created.contains(project_id))
-        .map(|project_id| preserved_state_proof(home, project_id, head_required))
+        .map(|project_id| {
+            let proof = preserved_state_proof(home, project_id)?;
+            if head_required && !proof.head_required {
+                return Err(StoreError::MigrationConflict {
+                    path: project_state_path(home, project_id),
+                });
+            }
+            Ok(proof)
+        })
         .collect()
 }
 
 fn preserved_state_proof(
     home: &Path,
     project_id: &ProjectId,
-    head_required: bool,
 ) -> Result<PreservedStateProof, StoreError> {
     let (_, setup) = migration_record_and_setup(home, project_id)?;
     let canonical = setup
@@ -770,6 +777,13 @@ fn preserved_state_proof(
     {
         return Err(StoreError::MigrationConflict { path: state_path });
     }
+    let head_required = match authoritative_state_provenance(home, project_id)? {
+        StateHistoryProvenance::PreMigrationTracked => true,
+        StateHistoryProvenance::PreMigrationUntracked => false,
+        StateHistoryProvenance::MigrationCreated => {
+            return Err(StoreError::MigrationConflict { path: state_path });
+        }
+    };
     if head_required && git_head_bytes(home, &relative)?.as_deref() != Some(canonical.as_bytes()) {
         return Err(StoreError::MigrationConflict { path: state_path });
     }
@@ -785,13 +799,12 @@ fn validate_preserved_state_proofs(
     journal: &MigrationV2Journal,
 ) -> Result<(), StoreError> {
     for proof in &journal.preserved_state_proofs {
-        let authoritative = preserved_state_proof(home, &proof.project_id, proof.head_required)?;
-        if proof.expected != authoritative.expected {
+        let authoritative = preserved_state_proof(home, &proof.project_id)?;
+        if proof.expected != authoritative.expected
+            || proof.head_required != authoritative.head_required
+        {
             return Err(StoreError::MigrationConflict {
-                path: home
-                    .join("projects")
-                    .join(proof.project_id.as_str())
-                    .join("notes/project.md"),
+                path: project_state_path(home, &proof.project_id),
             });
         }
     }
@@ -1090,33 +1103,23 @@ fn upgrade_legacy_migration_journal(
     let mut preserved_state_proofs = Vec::new();
     for project_id in &legacy.project_ids {
         validate_legacy_migration_metadata(home, project_id)?;
-        let (_, setup) = migration_record_and_setup(home, project_id)?;
+        let _ = migration_record_and_setup(home, project_id)?;
         let relative_state = PathBuf::from(format!("projects/{project_id}/notes/project.md"));
         let state_path = home.join(&relative_state);
         if state_path.exists() {
-            validate_store_file_target(home, &state_path)?;
-            let existing = std::fs::read_to_string(&state_path).map_err(|_| {
-                StoreError::MigrationConflict {
-                    path: state_path.clone(),
+            match authoritative_state_provenance(home, project_id)? {
+                StateHistoryProvenance::MigrationCreated => {
+                    created_state_ids.push(project_id.clone());
                 }
-            })?;
-            let canonical = setup
-                .render()
-                .map_err(|error| StoreError::InvalidData(error.to_string()))?;
-            if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup)
-                || existing.as_bytes() != canonical.as_bytes()
-            {
-                return Err(StoreError::MigrationConflict { path: state_path });
+                StateHistoryProvenance::PreMigrationTracked
+                | StateHistoryProvenance::PreMigrationUntracked => {
+                    let proof = preserved_state_proof(home, project_id)?;
+                    if on_disk != 1 && !proof.head_required {
+                        return Err(StoreError::MigrationConflict { path: state_path });
+                    }
+                    preserved_state_proofs.push(proof);
+                }
             }
-            let head_required = on_disk != 1;
-            if head_required && !path_matches_head(home, &relative_state)? {
-                return Err(StoreError::MigrationConflict { path: state_path });
-            }
-            preserved_state_proofs.push(PreservedStateProof {
-                project_id: project_id.clone(),
-                expected: regular_identity(canonical.as_bytes()),
-                head_required,
-            });
         } else if on_disk == 1 {
             created_state_ids.push(project_id.clone());
         } else {
@@ -1180,8 +1183,14 @@ fn upgrade_legacy_migration_journal(
                     });
                 }
             }
-            for proof in &mut journal.preserved_state_proofs {
-                proof.head_required = true;
+            if journal
+                .preserved_state_proofs
+                .iter()
+                .any(|proof| !proof.head_required)
+            {
+                return Err(StoreError::MigrationConflict {
+                    path: path.to_owned(),
+                });
             }
             journal.phase = MigrationV2Phase::ProjectsAudited;
         }
@@ -1250,6 +1259,192 @@ fn git_revision_bytes(
         Ok(Some(output.stdout))
     } else {
         Ok(None)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum StateHistoryProvenance {
+    PreMigrationTracked,
+    PreMigrationUntracked,
+    MigrationCreated,
+}
+
+fn project_state_path(home: &Path, project_id: &ProjectId) -> PathBuf {
+    home.join("projects")
+        .join(project_id.as_str())
+        .join("notes/project.md")
+}
+
+fn git_path_revisions(home: &Path, relative: &Path) -> Result<Vec<String>, StoreError> {
+    validate_relative_audit_path(relative)?;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(home)
+        .args(["log", "--format=%H", "--", &relative.to_string_lossy()])
+        .output()?;
+    if !output.status.success() {
+        return Err(audit_error(output));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect())
+}
+
+fn git_revision_parents(home: &Path, revision: &str) -> Result<Vec<String>, StoreError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(home)
+        .args(["rev-list", "--parents", "-n", "1", revision])
+        .output()?;
+    if !output.status.success() {
+        return Err(audit_error(output));
+    }
+    let mut fields = String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if fields.first().map(String::as_str) != Some(revision) {
+        return Err(StoreError::InvalidData(format!(
+            "git history did not resolve revision {revision}"
+        )));
+    }
+    fields.remove(0);
+    Ok(fields)
+}
+
+fn git_is_strict_ancestor(
+    home: &Path,
+    ancestor: &str,
+    descendant: &str,
+) -> Result<bool, StoreError> {
+    if ancestor == descendant {
+        return Ok(false);
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(home)
+        .args(["merge-base", "--is-ancestor", ancestor, descendant])
+        .output()?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(audit_error(output)),
+    }
+}
+
+fn contains_migration_marker(bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes).is_ok_and(|text| text.lines().any(|line| line == "/.migration-v2"))
+}
+
+fn migration_history_boundary(home: &Path) -> Result<Option<String>, StoreError> {
+    let relative = Path::new(".gitignore");
+    let mut additions = Vec::new();
+    for revision in git_path_revisions(home, relative)? {
+        let Some(current) = git_revision_bytes(home, &revision, relative)? else {
+            continue;
+        };
+        if !contains_migration_marker(&current) {
+            continue;
+        }
+        let parents = git_revision_parents(home, &revision)?;
+        if parents.len() > 1 {
+            return Err(StoreError::MigrationConflict {
+                path: home.join(relative),
+            });
+        }
+        let parent_has_marker = match parents.first() {
+            Some(parent) => git_revision_bytes(home, parent, relative)?
+                .as_deref()
+                .is_some_and(contains_migration_marker),
+            None => false,
+        };
+        if !parent_has_marker {
+            additions.push(revision);
+        }
+    }
+    if additions.len() > 1 {
+        return Err(StoreError::MigrationConflict {
+            path: home.join(relative),
+        });
+    }
+    Ok(additions.pop())
+}
+
+fn authoritative_state_provenance(
+    home: &Path,
+    project_id: &ProjectId,
+) -> Result<StateHistoryProvenance, StoreError> {
+    let (record, setup) = migration_record_and_setup(home, project_id)?;
+    let canonical = setup
+        .render()
+        .map_err(|error| StoreError::InvalidData(error.to_string()))?;
+    let relative_state = PathBuf::from(format!("projects/{project_id}/notes/project.md"));
+    let relative_meta = PathBuf::from(format!("projects/{project_id}/meta.toml"));
+    let boundary = migration_history_boundary(home)?;
+    let expected_meta = render_project_record(&record)
+        .map_err(|error| StoreError::InvalidData(error.to_string()))?;
+    let mut pre_migration_tracked = false;
+    let mut migration_created = false;
+
+    for revision in git_path_revisions(home, &relative_state)? {
+        let Some(state_bytes) = git_revision_bytes(home, &revision, &relative_state)? else {
+            continue;
+        };
+        let Some(meta_bytes) = git_revision_bytes(home, &revision, &relative_meta)? else {
+            return Err(StoreError::MigrationConflict {
+                path: home.join(&relative_state),
+            });
+        };
+        let before_boundary = match boundary.as_deref() {
+            Some(boundary) => git_is_strict_ancestor(home, &revision, boundary)?,
+            None => true,
+        };
+        if before_boundary {
+            let legacy = std::str::from_utf8(&meta_bytes)
+                .ok()
+                .and_then(|text| toml::from_str::<LegacyProjectMetaV1>(text).ok())
+                .filter(|legacy| legacy.hash == project_id.as_str())
+                .ok_or_else(|| StoreError::MigrationConflict {
+                    path: home.join(&relative_state),
+                })?;
+            let historical_setup = ProjectStateDoc::new_setup(&legacy.added_at)
+                .and_then(|state| state.render())
+                .map_err(|error| StoreError::InvalidData(error.to_string()))?;
+            if state_bytes != historical_setup.as_bytes() || state_bytes != canonical.as_bytes() {
+                return Err(StoreError::MigrationConflict {
+                    path: home.join(&relative_state),
+                });
+            }
+            pre_migration_tracked = true;
+            continue;
+        }
+
+        if state_bytes != canonical.as_bytes() || meta_bytes != expected_meta.as_bytes() {
+            continue;
+        }
+        let parents = git_revision_parents(home, &revision)?;
+        if parents.len() != 1 {
+            continue;
+        }
+        let parent = &parents[0];
+        let parent_state = git_revision_bytes(home, parent, &relative_state)?;
+        let parent_legacy = git_revision_bytes(home, parent, &relative_meta)?
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .and_then(|text| toml::from_str::<LegacyProjectMetaV1>(&text).ok())
+            .filter(|legacy| legacy.hash == project_id.as_str());
+        if parent_state.is_none() && parent_legacy.is_some() {
+            migration_created = true;
+        }
+    }
+
+    match (pre_migration_tracked, migration_created) {
+        (true, false) => Ok(StateHistoryProvenance::PreMigrationTracked),
+        (false, true) => Ok(StateHistoryProvenance::MigrationCreated),
+        (false, false) => Ok(StateHistoryProvenance::PreMigrationUntracked),
+        (true, true) => Err(StoreError::MigrationConflict {
+            path: home.join(relative_state),
+        }),
     }
 }
 
@@ -1435,27 +1630,14 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
         let mut created_state_ids = Vec::new();
         let mut preserved_state_proofs = Vec::new();
         for project_id in &project_ids {
-            let (record, setup) = migration_record_and_setup(home, project_id)?;
+            let (record, _) = migration_record_and_setup(home, project_id)?;
             let state_path = home
                 .join("projects")
                 .join(project_id.as_str())
                 .join("notes/project.md");
             validate_store_file_target(home, &state_path)?;
             if state_path.exists() {
-                let existing = std::fs::read_to_string(&state_path)?;
-                let canonical = setup
-                    .render()
-                    .map_err(|error| StoreError::InvalidData(error.to_string()))?;
-                if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup)
-                    || existing.as_bytes() != canonical.as_bytes()
-                {
-                    return Err(StoreError::MigrationConflict { path: state_path });
-                }
-                preserved_state_proofs.push(PreservedStateProof {
-                    project_id: project_id.clone(),
-                    expected: regular_identity(canonical.as_bytes()),
-                    head_required: false,
-                });
+                preserved_state_proofs.push(preserved_state_proof(home, project_id)?);
             } else {
                 created_state_ids.push(project_id.clone());
             }
@@ -1691,27 +1873,16 @@ fn refresh_migration_projects(
         .cloned()
         .collect();
     for project_id in &added {
-        let (record, setup) = migration_record_and_setup(home, project_id)?;
+        let (record, _) = migration_record_and_setup(home, project_id)?;
         let state_path = home
             .join("projects")
             .join(project_id.as_str())
             .join("notes/project.md");
         validate_store_file_target(home, &state_path)?;
         if state_path.exists() {
-            let existing = std::fs::read_to_string(&state_path)?;
-            let canonical = setup
-                .render()
-                .map_err(|error| StoreError::InvalidData(error.to_string()))?;
-            if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup)
-                || existing.as_bytes() != canonical.as_bytes()
-            {
-                return Err(StoreError::MigrationConflict { path: state_path });
-            }
-            journal.preserved_state_proofs.push(PreservedStateProof {
-                project_id: project_id.clone(),
-                expected: regular_identity(canonical.as_bytes()),
-                head_required: false,
-            });
+            journal
+                .preserved_state_proofs
+                .push(preserved_state_proof(home, project_id)?);
         } else {
             journal.created_state_ids.push(project_id.clone());
         }
