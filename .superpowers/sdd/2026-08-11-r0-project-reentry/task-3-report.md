@@ -83,3 +83,57 @@ Code commit: `2680c327304242da76df63dc34782c8f93ac1e72` (`feat(core): add audita
   as Abandoned. If a future release adds independent WorkItem-status commands, the transition
   schema will need enough prior-status data to restore states beyond the R0 command model.
 
+## Fix Round 1
+
+Code commit: `501d0a22637291120610d2eabf973562b5d7591d`
+(`fix(core): enforce fresh commitment undo receipts`)
+
+### Reviewer findings and TDD evidence
+
+- Undo freshness RED: `cargo test -p omniproj-core --test project_state_lifecycle
+  undo_freshness_ -- --nocapture` produced 0 passed / 5 failed because Set, Confirm,
+  Complete, Replace, and Clear receipts remained undoable after a later framing revision.
+  GREEN: 5 passed / 0 failed after persisting each transition's accepted
+  `document_revision` and requiring the Undo target revision to equal the current document
+  revision.
+- Correction validation RED: the focused `parse_` suite produced 8 passed / 2 failed because
+  transition document revisions were not represented and non-adjacent/forged corrections were
+  accepted. GREEN: 10 passed / 0 failed after strict revision alignment, static validation of
+  every original transition, direct-adjacency rules, and exact compensation-pointer replay.
+- Setup gate RED: the focused setup-status test produced 0 passed / 1 failed because
+  `SetStatus` allowed Setup to transition directly to Active. GREEN: 1 passed / 0 failed;
+  `CompleteSetup` is now the only Setup-to-Active path, and Setup cannot be re-entered.
+- Complete prior-status RED: the focused regression produced 0 passed / 1 failed because a
+  Blocked current item could be completed. GREEN: 1 passed / 0 failed; Complete now requires
+  the current item to be Doing and rejects other statuses before any write.
+- All rejected-command cases assert the project document remains byte-identical.
+
+### Fix implementation
+
+- Transition entries now carry the accepted command's `document_revision`; revisions are
+  strictly increasing, bounded by the aggregate revision, and corrections use their own new
+  revision.
+- Correction validation first checks every persisted transition's reason, IDs, pointer shape,
+  and status effects. It then requires the correction to immediately follow an uncorrected,
+  reversible target and verifies its before/after pointers by replaying history without that
+  target.
+- SetStatus cannot leave or target Setup. Complete requires a Doing current item, while Undo of
+  Completed restores Doing.
+- The five legal Undo round trips remain valid when Undo is immediate; any intervening accepted
+  mutation makes the receipt stale and returns `UndoConflict` without changing bytes.
+
+### Fresh verification
+
+- `cargo test -p omniproj-core --test project_state_lifecycle`: PASS, 42 passed.
+- `cargo test -p omniproj-core --lib --tests`: PASS: library 89, registry 16, lifecycle 42,
+  migration 51.
+- `cargo check --workspace`: PASS; only pre-existing deprecated API warnings in CLI/Desktop.
+- `cargo fmt --all -- --check`: PASS.
+- `git diff --check`: PASS.
+
+### Fix Round 1 concerns
+
+- Task 2 documents remain wire-compatible because their transition arrays are empty. Persisted
+  Task 3 transition fixtures now require `document_revision`; pre-fix documents containing
+  transitions without that field are intentionally rejected by the strict parser.
+- No change was made to `store.rs`, the ledger, or the implementation plan.
