@@ -137,3 +137,52 @@ Code commit: `501d0a22637291120610d2eabf973562b5d7591d`
   Task 3 transition fixtures now require `document_revision`; pre-fix documents containing
   transitions without that field are intentionally rejected by the strict parser.
 - No change was made to `store.rs`, the ledger, or the implementation plan.
+
+## Fix Round 2
+
+Code commit: `43addd0be2431498e159999b1e0ddd9790944a78`
+(`fix(core): validate corrected work item statuses`)
+
+### Status replay TDD evidence
+
+- RED: `cargo test -p omniproj-core --test project_state_lifecycle
+  parse_rejects_forged_status_after_undo_ -- --nocapture` produced 0 passed / 5 failed.
+  The parser accepted an undone Set item left Doing, an undone Replace item left Doing, an
+  undone Completed item left Done, and forged status changes across corrected Confirm and Clear.
+- GREEN: `cargo test -p omniproj-core --test project_state_lifecycle
+  parse_rejects_forged_status -- --nocapture` produced 7 passed / 0 failed. The final focused
+  suite includes the five correction cases plus transition-revision-gap and post-Undo tail
+  framing regressions.
+- Legal Undo regression: `cargo test -p omniproj-core --test project_state_lifecycle undo_
+  -- --nocapture` produced 18 passed / 0 failed, including all five legal Undo round trips and
+  stale-receipt cases.
+
+### Fix implementation
+
+- Aggregate replay now returns both the effective pointer and only the WorkItem statuses that
+  commitment history can prove. Set and Replace introduce Doing items; Completed produces Done;
+  corrections of Set/Replace produce Abandoned; correction of Completed restores Doing.
+- Confirm and Clear do not alter status, and Replace/Clear do not alter their previous item.
+  Therefore already-known statuses survive these transitions while untouched legacy WorkItems
+  with Planned, Blocked, or other statuses remain unconstrained.
+- Known status is retained across document-revision gaps and trailing non-transition revisions:
+  R0 SaveFraming and SetStatus cannot mutate WorkItem status. A future independent WorkItem
+  status command must extend the persisted history rather than weaken current replay.
+- The non-Doing Complete gate remains covered by a direct in-memory domain test with exact state
+  equality. The former integration fixture directly rewrote a command-produced item without an
+  accepted revision or history entry, which is now correctly outside the valid persisted domain.
+
+### Fresh verification
+
+- `cargo test -p omniproj-core --test project_state_lifecycle`: PASS, 48 passed.
+- `cargo test -p omniproj-core --lib --tests`: PASS: library 90, registry 16, lifecycle 48,
+  migration 51.
+- `cargo check --workspace`: PASS; only pre-existing deprecated API warnings in CLI/Desktop.
+- `cargo fmt --all -- --check`: PASS.
+- `git diff --check`: PASS.
+
+### Fix Round 2 concerns
+
+- Status inference deliberately covers only WorkItems whose status is established by commitment
+  transitions; unrelated legacy WorkItems remain compatible.
+- No change was made to `store.rs`, `lib.rs`, the ledger, or the implementation plan.
