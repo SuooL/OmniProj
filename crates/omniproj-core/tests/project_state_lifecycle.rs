@@ -103,6 +103,36 @@ fn set_commitment(
         .state
 }
 
+fn save_framing(store: &TestStore, expected_revision: u64, at: &str) {
+    store
+        .apply(
+            expected_revision,
+            ProjectCommand::SaveFraming {
+                objective: "Objective".into(),
+                desired_outcome: "Outcome".into(),
+                phase: None,
+            },
+            at,
+        )
+        .unwrap();
+}
+
+fn complete_setup(store: &TestStore) -> ProjectStateDoc {
+    store
+        .apply(
+            0,
+            ProjectCommand::CompleteSetup {
+                objective: "Objective".into(),
+                desired_outcome: "Outcome".into(),
+                phase: None,
+                first_commitment: "First commitment".into(),
+            },
+            AT_1,
+        )
+        .unwrap()
+        .state
+}
+
 fn setup_document() -> String {
     "+++\n\
 schema_version = 1\n\
@@ -153,6 +183,7 @@ updated_at = \"2026-08-10T13:00:00Z\"\n\
 [[commitment_transitions]]\n\
 id = \"transition-1\"\n\
 project_id = \"project-1\"\n\
+document_revision = 1\n\
 type = \"set\"\n\
 next_work_item_id = \"work-1\"\n\
 occurred_at = \"2026-08-10T12:30:00Z\"\n\
@@ -160,6 +191,7 @@ occurred_at = \"2026-08-10T12:30:00Z\"\n\
 [[commitment_transitions]]\n\
 id = \"transition-2\"\n\
 project_id = \"project-1\"\n\
+document_revision = 2\n\
 type = \"confirmed\"\n\
 previous_work_item_id = \"work-1\"\n\
 next_work_item_id = \"work-1\"\n\
@@ -313,13 +345,22 @@ fn parse_load_rejects_embedded_ids_from_another_project() {
 
 #[test]
 fn parse_rejects_correction_of_missing_corrected_or_correction_transition() {
-    let base = rich_document();
+    let base = rich_document()
+        .replacen("revision = 2", "revision = 3", 1)
+        .replacen(
+            "updated_at = \"2026-08-10T14:00:00Z\"",
+            "updated_at = \"2026-08-10T15:00:00Z\"",
+            1,
+        );
     let correction = "\n[[commitment_transitions]]\n\
 id = \"transition-3\"\n\
 project_id = \"project-1\"\n\
+document_revision = 3\n\
 type = \"correction\"\n\
+previous_work_item_id = \"work-1\"\n\
+next_work_item_id = \"work-1\"\n\
 occurred_at = \"2026-08-10T15:00:00Z\"\n\
-corrects_transition_id = \"transition-1\"\n";
+corrects_transition_id = \"transition-2\"\n";
     let corrected_once = base.replacen(
         "+++\n\n# Human notes",
         &format!("{correction}+++\n\n# Human notes"),
@@ -327,22 +368,113 @@ corrects_transition_id = \"transition-1\"\n";
     );
 
     for input in [
-        base.replacen(
+        base.clone().replacen(
             "+++\n\n# Human notes",
-            "\n[[commitment_transitions]]\nid = \"transition-3\"\nproject_id = \"project-1\"\ntype = \"correction\"\noccurred_at = \"2026-08-10T15:00:00Z\"\ncorrects_transition_id = \"transition-missing\"\n+++\n\n# Human notes",
+            "\n[[commitment_transitions]]\nid = \"transition-3\"\nproject_id = \"project-1\"\ndocument_revision = 3\ntype = \"correction\"\nprevious_work_item_id = \"work-1\"\nnext_work_item_id = \"work-1\"\noccurred_at = \"2026-08-10T15:00:00Z\"\ncorrects_transition_id = \"transition-missing\"\n+++\n\n# Human notes",
             1,
         ),
-        corrected_once.replacen(
+        corrected_once
+            .clone()
+            .replacen("revision = 3", "revision = 4", 1)
+            .replacen("2026-08-10T15:00:00Z\"\n\n[[work_items]]", "2026-08-10T16:00:00Z\"\n\n[[work_items]]", 1)
+            .replacen(
             "+++\n\n# Human notes",
-            "\n[[commitment_transitions]]\nid = \"transition-4\"\nproject_id = \"project-1\"\ntype = \"correction\"\noccurred_at = \"2026-08-10T16:00:00Z\"\ncorrects_transition_id = \"transition-1\"\n+++\n\n# Human notes",
+            "\n[[commitment_transitions]]\nid = \"transition-4\"\nproject_id = \"project-1\"\ndocument_revision = 4\ntype = \"correction\"\nprevious_work_item_id = \"work-1\"\nnext_work_item_id = \"work-1\"\noccurred_at = \"2026-08-10T16:00:00Z\"\ncorrects_transition_id = \"transition-2\"\n+++\n\n# Human notes",
             1,
         ),
-        corrected_once.replacen(
+        corrected_once
+            .replacen("revision = 3", "revision = 4", 1)
+            .replacen("2026-08-10T15:00:00Z\"\n\n[[work_items]]", "2026-08-10T16:00:00Z\"\n\n[[work_items]]", 1)
+            .replacen(
             "+++\n\n# Human notes",
-            "\n[[commitment_transitions]]\nid = \"transition-4\"\nproject_id = \"project-1\"\ntype = \"correction\"\noccurred_at = \"2026-08-10T16:00:00Z\"\ncorrects_transition_id = \"transition-3\"\n+++\n\n# Human notes",
+            "\n[[commitment_transitions]]\nid = \"transition-4\"\nproject_id = \"project-1\"\ndocument_revision = 4\ntype = \"correction\"\nprevious_work_item_id = \"work-1\"\nnext_work_item_id = \"work-1\"\noccurred_at = \"2026-08-10T16:00:00Z\"\ncorrects_transition_id = \"transition-3\"\n+++\n\n# Human notes",
             1,
         ),
     ] {
+        assert!(matches!(
+            ProjectStateDoc::parse(&input),
+            Err(ProjectStateError::InvalidDocument(_))
+        ));
+    }
+}
+
+#[test]
+fn parse_accepts_transition_document_revisions_aligned_with_document_revision() {
+    let input = rich_document()
+        .replacen(
+            "project_id = \"project-1\"\ntype = \"set\"",
+            "project_id = \"project-1\"\ndocument_revision = 1\ntype = \"set\"",
+            1,
+        )
+        .replacen(
+            "project_id = \"project-1\"\ntype = \"confirmed\"",
+            "project_id = \"project-1\"\ndocument_revision = 2\ntype = \"confirmed\"",
+            1,
+        );
+
+    assert!(ProjectStateDoc::parse(&input).is_ok());
+}
+
+#[test]
+fn parse_rejects_non_increasing_future_and_masked_invalid_transition_revisions() {
+    let non_increasing =
+        rich_document().replacen("document_revision = 2", "document_revision = 1", 1);
+    let future = rich_document().replacen("document_revision = 2", "document_revision = 3", 1);
+    let masked_invalid = rich_document()
+        .replacen("revision = 2", "revision = 3", 1)
+        .replacen(
+            "updated_at = \"2026-08-10T14:00:00Z\"",
+            "updated_at = \"2026-08-10T15:00:00Z\"",
+            1,
+        )
+        .replacen(
+            "type = \"confirmed\"\nprevious_work_item_id",
+            "type = \"confirmed\"\nreason = \"forged\"\nprevious_work_item_id",
+            1,
+        )
+        .replacen(
+            "+++\n\n# Human notes",
+            "\n[[commitment_transitions]]\nid = \"transition-3\"\nproject_id = \"project-1\"\ndocument_revision = 3\ntype = \"correction\"\nprevious_work_item_id = \"work-1\"\nnext_work_item_id = \"work-1\"\noccurred_at = \"2026-08-10T15:00:00Z\"\ncorrects_transition_id = \"transition-2\"\n+++\n\n# Human notes",
+            1,
+        );
+
+    for input in [non_increasing, future, masked_invalid] {
+        assert!(matches!(
+            ProjectStateDoc::parse(&input),
+            Err(ProjectStateError::InvalidDocument(_))
+        ));
+    }
+}
+
+#[test]
+fn parse_rejects_nonadjacent_correction_and_forged_compensation_pointers() {
+    let completed_then_old_correction = rich_document()
+        .replacen("revision = 2", "revision = 4", 1)
+        .replacen(
+            "updated_at = \"2026-08-10T14:00:00Z\"",
+            "updated_at = \"2026-08-10T16:00:00Z\"",
+            1,
+        )
+        .replacen(
+            "+++\n\n# Human notes",
+            "\n[[commitment_transitions]]\nid = \"transition-3\"\nproject_id = \"project-1\"\ndocument_revision = 3\ntype = \"completed\"\nprevious_work_item_id = \"work-1\"\noccurred_at = \"2026-08-10T15:00:00Z\"\n\n[[commitment_transitions]]\nid = \"transition-4\"\nproject_id = \"project-1\"\ndocument_revision = 4\ntype = \"correction\"\nprevious_work_item_id = \"work-1\"\nnext_work_item_id = \"work-1\"\noccurred_at = \"2026-08-10T16:00:00Z\"\ncorrects_transition_id = \"transition-2\"\n+++\n\n# Human notes",
+            1,
+        )
+        .replacen("current_next_action_id = \"work-1\"\n", "", 1);
+    let forged_pointers = rich_document()
+        .replacen("revision = 2", "revision = 3", 1)
+        .replacen(
+            "updated_at = \"2026-08-10T14:00:00Z\"",
+            "updated_at = \"2026-08-10T15:00:00Z\"",
+            1,
+        )
+        .replacen(
+            "+++\n\n# Human notes",
+            "\n[[commitment_transitions]]\nid = \"transition-3\"\nproject_id = \"project-1\"\ndocument_revision = 3\ntype = \"correction\"\nprevious_work_item_id = \"work-2\"\nnext_work_item_id = \"work-2\"\noccurred_at = \"2026-08-10T15:00:00Z\"\ncorrects_transition_id = \"transition-2\"\n+++\n\n# Human notes",
+            1,
+        );
+
+    for input in [completed_then_old_correction, forged_pointers] {
         assert!(matches!(
             ProjectStateDoc::parse(&input),
             Err(ProjectStateError::InvalidDocument(_))
@@ -380,6 +512,7 @@ fn lifecycle_set_on_empty_creates_doing_item_pointer_and_event_once() {
     assert_eq!(mutation.state.commitment_transitions.len(), 1);
     let event = &mutation.state.commitment_transitions[0];
     assert_eq!(event.kind, omniproj_core::CommitmentTransitionKind::Set);
+    assert_eq!(event.document_revision, 1);
     assert_eq!(event.next_work_item_id.as_ref(), Some(&item.id));
     assert_eq!(event.occurred_at, AT_1);
     assert_eq!(store.load(), mutation.state);
@@ -429,7 +562,9 @@ fn lifecycle_confirm_preserves_original_set_time_and_appends_event() {
     assert_eq!(confirmed.work_items[0].created_at, AT_1);
     assert_eq!(confirmed.work_items[0].updated_at, AT_1);
     assert_eq!(confirmed.commitment_transitions[0].occurred_at, AT_1);
+    assert_eq!(confirmed.commitment_transitions[0].document_revision, 1);
     assert_eq!(confirmed.commitment_transitions[1].occurred_at, AT_2);
+    assert_eq!(confirmed.commitment_transitions[1].document_revision, 2);
     assert_eq!(
         confirmed.commitment_transitions[1].kind,
         omniproj_core::CommitmentTransitionKind::Confirmed
@@ -460,6 +595,14 @@ fn lifecycle_complete_marks_item_done_and_clears_pointer() {
     assert_eq!(
         completed.commitment_transitions.last().unwrap().kind,
         omniproj_core::CommitmentTransitionKind::Completed
+    );
+    assert_eq!(
+        completed
+            .commitment_transitions
+            .last()
+            .unwrap()
+            .document_revision,
+        2
     );
 }
 
@@ -514,6 +657,7 @@ fn lifecycle_replace_retains_previous_item_status_and_requires_reason() {
         Some(&replaced.work_items[1].id)
     );
     assert_eq!(event.reason.as_deref(), Some("Access is delayed"));
+    assert_eq!(event.document_revision, 2);
 }
 
 #[test]
@@ -546,11 +690,20 @@ fn lifecycle_clear_retains_previous_item_and_status() {
         cleared.commitment_transitions.last().unwrap().kind,
         omniproj_core::CommitmentTransitionKind::Cleared
     );
+    assert_eq!(
+        cleared
+            .commitment_transitions
+            .last()
+            .unwrap()
+            .document_revision,
+        2
+    );
 }
 
 #[test]
 fn lifecycle_waiting_requires_reason_and_review_date() {
     let store = TestStore::new("waiting");
+    complete_setup(&store);
     for (reason, review_at) in [
         (None, Some(AT_3.to_owned())),
         (Some("External review".to_owned()), None),
@@ -558,13 +711,13 @@ fn lifecycle_waiting_requires_reason_and_review_date() {
         let before = store.bytes();
         let error = store
             .apply(
-                0,
+                1,
                 ProjectCommand::SetStatus {
                     status: ProjectStatus::Waiting,
                     reason,
                     review_at,
                 },
-                AT_1,
+                AT_2,
             )
             .unwrap_err();
         assert!(matches!(error, ProjectStateError::FieldRequired { .. }));
@@ -573,13 +726,13 @@ fn lifecycle_waiting_requires_reason_and_review_date() {
 
     let waiting = store
         .apply(
-            0,
+            1,
             ProjectCommand::SetStatus {
                 status: ProjectStatus::Waiting,
                 reason: Some("External review".into()),
                 review_at: Some(AT_3.into()),
             },
-            AT_1,
+            AT_2,
         )
         .unwrap()
         .state;
@@ -591,16 +744,17 @@ fn lifecycle_waiting_requires_reason_and_review_date() {
 #[test]
 fn lifecycle_parked_requires_reason_and_allows_no_review_date() {
     let store = TestStore::new("parked");
+    complete_setup(&store);
     let before = store.bytes();
     let error = store
         .apply(
-            0,
+            1,
             ProjectCommand::SetStatus {
                 status: ProjectStatus::Parked,
                 reason: Some("".into()),
                 review_at: None,
             },
-            AT_1,
+            AT_2,
         )
         .unwrap_err();
     assert!(matches!(error, ProjectStateError::ReasonRequired));
@@ -608,13 +762,13 @@ fn lifecycle_parked_requires_reason_and_allows_no_review_date() {
 
     let parked = store
         .apply(
-            0,
+            1,
             ProjectCommand::SetStatus {
                 status: ProjectStatus::Parked,
                 reason: Some("Not a current priority".into()),
                 review_at: None,
             },
-            AT_1,
+            AT_2,
         )
         .unwrap()
         .state;
@@ -625,16 +779,17 @@ fn lifecycle_parked_requires_reason_and_allows_no_review_date() {
 #[test]
 fn lifecycle_archived_status_is_persisted_for_later_index_exclusion() {
     let store = TestStore::new("archived");
+    complete_setup(&store);
 
     let archived = store
         .apply(
-            0,
+            1,
             ProjectCommand::SetStatus {
                 status: ProjectStatus::Archived,
                 reason: Some("Study complete".into()),
                 review_at: None,
             },
-            AT_1,
+            AT_2,
         )
         .unwrap()
         .state;
@@ -769,6 +924,80 @@ fn lifecycle_invalid_occurred_at_is_typed_and_byte_identical() {
     assert_eq!(store.bytes(), before);
 }
 
+#[test]
+fn lifecycle_setup_status_cannot_bypass_complete_setup_or_be_reentered() {
+    let store = TestStore::new("setup-gate");
+    for status in [ProjectStatus::Active, ProjectStatus::Waiting] {
+        let before = store.bytes();
+        let error = store
+            .apply(
+                0,
+                ProjectCommand::SetStatus {
+                    status,
+                    reason: (status == ProjectStatus::Waiting).then(|| "Dependency".into()),
+                    review_at: (status == ProjectStatus::Waiting).then(|| AT_3.into()),
+                },
+                AT_1,
+            )
+            .unwrap_err();
+        assert!(matches!(error, ProjectStateError::InvalidCommand(_)));
+        assert_eq!(store.bytes(), before);
+    }
+
+    let active = store
+        .apply(
+            0,
+            ProjectCommand::CompleteSetup {
+                objective: "Objective".into(),
+                desired_outcome: "Outcome".into(),
+                phase: None,
+                first_commitment: "First".into(),
+            },
+            AT_1,
+        )
+        .unwrap()
+        .state;
+    let before = store.bytes();
+    let error = store
+        .apply(
+            active.revision,
+            ProjectCommand::SetStatus {
+                status: ProjectStatus::Setup,
+                reason: None,
+                review_at: None,
+            },
+            AT_2,
+        )
+        .unwrap_err();
+    assert!(matches!(error, ProjectStateError::InvalidCommand(_)));
+    assert_eq!(store.bytes(), before);
+}
+
+#[test]
+fn lifecycle_complete_rejects_non_doing_current_item_without_mutation() {
+    let store = TestStore::new("complete-blocked");
+    let mut set = set_commitment(&store, 0, "Blocked action", AT_1);
+    let item_id = set.work_items[0].id.clone();
+    set.work_items[0].status = WorkItemStatus::Blocked;
+    set.work_items[0].blocker = Some("External dependency".into());
+    set.work_items[0].blocked_at = Some(AT_1.into());
+    set.save(&store.project_id).unwrap();
+    let before = store.bytes();
+
+    let error = store
+        .apply(
+            1,
+            ProjectCommand::CompleteCommitment {
+                work_item_id: item_id,
+            },
+            AT_2,
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, ProjectStateError::InvalidCommand(_)));
+    assert_eq!(store.bytes(), before);
+}
+
 #[cfg(unix)]
 #[test]
 fn lifecycle_audit_commit_failure_reports_durable_revision() {
@@ -829,6 +1058,7 @@ fn undo_set_clears_pointer_abandons_item_and_preserves_event() {
         correction.kind,
         omniproj_core::CommitmentTransitionKind::Correction
     );
+    assert_eq!(correction.document_revision, 2);
     assert_eq!(
         correction.corrects_transition_id.as_ref(),
         Some(&original.id)
@@ -1089,6 +1319,117 @@ fn undo_correction_is_conflict_and_byte_identical() {
     assert_eq!(store.bytes(), before);
 }
 
+fn assert_stale_undo_conflict(
+    store: &TestStore,
+    expected_revision: u64,
+    transition_id: omniproj_core::CommitmentTransitionId,
+    at: &str,
+) {
+    let before = store.bytes();
+    let error = store
+        .apply(
+            expected_revision,
+            ProjectCommand::Undo {
+                transition_id: transition_id.clone(),
+            },
+            at,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        ProjectStateError::UndoConflict { transition_id: actual } if actual == transition_id
+    ));
+    assert_eq!(store.bytes(), before);
+}
+
+#[test]
+fn undo_freshness_rejects_set_after_later_framing_revision() {
+    let store = TestStore::new("stale-set");
+    let set = set_commitment(&store, 0, "Current", AT_1);
+    let target = set.commitment_transitions.last().unwrap().id.clone();
+    save_framing(&store, 1, AT_2);
+    assert_stale_undo_conflict(&store, 2, target, AT_3);
+}
+
+#[test]
+fn undo_freshness_rejects_confirm_after_later_framing_revision() {
+    let store = TestStore::new("stale-confirm");
+    let set = set_commitment(&store, 0, "Current", AT_1);
+    let confirmed = store
+        .apply(
+            1,
+            ProjectCommand::ConfirmCommitment {
+                work_item_id: set.work_items[0].id.clone(),
+            },
+            AT_2,
+        )
+        .unwrap()
+        .state;
+    let target = confirmed.commitment_transitions.last().unwrap().id.clone();
+    save_framing(&store, 2, "2026-08-10T14:30:00Z");
+    assert_stale_undo_conflict(&store, 3, target, AT_3);
+}
+
+#[test]
+fn undo_freshness_rejects_complete_after_later_framing_revision() {
+    let store = TestStore::new("stale-complete");
+    let set = set_commitment(&store, 0, "Current", AT_1);
+    let completed = store
+        .apply(
+            1,
+            ProjectCommand::CompleteCommitment {
+                work_item_id: set.work_items[0].id.clone(),
+            },
+            AT_2,
+        )
+        .unwrap()
+        .state;
+    let target = completed.commitment_transitions.last().unwrap().id.clone();
+    save_framing(&store, 2, "2026-08-10T14:30:00Z");
+    assert_stale_undo_conflict(&store, 3, target, AT_3);
+}
+
+#[test]
+fn undo_freshness_rejects_replace_after_later_framing_revision() {
+    let store = TestStore::new("stale-replace");
+    let set = set_commitment(&store, 0, "Current", AT_1);
+    let replaced = store
+        .apply(
+            1,
+            ProjectCommand::ReplaceCommitment {
+                previous_work_item_id: set.work_items[0].id.clone(),
+                text: "Replacement".into(),
+                reason: "Changed".into(),
+            },
+            AT_2,
+        )
+        .unwrap()
+        .state;
+    let target = replaced.commitment_transitions.last().unwrap().id.clone();
+    save_framing(&store, 2, "2026-08-10T14:30:00Z");
+    assert_stale_undo_conflict(&store, 3, target, AT_3);
+}
+
+#[test]
+fn undo_freshness_rejects_clear_after_later_framing_revision() {
+    let store = TestStore::new("stale-clear");
+    let set = set_commitment(&store, 0, "Current", AT_1);
+    let cleared = store
+        .apply(
+            1,
+            ProjectCommand::ClearCommitment {
+                work_item_id: set.work_items[0].id.clone(),
+                reason: None,
+            },
+            AT_2,
+        )
+        .unwrap()
+        .state;
+    let target = cleared.commitment_transitions.last().unwrap().id.clone();
+    save_framing(&store, 2, "2026-08-10T14:30:00Z");
+    assert_stale_undo_conflict(&store, 3, target, AT_3);
+}
+
 #[test]
 fn preserves_legacy_documents_across_all_r0_project_commands() {
     let store = TestStore::new("legacy-documents");
@@ -1186,10 +1527,8 @@ fn preserves_legacy_documents_across_all_r0_project_commands() {
     store
         .apply(
             7,
-            ProjectCommand::SetStatus {
-                status: ProjectStatus::Waiting,
-                reason: Some("External review".into()),
-                review_at: Some("2026-08-12T12:00:00Z".into()),
+            ProjectCommand::Undo {
+                transition_id: completed_transition_id,
             },
             "2026-08-10T15:00:00Z",
         )
@@ -1198,9 +1537,9 @@ fn preserves_legacy_documents_across_all_r0_project_commands() {
         .apply(
             8,
             ProjectCommand::SetStatus {
-                status: ProjectStatus::Parked,
-                reason: Some("Paused".into()),
-                review_at: None,
+                status: ProjectStatus::Waiting,
+                reason: Some("External review".into()),
+                review_at: Some("2026-08-12T12:00:00Z".into()),
             },
             "2026-08-10T15:10:00Z",
         )
@@ -1209,8 +1548,8 @@ fn preserves_legacy_documents_across_all_r0_project_commands() {
         .apply(
             9,
             ProjectCommand::SetStatus {
-                status: ProjectStatus::Archived,
-                reason: Some("Closed".into()),
+                status: ProjectStatus::Parked,
+                reason: Some("Paused".into()),
                 review_at: None,
             },
             "2026-08-10T15:20:00Z",
@@ -1219,8 +1558,10 @@ fn preserves_legacy_documents_across_all_r0_project_commands() {
     store
         .apply(
             10,
-            ProjectCommand::Undo {
-                transition_id: completed_transition_id,
+            ProjectCommand::SetStatus {
+                status: ProjectStatus::Archived,
+                reason: Some("Closed".into()),
+                review_at: None,
             },
             "2026-08-10T15:30:00Z",
         )
