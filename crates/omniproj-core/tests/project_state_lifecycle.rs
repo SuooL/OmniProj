@@ -11,6 +11,7 @@ const AT_0: &str = "2026-08-10T12:00:00Z";
 const AT_1: &str = "2026-08-10T13:00:00Z";
 const AT_2: &str = "2026-08-10T14:00:00Z";
 const AT_3: &str = "2026-08-10T15:00:00Z";
+const AT_4: &str = "2026-08-10T16:00:00Z";
 
 fn unique_home(tag: &str) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -204,6 +205,30 @@ Unknown **Markdown** stays byte-identical.  \r\n"
         .to_owned()
 }
 
+fn forge_work_item_status(
+    document: &str,
+    work_item_id: &str,
+    original: &str,
+    forged: &str,
+) -> String {
+    let item_marker = format!("[[work_items]]\nid = \"{work_item_id}\"");
+    let item_start = document.find(&item_marker).unwrap();
+    let item_tail = &document[item_start..];
+    let item_end = item_tail[1..]
+        .find("\n[[work_items]]")
+        .or_else(|| item_tail.find("\n[[commitment_transitions]]"))
+        .map_or(document.len(), |offset| item_start + offset + 1);
+    let status = format!("status = \"{original}\"");
+    let relative_status = document[item_start..item_end].find(&status).unwrap();
+    let status_start = item_start + relative_status;
+    let mut forged_document = document.to_owned();
+    forged_document.replace_range(
+        status_start..status_start + status.len(),
+        &format!("status = \"{forged}\""),
+    );
+    forged_document
+}
+
 #[test]
 fn parse_rich_document_preserves_values_body_and_round_trip_semantics() {
     let input = rich_document();
@@ -256,8 +281,11 @@ fn parse_accepts_every_project_and_work_item_status() {
     }
 
     for serialized in ["planned", "doing", "blocked", "done", "abandoned"] {
-        let input =
-            rich_document().replacen("status = \"doing\"", &format!("status = {serialized:?}"), 1);
+        let input = rich_document().replacen(
+            "text = \"Resolve access\"\nstatus = \"blocked\"",
+            &format!("text = \"Resolve access\"\nstatus = {serialized:?}"),
+            1,
+        );
         assert!(
             ProjectStateDoc::parse(&input).is_ok(),
             "rejected {serialized}"
@@ -483,6 +511,223 @@ fn parse_rejects_nonadjacent_correction_and_forged_compensation_pointers() {
 }
 
 #[test]
+fn parse_rejects_forged_status_after_undo_set() {
+    let store = TestStore::new("parse-forged-undo-set-status");
+    let set = set_commitment(&store, 0, "Current", AT_1);
+    let item_id = set.work_items[0].id.clone();
+    let transition_id = set.commitment_transitions[0].id.clone();
+    let undone = store
+        .apply(1, ProjectCommand::Undo { transition_id }, AT_2)
+        .unwrap()
+        .state;
+    let forged = forge_work_item_status(
+        &undone.render().unwrap(),
+        &item_id.to_string(),
+        "abandoned",
+        "doing",
+    );
+
+    assert!(matches!(
+        ProjectStateDoc::parse(&forged),
+        Err(ProjectStateError::InvalidDocument(_))
+    ));
+}
+
+#[test]
+fn parse_rejects_forged_status_after_undo_confirm() {
+    let store = TestStore::new("parse-forged-undo-confirm-status");
+    let set = set_commitment(&store, 0, "Current", AT_1);
+    let item_id = set.work_items[0].id.clone();
+    let confirmed = store
+        .apply(
+            1,
+            ProjectCommand::ConfirmCommitment {
+                work_item_id: item_id.clone(),
+            },
+            AT_2,
+        )
+        .unwrap()
+        .state;
+    let transition_id = confirmed.commitment_transitions.last().unwrap().id.clone();
+    let undone = store
+        .apply(2, ProjectCommand::Undo { transition_id }, AT_3)
+        .unwrap()
+        .state;
+    let forged = forge_work_item_status(
+        &undone.render().unwrap(),
+        &item_id.to_string(),
+        "doing",
+        "blocked",
+    );
+
+    assert!(matches!(
+        ProjectStateDoc::parse(&forged),
+        Err(ProjectStateError::InvalidDocument(_))
+    ));
+}
+
+#[test]
+fn parse_rejects_forged_status_after_undo_complete() {
+    let store = TestStore::new("parse-forged-undo-complete-status");
+    let set = set_commitment(&store, 0, "Current", AT_1);
+    let item_id = set.work_items[0].id.clone();
+    let completed = store
+        .apply(
+            1,
+            ProjectCommand::CompleteCommitment {
+                work_item_id: item_id.clone(),
+            },
+            AT_2,
+        )
+        .unwrap()
+        .state;
+    let transition_id = completed.commitment_transitions.last().unwrap().id.clone();
+    let undone = store
+        .apply(2, ProjectCommand::Undo { transition_id }, AT_3)
+        .unwrap()
+        .state;
+    let forged = forge_work_item_status(
+        &undone.render().unwrap(),
+        &item_id.to_string(),
+        "doing",
+        "done",
+    );
+
+    assert!(matches!(
+        ProjectStateDoc::parse(&forged),
+        Err(ProjectStateError::InvalidDocument(_))
+    ));
+}
+
+#[test]
+fn parse_rejects_forged_status_after_undo_replace() {
+    let store = TestStore::new("parse-forged-undo-replace-status");
+    let set = set_commitment(&store, 0, "Previous", AT_1);
+    let previous_id = set.work_items[0].id.clone();
+    let replaced = store
+        .apply(
+            1,
+            ProjectCommand::ReplaceCommitment {
+                previous_work_item_id: previous_id,
+                text: "Replacement".into(),
+                reason: "Priority changed".into(),
+            },
+            AT_2,
+        )
+        .unwrap()
+        .state;
+    let replacement_id = replaced.work_items[1].id.clone();
+    let transition_id = replaced.commitment_transitions.last().unwrap().id.clone();
+    let undone = store
+        .apply(2, ProjectCommand::Undo { transition_id }, AT_3)
+        .unwrap()
+        .state;
+    let forged = forge_work_item_status(
+        &undone.render().unwrap(),
+        &replacement_id.to_string(),
+        "abandoned",
+        "doing",
+    );
+
+    assert!(matches!(
+        ProjectStateDoc::parse(&forged),
+        Err(ProjectStateError::InvalidDocument(_))
+    ));
+}
+
+#[test]
+fn parse_rejects_forged_status_after_undo_clear() {
+    let store = TestStore::new("parse-forged-undo-clear-status");
+    let set = set_commitment(&store, 0, "Current", AT_1);
+    let item_id = set.work_items[0].id.clone();
+    let cleared = store
+        .apply(
+            1,
+            ProjectCommand::ClearCommitment {
+                work_item_id: item_id.clone(),
+                reason: None,
+            },
+            AT_2,
+        )
+        .unwrap()
+        .state;
+    let transition_id = cleared.commitment_transitions.last().unwrap().id.clone();
+    let undone = store
+        .apply(2, ProjectCommand::Undo { transition_id }, AT_3)
+        .unwrap()
+        .state;
+    let forged = forge_work_item_status(
+        &undone.render().unwrap(),
+        &item_id.to_string(),
+        "doing",
+        "planned",
+    );
+
+    assert!(matches!(
+        ProjectStateDoc::parse(&forged),
+        Err(ProjectStateError::InvalidDocument(_))
+    ));
+}
+
+#[test]
+fn parse_rejects_forged_status_across_transition_revision_gap() {
+    let store = TestStore::new("parse-forged-status-revision-gap");
+    let set = set_commitment(&store, 0, "Current", AT_1);
+    let item_id = set.work_items[0].id.clone();
+    save_framing(&store, 1, AT_2);
+    let confirmed = store
+        .apply(
+            2,
+            ProjectCommand::ConfirmCommitment {
+                work_item_id: item_id.clone(),
+            },
+            AT_3,
+        )
+        .unwrap()
+        .state;
+    let transition_id = confirmed.commitment_transitions.last().unwrap().id.clone();
+    let undone = store
+        .apply(3, ProjectCommand::Undo { transition_id }, AT_4)
+        .unwrap()
+        .state;
+    let forged = forge_work_item_status(
+        &undone.render().unwrap(),
+        &item_id.to_string(),
+        "doing",
+        "planned",
+    );
+
+    assert!(matches!(
+        ProjectStateDoc::parse(&forged),
+        Err(ProjectStateError::InvalidDocument(_))
+    ));
+}
+
+#[test]
+fn parse_rejects_forged_status_after_undo_and_tail_revision() {
+    let store = TestStore::new("parse-forged-status-tail-revision");
+    let set = set_commitment(&store, 0, "Current", AT_1);
+    let item_id = set.work_items[0].id.clone();
+    let transition_id = set.commitment_transitions[0].id.clone();
+    store
+        .apply(1, ProjectCommand::Undo { transition_id }, AT_2)
+        .unwrap();
+    save_framing(&store, 2, AT_3);
+    let after_framing = store.load();
+    let forged = forge_work_item_status(
+        &after_framing.render().unwrap(),
+        &item_id.to_string(),
+        "abandoned",
+        "doing",
+    );
+
+    assert!(matches!(
+        ProjectStateDoc::parse(&forged),
+        Err(ProjectStateError::InvalidDocument(_))
+    ));
+}
+
+#[test]
 fn lifecycle_set_on_empty_creates_doing_item_pointer_and_event_once() {
     let store = TestStore::new("set-empty");
 
@@ -609,12 +854,8 @@ fn lifecycle_complete_marks_item_done_and_clears_pointer() {
 #[test]
 fn lifecycle_replace_retains_previous_item_status_and_requires_reason() {
     let store = TestStore::new("replace");
-    let mut set = set_commitment(&store, 0, "Old action", AT_1);
+    let set = set_commitment(&store, 0, "Old action", AT_1);
     let previous_id = set.work_items[0].id.clone();
-    set.work_items[0].status = WorkItemStatus::Blocked;
-    set.work_items[0].blocker = Some("External access".into());
-    set.work_items[0].blocked_at = Some(AT_1.into());
-    set.save(&store.project_id).unwrap();
     let before = store.bytes();
 
     let error = store
@@ -643,7 +884,7 @@ fn lifecycle_replace_retains_previous_item_status_and_requires_reason() {
         )
         .unwrap()
         .state;
-    assert_eq!(replaced.work_items[0].status, WorkItemStatus::Blocked);
+    assert_eq!(replaced.work_items[0].status, WorkItemStatus::Doing);
     assert_eq!(replaced.work_items[0].updated_at, AT_1);
     assert_eq!(replaced.work_items[1].status, WorkItemStatus::Doing);
     assert_eq!(
@@ -663,12 +904,8 @@ fn lifecycle_replace_retains_previous_item_status_and_requires_reason() {
 #[test]
 fn lifecycle_clear_retains_previous_item_and_status() {
     let store = TestStore::new("clear");
-    let mut set = set_commitment(&store, 0, "Current action", AT_1);
+    let set = set_commitment(&store, 0, "Current action", AT_1);
     let item_id = set.work_items[0].id.clone();
-    set.work_items[0].status = WorkItemStatus::Blocked;
-    set.work_items[0].blocker = Some("Dependency".into());
-    set.work_items[0].blocked_at = Some(AT_1.into());
-    set.save(&store.project_id).unwrap();
 
     let cleared = store
         .apply(
@@ -684,7 +921,7 @@ fn lifecycle_clear_retains_previous_item_and_status() {
 
     assert_eq!(cleared.current_next_action_id, None);
     assert_eq!(cleared.work_items.len(), 1);
-    assert_eq!(cleared.work_items[0].status, WorkItemStatus::Blocked);
+    assert_eq!(cleared.work_items[0].status, WorkItemStatus::Doing);
     assert_eq!(cleared.work_items[0].updated_at, AT_1);
     assert_eq!(
         cleared.commitment_transitions.last().unwrap().kind,
@@ -969,31 +1206,6 @@ fn lifecycle_setup_status_cannot_bypass_complete_setup_or_be_reentered() {
             AT_2,
         )
         .unwrap_err();
-    assert!(matches!(error, ProjectStateError::InvalidCommand(_)));
-    assert_eq!(store.bytes(), before);
-}
-
-#[test]
-fn lifecycle_complete_rejects_non_doing_current_item_without_mutation() {
-    let store = TestStore::new("complete-blocked");
-    let mut set = set_commitment(&store, 0, "Blocked action", AT_1);
-    let item_id = set.work_items[0].id.clone();
-    set.work_items[0].status = WorkItemStatus::Blocked;
-    set.work_items[0].blocker = Some("External dependency".into());
-    set.work_items[0].blocked_at = Some(AT_1.into());
-    set.save(&store.project_id).unwrap();
-    let before = store.bytes();
-
-    let error = store
-        .apply(
-            1,
-            ProjectCommand::CompleteCommitment {
-                work_item_id: item_id,
-            },
-            AT_2,
-        )
-        .unwrap_err();
-
     assert!(matches!(error, ProjectStateError::InvalidCommand(_)));
     assert_eq!(store.bytes(), before);
 }

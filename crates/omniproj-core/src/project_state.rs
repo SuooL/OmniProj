@@ -539,12 +539,29 @@ impl ProjectStateDoc {
             transitions_by_id.insert(transition.id.clone(), transition);
         }
 
-        let replayed = replay_and_validate_pointer_history(&self.commitment_transitions)?;
-        if replayed != self.current_next_action_id {
+        let replayed = replay_and_validate_commitment_history(&self.commitment_transitions)?;
+        if replayed.current_next_action_id != self.current_next_action_id {
             return invalid(format!(
                 "stored current next action {:?} differs from replayed history {:?}",
-                self.current_next_action_id, replayed
+                self.current_next_action_id, replayed.current_next_action_id
             ));
+        }
+        for (work_item_id, expected_status) in replayed.expected_statuses {
+            let item = self
+                .work_items
+                .iter()
+                .find(|item| item.id == work_item_id)
+                .ok_or_else(|| {
+                    ProjectStateError::InvalidDocument(format!(
+                        "replayed status references missing work item {work_item_id}"
+                    ))
+                })?;
+            if item.status != expected_status {
+                return invalid(format!(
+                    "work item {work_item_id} has status {:?}, expected {:?} from commitment history",
+                    item.status, expected_status
+                ));
+            }
         }
         Ok(())
     }
@@ -1184,10 +1201,16 @@ fn validate_transition_static_shape(
     Ok(())
 }
 
-fn replay_and_validate_pointer_history(
+struct CommitmentReplay {
+    current_next_action_id: Option<WorkItemId>,
+    expected_statuses: HashMap<WorkItemId, WorkItemStatus>,
+}
+
+fn replay_and_validate_commitment_history(
     transitions: &[CommitmentTransition],
-) -> Result<Option<WorkItemId>, ProjectStateError> {
+) -> Result<CommitmentReplay, ProjectStateError> {
     let mut current = None;
+    let mut expected_statuses = HashMap::new();
     let mut corrected_ids = HashSet::new();
     for (index, transition) in transitions.iter().enumerate() {
         if transition.kind == CommitmentTransitionKind::Correction {
@@ -1215,11 +1238,84 @@ fn replay_and_validate_pointer_history(
                 ));
             }
             current = after;
+            apply_status_correction(&mut expected_statuses, target)?;
         } else {
             apply_pointer_transition(&mut current, transition)?;
+            apply_status_transition(&mut expected_statuses, transition)?;
         }
     }
-    Ok(current)
+    Ok(CommitmentReplay {
+        current_next_action_id: current,
+        expected_statuses,
+    })
+}
+
+fn apply_status_transition(
+    expected_statuses: &mut HashMap<WorkItemId, WorkItemStatus>,
+    transition: &CommitmentTransition,
+) -> Result<(), ProjectStateError> {
+    match transition.kind {
+        CommitmentTransitionKind::Set | CommitmentTransitionKind::Replaced => {
+            let item_id = transition.next_work_item_id.clone().ok_or_else(|| {
+                ProjectStateError::InvalidDocument(format!(
+                    "{:?} transition {} has no introduced item",
+                    transition.kind, transition.id
+                ))
+            })?;
+            expected_statuses.insert(item_id, WorkItemStatus::Doing);
+        }
+        CommitmentTransitionKind::Completed => {
+            let item_id = transition.previous_work_item_id.clone().ok_or_else(|| {
+                ProjectStateError::InvalidDocument(format!(
+                    "Completed transition {} has no completed item",
+                    transition.id
+                ))
+            })?;
+            expected_statuses.insert(item_id, WorkItemStatus::Done);
+        }
+        CommitmentTransitionKind::Confirmed | CommitmentTransitionKind::Cleared => {}
+        CommitmentTransitionKind::Correction => {
+            return invalid(format!(
+                "unexpected Correction transition {}",
+                transition.id
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn apply_status_correction(
+    expected_statuses: &mut HashMap<WorkItemId, WorkItemStatus>,
+    target: &CommitmentTransition,
+) -> Result<(), ProjectStateError> {
+    match target.kind {
+        CommitmentTransitionKind::Set | CommitmentTransitionKind::Replaced => {
+            let item_id = target.next_work_item_id.clone().ok_or_else(|| {
+                ProjectStateError::InvalidDocument(format!(
+                    "corrected {:?} transition {} has no introduced item",
+                    target.kind, target.id
+                ))
+            })?;
+            expected_statuses.insert(item_id, WorkItemStatus::Abandoned);
+        }
+        CommitmentTransitionKind::Completed => {
+            let item_id = target.previous_work_item_id.clone().ok_or_else(|| {
+                ProjectStateError::InvalidDocument(format!(
+                    "corrected Completed transition {} has no completed item",
+                    target.id
+                ))
+            })?;
+            expected_statuses.insert(item_id, WorkItemStatus::Doing);
+        }
+        CommitmentTransitionKind::Confirmed | CommitmentTransitionKind::Cleared => {}
+        CommitmentTransitionKind::Correction => {
+            return invalid(format!(
+                "correction cannot target correction transition {}",
+                target.id
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn replay_masked_pointer(
@@ -1439,6 +1535,34 @@ mod tests {
             ProjectStateDoc::parse(&dangling),
             Err(ProjectStateError::InvalidDocument(_))
         ));
+    }
+
+    #[test]
+    fn complete_command_rejects_blocked_current_item_without_in_memory_mutation() {
+        let project_id = ProjectId::parse("project-blocked-complete").unwrap();
+        let mut state = ProjectStateDoc::new_setup(CREATED_AT).unwrap();
+        let mut item = new_work_item(&project_id, "Blocked action".into(), CREATED_AT);
+        let item_id = item.id.clone();
+        item.status = WorkItemStatus::Blocked;
+        item.blocker = Some("External dependency".into());
+        item.blocked_at = Some(CREATED_AT.into());
+        state.current_next_action_id = Some(item_id.clone());
+        state.work_items.push(item);
+        let before = state.clone();
+
+        let error = apply_command_in_memory(
+            &mut state,
+            &project_id,
+            ProjectCommand::CompleteCommitment {
+                work_item_id: item_id,
+            },
+            CREATED_AT,
+            1,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, ProjectStateError::InvalidCommand(_)));
+        assert_eq!(state, before);
     }
 
     #[test]
