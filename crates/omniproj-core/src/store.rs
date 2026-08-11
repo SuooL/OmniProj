@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::ids::{ProjectId, ProjectSourceId};
 use crate::paths::omniproj_home;
@@ -17,6 +18,15 @@ use crate::project::{
     ProjectSource, ProjectSourceKind, ProjectSourceStatus,
 };
 use crate::project_state::ProjectStateDoc;
+
+#[cfg(test)]
+type FreshInitTestPause = (
+    std::sync::Arc<std::sync::Barrier>,
+    std::sync::Arc<std::sync::Barrier>,
+);
+#[cfg(test)]
+static FRESH_INIT_TEST_PAUSE: std::sync::OnceLock<std::sync::Mutex<Option<FreshInitTestPause>>> =
+    std::sync::OnceLock::new();
 
 /// Current on-disk schema version for `~/.omniproj`. A store without a version stamp is
 /// interpreted as the v1 baseline and passed through the explicit v1→v2 migration.
@@ -30,6 +40,7 @@ pub const SCHEMA_VERSION_FILE: &str = "SCHEMA_VERSION";
 pub enum StoreError {
     Io(std::io::Error),
     AuditCommit(String),
+    AuditConflict { path: PathBuf },
     InvalidData(String),
     MigrationConflict { path: PathBuf },
     InjectedFailure(String),
@@ -40,6 +51,11 @@ impl fmt::Display for StoreError {
         match self {
             Self::Io(error) => error.fmt(f),
             Self::AuditCommit(error) => write!(f, "audit commit failed: {error}"),
+            Self::AuditConflict { path } => write!(
+                f,
+                "audit conflict at {}: target bytes changed after the mutation",
+                path.display()
+            ),
             Self::InvalidData(error) => f.write_str(error),
             Self::MigrationConflict { path } => write!(
                 f,
@@ -56,6 +72,7 @@ impl std::error::Error for StoreError {
         match self {
             Self::Io(error) => Some(error),
             Self::AuditCommit(_)
+            | Self::AuditConflict { .. }
             | Self::InvalidData(_)
             | Self::MigrationConflict { .. }
             | Self::InjectedFailure(_) => None,
@@ -73,7 +90,7 @@ impl StoreError {
     pub fn kind(&self) -> ErrorKind {
         match self {
             Self::Io(error) => error.kind(),
-            Self::InvalidData(_) => ErrorKind::InvalidData,
+            Self::InvalidData(_) | Self::AuditConflict { .. } => ErrorKind::InvalidData,
             Self::MigrationConflict { .. } => ErrorKind::AlreadyExists,
             Self::AuditCommit(_) | Self::InjectedFailure(_) => ErrorKind::Other,
         }
@@ -120,31 +137,69 @@ fn commit(home: &Path, message: &str) {
 pub fn ensure_home() -> Result<PathBuf, StoreError> {
     let home = omniproj_home();
     std::fs::create_dir_all(&home)?;
+    with_store_txn(|| ensure_home_locked(&home))?;
+    Ok(home)
+}
+
+fn ensure_home_locked(home: &Path) -> Result<(), StoreError> {
     let fresh = !home.join(".git").exists();
     if fresh {
-        git(&home, &["init", "-q"]);
+        if !git(home, &["init", "-q"]) {
+            return Err(StoreError::AuditCommit(format!(
+                "could not initialize store Git repository at {}",
+                home.display()
+            )));
+        }
+        fresh_init_test_pause_after_git_init();
         let gitignore = home.join(".gitignore");
+        let mut initial_audit_paths = Vec::new();
         if !gitignore.exists() {
-            std::fs::write(
+            atomic_write(
                 &gitignore,
-                "# derived, regenerable — not versioned (spec §4.1/§4.6)\nprojects/*/cache/\n/.migration-v2\n",
+                "# derived, regenerable — not versioned (spec §4.1/§4.6)\nprojects/*/cache/\n/.migration-v2\n"
+                    .as_bytes(),
             )?;
+            initial_audit_paths.push(PathBuf::from(".gitignore"));
         }
         // Stamp the schema version so it lands in the very first commit.
-        std::fs::write(
-            home.join(SCHEMA_VERSION_FILE),
-            format!("{CURRENT_SCHEMA_VERSION}\n"),
+        atomic_write(
+            &home.join(SCHEMA_VERSION_FILE),
+            format!("{CURRENT_SCHEMA_VERSION}\n").as_bytes(),
         )?;
-        git(&home, &["add", "-A"]);
-        commit(&home, "init omniproj store");
+        initial_audit_paths.push(PathBuf::from(SCHEMA_VERSION_FILE));
+        commit_paths_checked("init omniproj store", &initial_audit_paths)?;
     } else {
-        with_store_txn(|| {
-            ensure_schema_version(&home)?;
-            recover_pending_audit(&home)?;
-            cleanup_empty_staging_dirs(&home)
-        })?;
+        ensure_schema_version(home)?;
+        recover_pending_audit(home)?;
     }
-    Ok(home)
+    cleanup_empty_staging_dirs(home)
+}
+
+#[cfg(test)]
+fn fresh_init_test_pause_after_git_init() {
+    let pause = FRESH_INIT_TEST_PAUSE
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .take();
+    if let Some((reached, release)) = pause {
+        reached.wait();
+        release.wait();
+    }
+}
+
+#[cfg(not(test))]
+fn fresh_init_test_pause_after_git_init() {}
+
+#[cfg(test)]
+fn install_fresh_init_test_pause(
+    reached: std::sync::Arc<std::sync::Barrier>,
+    release: std::sync::Arc<std::sync::Barrier>,
+) {
+    *FRESH_INIT_TEST_PAUSE
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some((reached, release));
 }
 
 fn cleanup_empty_staging_dirs(home: &Path) -> Result<(), StoreError> {
@@ -262,7 +317,10 @@ const MIGRATION_V2_JOURNAL: &str = ".migration-v2";
 #[serde(rename_all = "snake_case")]
 enum MigrationV2Phase {
     JournalCreated,
+    IgnoreWritePrepared,
+    IgnoreWritten,
     IgnoreAudited,
+    ProjectsWritePrepared,
     ProjectsWritten,
     ProjectsAudited,
     SchemaStampPending,
@@ -277,6 +335,24 @@ struct MigrationV2Journal {
     phase: MigrationV2Phase,
     project_ids: Vec<ProjectId>,
     created_state_ids: Vec<ProjectId>,
+    audit_targets: Vec<AuditTargetSnapshot>,
+    pending_ignore_contents: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Round1MigrationV2Journal {
+    target_schema_version: u32,
+    phase: MigrationV2Phase,
+    project_ids: Vec<ProjectId>,
+    created_state_ids: Vec<ProjectId>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyMigrationV2Journal {
+    target_schema_version: u32,
+    project_ids: Vec<ProjectId>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -293,6 +369,297 @@ struct LegacyProjectMetaV1 {
     cadence: Option<Cadence>,
 }
 
+fn decode_migration_journal(
+    home: &Path,
+    on_disk: u32,
+    path: &Path,
+    text: &str,
+) -> Result<MigrationV2Journal, StoreError> {
+    if let Ok(journal) = toml::from_str::<MigrationV2Journal>(text) {
+        validate_migration_journal(path, &journal)?;
+        return Ok(journal);
+    }
+    if let Ok(round1) = toml::from_str::<Round1MigrationV2Journal>(text) {
+        if matches!(
+            round1.phase,
+            MigrationV2Phase::IgnoreWritePrepared
+                | MigrationV2Phase::IgnoreWritten
+                | MigrationV2Phase::ProjectsWritePrepared
+        ) {
+            return Err(StoreError::InvalidData(format!(
+                "{} contains a phase that did not exist in that journal format",
+                path.display()
+            )));
+        }
+        let journal = MigrationV2Journal {
+            target_schema_version: round1.target_schema_version,
+            phase: round1.phase,
+            project_ids: round1.project_ids,
+            created_state_ids: round1.created_state_ids,
+            audit_targets: Vec::new(),
+            pending_ignore_contents: None,
+        };
+        validate_migration_journal(path, &journal)?;
+        if journal.phase == MigrationV2Phase::ProjectsWritten {
+            return Err(StoreError::AuditConflict {
+                path: path.to_owned(),
+            });
+        }
+        return Ok(journal);
+    }
+    if let Ok(legacy) = toml::from_str::<LegacyMigrationV2Journal>(text) {
+        return upgrade_legacy_migration_journal(home, on_disk, path, legacy);
+    }
+    Err(StoreError::InvalidData(format!(
+        "{} is malformed or does not match a supported migration journal format",
+        path.display()
+    )))
+}
+
+fn validate_migration_journal(path: &Path, journal: &MigrationV2Journal) -> Result<(), StoreError> {
+    if journal.target_schema_version != 2 {
+        return Err(StoreError::InvalidData(format!(
+            "{} targets unsupported schema {}",
+            path.display(),
+            journal.target_schema_version
+        )));
+    }
+    let project_ids: std::collections::HashSet<_> = journal.project_ids.iter().collect();
+    if project_ids.len() != journal.project_ids.len() {
+        return Err(StoreError::InvalidData(format!(
+            "{} contains duplicate project ids",
+            path.display()
+        )));
+    }
+    let created_ids: std::collections::HashSet<_> = journal.created_state_ids.iter().collect();
+    if created_ids.len() != journal.created_state_ids.len()
+        || !created_ids.iter().all(|id| project_ids.contains(id))
+    {
+        return Err(StoreError::InvalidData(format!(
+            "{} has invalid created-state tracking",
+            path.display()
+        )));
+    }
+    let mut target_paths = std::collections::HashSet::new();
+    for target in &journal.audit_targets {
+        validate_relative_audit_path(&target.relative_path)?;
+        if !target_paths.insert(target.relative_path.clone())
+            || target.expected_sha256.len() != 64
+            || !target
+                .expected_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || target.prior_sha256.as_deref().is_some_and(|hash| {
+                hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit())
+            })
+        {
+            return Err(StoreError::InvalidData(format!(
+                "{} has invalid audit target snapshots",
+                path.display()
+            )));
+        }
+    }
+    if matches!(
+        journal.phase,
+        MigrationV2Phase::JournalCreated | MigrationV2Phase::IgnoreAudited
+    ) && !journal.audit_targets.is_empty()
+    {
+        return Err(StoreError::InvalidData(format!(
+            "{} records audit targets before the write-prepared phase",
+            path.display()
+        )));
+    }
+    let ignore_phase = matches!(
+        journal.phase,
+        MigrationV2Phase::IgnoreWritePrepared | MigrationV2Phase::IgnoreWritten
+    );
+    if ignore_phase != journal.pending_ignore_contents.is_some() {
+        return Err(StoreError::InvalidData(format!(
+            "{} has inconsistent pending .gitignore contents",
+            path.display()
+        )));
+    }
+    let expected_paths: std::collections::HashSet<PathBuf> = if ignore_phase {
+        [PathBuf::from(".gitignore")].into_iter().collect()
+    } else if matches!(
+        journal.phase,
+        MigrationV2Phase::ProjectsWritePrepared | MigrationV2Phase::ProjectsWritten
+    ) {
+        journal
+            .project_ids
+            .iter()
+            .map(|id| PathBuf::from(format!("projects/{id}/meta.toml")))
+            .chain(
+                journal
+                    .created_state_ids
+                    .iter()
+                    .map(|id| PathBuf::from(format!("projects/{id}/notes/project.md"))),
+            )
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+    if target_paths != expected_paths {
+        return Err(StoreError::InvalidData(format!(
+            "{} audit targets do not match its migration phase",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn upgrade_legacy_migration_journal(
+    home: &Path,
+    on_disk: u32,
+    path: &Path,
+    legacy: LegacyMigrationV2Journal,
+) -> Result<MigrationV2Journal, StoreError> {
+    if legacy.target_schema_version != 2 {
+        return Err(StoreError::InvalidData(format!(
+            "{} targets unsupported schema {}",
+            path.display(),
+            legacy.target_schema_version
+        )));
+    }
+    let unique: std::collections::HashSet<_> = legacy.project_ids.iter().collect();
+    if unique.len() != legacy.project_ids.len() {
+        return Err(StoreError::InvalidData(format!(
+            "{} contains duplicate project ids",
+            path.display()
+        )));
+    }
+    let actual = migration_project_ids(home)?;
+    if legacy
+        .project_ids
+        .iter()
+        .any(|project_id| !actual.contains(project_id))
+    {
+        return Err(StoreError::InvalidData(format!(
+            "{} names a project that is not present",
+            path.display()
+        )));
+    }
+    if on_disk == 2 && actual != legacy.project_ids {
+        return Err(StoreError::InvalidData(format!(
+            "{} project set does not match the stamped store",
+            path.display()
+        )));
+    }
+
+    let mut created_state_ids = Vec::new();
+    for project_id in &legacy.project_ids {
+        validate_legacy_migration_metadata(home, project_id)?;
+        let (_, setup) = migration_record_and_setup(home, project_id)?;
+        let relative_state = PathBuf::from(format!("projects/{project_id}/notes/project.md"));
+        let state_path = home.join(&relative_state);
+        if state_path.exists() {
+            let existing = std::fs::read_to_string(&state_path)?;
+            if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup) {
+                return Err(StoreError::MigrationConflict { path: state_path });
+            }
+            if !path_matches_head(home, &relative_state)? {
+                return Err(StoreError::MigrationConflict { path: state_path });
+            }
+        } else if on_disk == 1 {
+            created_state_ids.push(project_id.clone());
+        } else {
+            return Err(StoreError::MigrationConflict { path: state_path });
+        }
+    }
+
+    let phase = match on_disk {
+        1 => MigrationV2Phase::JournalCreated,
+        2 => {
+            for project_id in &legacy.project_ids {
+                for relative in [
+                    PathBuf::from(format!("projects/{project_id}/meta.toml")),
+                    PathBuf::from(format!("projects/{project_id}/notes/project.md")),
+                ] {
+                    if !path_matches_head(home, &relative)? {
+                        return Err(StoreError::AuditConflict {
+                            path: home.join(relative),
+                        });
+                    }
+                }
+            }
+            if path_matches_head(home, Path::new(SCHEMA_VERSION_FILE))? {
+                MigrationV2Phase::SchemaAudited
+            } else {
+                MigrationV2Phase::SchemaStamped
+            }
+        }
+        _ => {
+            return Err(StoreError::InvalidData(format!(
+                "{} cannot resume against schema v{on_disk}",
+                path.display()
+            )));
+        }
+    };
+    let journal = MigrationV2Journal {
+        target_schema_version: 2,
+        phase,
+        project_ids: legacy.project_ids,
+        created_state_ids,
+        audit_targets: Vec::new(),
+        pending_ignore_contents: None,
+    };
+    validate_migration_journal(path, &journal)?;
+    write_migration_journal(path, &journal)?;
+    Ok(journal)
+}
+
+fn validate_legacy_migration_metadata(
+    home: &Path,
+    project_id: &ProjectId,
+) -> Result<(), StoreError> {
+    let relative = PathBuf::from(format!("projects/{project_id}/meta.toml"));
+    if path_matches_head(home, &relative)? {
+        return Ok(());
+    }
+    let current_path = home.join(&relative);
+    let current = std::fs::read_to_string(&current_path)?;
+    let head = git_head_bytes(home, &relative)?.ok_or_else(|| StoreError::AuditConflict {
+        path: current_path.clone(),
+    })?;
+    let head = String::from_utf8(head).map_err(|_| StoreError::AuditConflict {
+        path: current_path.clone(),
+    })?;
+    let legacy: LegacyProjectMetaV1 =
+        toml::from_str(&head).map_err(|_| StoreError::AuditConflict {
+            path: current_path.clone(),
+        })?;
+    let expected = render_project_record(&legacy_to_v2(project_id, legacy)?).map_err(|_| {
+        StoreError::AuditConflict {
+            path: current_path.clone(),
+        }
+    })?;
+    if current != expected {
+        return Err(StoreError::AuditConflict { path: current_path });
+    }
+    Ok(())
+}
+
+fn path_matches_head(home: &Path, relative: &Path) -> Result<bool, StoreError> {
+    let Some(head) = git_head_bytes(home, relative)? else {
+        return Ok(false);
+    };
+    Ok(std::fs::read(home.join(relative))? == head)
+}
+
+fn git_head_bytes(home: &Path, relative: &Path) -> Result<Option<Vec<u8>>, StoreError> {
+    validate_relative_audit_path(relative)?;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(home)
+        .args(["show", &format!("HEAD:{}", relative.display())])
+        .output()?;
+    if output.status.success() {
+        Ok(Some(output.stdout))
+    } else {
+        Ok(None)
+    }
+}
+
 fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
     let journal_path = home.join(MIGRATION_V2_JOURNAL);
     let on_disk = if home.join(SCHEMA_VERSION_FILE).exists() {
@@ -302,9 +669,13 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
     };
     let mut journal = if journal_path.exists() {
         let text = std::fs::read_to_string(&journal_path)?;
-        let journal: MigrationV2Journal = toml::from_str(&text).map_err(|error| {
-            StoreError::InvalidData(format!("{} is malformed: {error}", journal_path.display()))
-        })?;
+        let journal = decode_migration_journal(home, on_disk, &journal_path, &text)?;
+        if on_disk == 2 && migration_project_ids(home)? != journal.project_ids {
+            return Err(StoreError::InvalidData(format!(
+                "{} project set does not match the stamped store",
+                journal_path.display()
+            )));
+        }
         if journal.target_schema_version != 2 {
             return Err(StoreError::InvalidData(format!(
                 "{} targets unsupported schema {}",
@@ -362,6 +733,8 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
             phase: MigrationV2Phase::JournalCreated,
             project_ids,
             created_state_ids,
+            audit_targets: Vec::new(),
+            pending_ignore_contents: None,
         };
         write_migration_journal(&journal_path, &journal)?;
         failpoint("migration_after_journal_creation")?;
@@ -372,14 +745,48 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
         match journal.phase {
             MigrationV2Phase::JournalCreated => {
                 refresh_migration_projects(home, &mut journal)?;
-                ensure_migration_ignore(home)?;
+                let expected = migration_ignore_contents(home)?;
+                journal.audit_targets = vec![audit_target_snapshot(
+                    home,
+                    PathBuf::from(".gitignore"),
+                    expected.as_bytes(),
+                )?];
+                journal.pending_ignore_contents = Some(expected);
+                journal.phase = MigrationV2Phase::IgnoreWritePrepared;
+                write_migration_journal(&journal_path, &journal)?;
+            }
+            MigrationV2Phase::IgnoreWritePrepared => {
+                validate_targets_are_prior_or_expected(home, &journal.audit_targets)?;
+                let expected = journal.pending_ignore_contents.as_ref().ok_or_else(|| {
+                    StoreError::InvalidData("missing prepared .gitignore contents".into())
+                })?;
+                if !audit_targets_match(home, &journal.audit_targets, SnapshotSide::Expected)? {
+                    atomic_write(&home.join(".gitignore"), expected.as_bytes())?;
+                }
+                journal.phase = MigrationV2Phase::IgnoreWritten;
+                write_migration_journal(&journal_path, &journal)?;
+            }
+            MigrationV2Phase::IgnoreWritten => {
+                validate_audit_targets(home, &journal.audit_targets, SnapshotSide::Expected)?;
+                commit_paths_checked(
+                    "schema: ignore v2 migration journal",
+                    &[PathBuf::from(".gitignore")],
+                )?;
+                journal.audit_targets.clear();
+                journal.pending_ignore_contents = None;
                 journal.phase = MigrationV2Phase::IgnoreAudited;
                 write_migration_journal(&journal_path, &journal)?;
             }
-            MigrationV2Phase::IgnoreAudited | MigrationV2Phase::ProjectsWritten => {
+            MigrationV2Phase::IgnoreAudited => {
                 if refresh_migration_projects(home, &mut journal)? {
                     write_migration_journal(&journal_path, &journal)?;
                 }
+                journal.audit_targets = migration_audit_targets(home, &journal)?;
+                journal.phase = MigrationV2Phase::ProjectsWritePrepared;
+                write_migration_journal(&journal_path, &journal)?;
+            }
+            MigrationV2Phase::ProjectsWritePrepared => {
+                validate_targets_are_prior_or_expected(home, &journal.audit_targets)?;
                 for project_id in &journal.project_ids {
                     let (record, setup) = migration_record_and_setup(home, project_id)?;
                     let project_root = home.join("projects").join(project_id.as_str());
@@ -404,21 +811,12 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
                 }
                 journal.phase = MigrationV2Phase::ProjectsWritten;
                 write_migration_journal(&journal_path, &journal)?;
-
-                let mut audit_paths = Vec::new();
-                for project_id in &journal.project_ids {
-                    audit_paths.push(PathBuf::from(format!(
-                        "projects/{}/meta.toml",
-                        project_id.as_str()
-                    )));
-                }
-                for project_id in &journal.created_state_ids {
-                    audit_paths.push(PathBuf::from(format!(
-                        "projects/{}/notes/project.md",
-                        project_id.as_str()
-                    )));
-                }
+            }
+            MigrationV2Phase::ProjectsWritten => {
+                validate_audit_targets(home, &journal.audit_targets, SnapshotSide::Expected)?;
+                let audit_paths = audit_target_paths(&journal.audit_targets);
                 commit_paths_checked("schema: migrate project records to v2", &audit_paths)?;
+                journal.audit_targets.clear();
                 journal.phase = MigrationV2Phase::ProjectsAudited;
                 write_migration_journal(&journal_path, &journal)?;
                 failpoint("migration_after_project_audit_commit")?;
@@ -426,6 +824,7 @@ fn migrate_v1_to_v2(home: &Path) -> Result<(), StoreError> {
             MigrationV2Phase::ProjectsAudited => {
                 if refresh_migration_projects(home, &mut journal)? {
                     journal.phase = MigrationV2Phase::IgnoreAudited;
+                    journal.audit_targets.clear();
                     write_migration_journal(&journal_path, &journal)?;
                     continue;
                 }
@@ -459,6 +858,59 @@ fn write_migration_journal(path: &Path, journal: &MigrationV2Journal) -> Result<
     let text =
         toml::to_string(journal).map_err(|error| StoreError::InvalidData(error.to_string()))?;
     atomic_write(path, text.as_bytes())
+}
+
+fn migration_audit_targets(
+    home: &Path,
+    journal: &MigrationV2Journal,
+) -> Result<Vec<AuditTargetSnapshot>, StoreError> {
+    let mut targets = Vec::new();
+    for project_id in &journal.project_ids {
+        let (record, _) = migration_record_and_setup(home, project_id)?;
+        let expected = render_project_record(&record)
+            .map_err(|error| StoreError::InvalidData(error.to_string()))?;
+        targets.push(audit_target_snapshot(
+            home,
+            PathBuf::from(format!("projects/{project_id}/meta.toml")),
+            expected.as_bytes(),
+        )?);
+    }
+    for project_id in &journal.created_state_ids {
+        let (_, setup) = migration_record_and_setup(home, project_id)?;
+        let expected = setup
+            .render()
+            .map_err(|error| StoreError::InvalidData(error.to_string()))?;
+        targets.push(audit_target_snapshot(
+            home,
+            PathBuf::from(format!("projects/{project_id}/notes/project.md")),
+            expected.as_bytes(),
+        )?);
+    }
+    Ok(targets)
+}
+
+fn validate_targets_are_prior_or_expected(
+    home: &Path,
+    targets: &[AuditTargetSnapshot],
+) -> Result<(), StoreError> {
+    for target in targets {
+        let actual = file_sha256(&home.join(&target.relative_path))?;
+        if actual.as_ref() != target.prior_sha256.as_ref()
+            && actual.as_ref() != Some(&target.expected_sha256)
+        {
+            return Err(StoreError::AuditConflict {
+                path: home.join(&target.relative_path),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn audit_target_paths(targets: &[AuditTargetSnapshot]) -> Vec<PathBuf> {
+    targets
+        .iter()
+        .map(|target| target.relative_path.clone())
+        .collect()
 }
 
 fn refresh_migration_projects(
@@ -607,7 +1059,7 @@ fn validate_migration_record(
     Ok(())
 }
 
-fn ensure_migration_ignore(home: &Path) -> Result<(), StoreError> {
+fn migration_ignore_contents(home: &Path) -> Result<String, StoreError> {
     let path = home.join(".gitignore");
     let mut text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
@@ -619,13 +1071,8 @@ fn ensure_migration_ignore(home: &Path) -> Result<(), StoreError> {
             text.push('\n');
         }
         text.push_str("/.migration-v2\n");
-        atomic_write(&path, text.as_bytes())?;
     }
-    commit_paths_checked(
-        "schema: ignore v2 migration journal",
-        &[PathBuf::from(".gitignore")],
-    )?;
-    Ok(())
+    Ok(text)
 }
 
 fn failpoint(name: &str) -> Result<(), StoreError> {
@@ -723,11 +1170,40 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), StoreError> {
 
 const PENDING_AUDIT_JOURNAL: &str = ".git/omniproj-pending-audit.toml";
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PendingAuditPhase {
+    Prepared,
+    Applied,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AuditTargetSnapshot {
+    relative_path: PathBuf,
+    prior_sha256: Option<String>,
+    expected_sha256: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PendingAudit {
     message: String,
-    relative_paths: Vec<PathBuf>,
+    phase: PendingAuditPhase,
+    targets: Vec<AuditTargetSnapshot>,
+}
+
+pub(crate) fn audit_target_snapshot(
+    home: &Path,
+    relative_path: PathBuf,
+    expected_contents: &[u8],
+) -> Result<AuditTargetSnapshot, StoreError> {
+    validate_relative_audit_path(&relative_path)?;
+    Ok(AuditTargetSnapshot {
+        prior_sha256: file_sha256(&home.join(&relative_path))?,
+        relative_path,
+        expected_sha256: sha256(expected_contents),
+    })
 }
 
 /// Record an exact-path audit before exposing its corresponding durable mutation.
@@ -735,10 +1211,10 @@ struct PendingAudit {
 pub(crate) fn begin_pending_audit(
     home: &Path,
     message: &str,
-    relative_paths: &[PathBuf],
+    targets: &[AuditTargetSnapshot],
 ) -> Result<(), StoreError> {
-    for path in relative_paths {
-        validate_relative_audit_path(path)?;
+    for target in targets {
+        validate_relative_audit_path(&target.relative_path)?;
     }
     let journal_path = home.join(PENDING_AUDIT_JOURNAL);
     if journal_path.exists() {
@@ -749,11 +1225,19 @@ pub(crate) fn begin_pending_audit(
     }
     let journal = PendingAudit {
         message: message.to_owned(),
-        relative_paths: relative_paths.to_vec(),
+        phase: PendingAuditPhase::Prepared,
+        targets: targets.to_vec(),
     };
-    let text =
-        toml::to_string(&journal).map_err(|error| StoreError::InvalidData(error.to_string()))?;
-    atomic_write(&journal_path, text.as_bytes())
+    write_pending_audit(&journal_path, &journal)
+}
+
+/// Mark the prepared mutation durable before attempting its audit commit.
+pub(crate) fn mark_pending_audit_applied(home: &Path) -> Result<(), StoreError> {
+    let journal_path = home.join(PENDING_AUDIT_JOURNAL);
+    let mut journal = read_pending_audit(&journal_path)?;
+    validate_audit_targets(home, &journal.targets, SnapshotSide::Expected)?;
+    journal.phase = PendingAuditPhase::Applied;
+    write_pending_audit(&journal_path, &journal)
 }
 
 /// Complete the exact-path audit recorded by [`begin_pending_audit`].
@@ -763,20 +1247,129 @@ pub(crate) fn finish_pending_audit(home: &Path) -> Result<(), StoreError> {
 
 fn recover_pending_audit(home: &Path) -> Result<(), StoreError> {
     let journal_path = home.join(PENDING_AUDIT_JOURNAL);
-    let text = match std::fs::read_to_string(&journal_path) {
-        Ok(text) => text,
+    let mut journal = match read_pending_audit(&journal_path) {
+        Ok(journal) => journal,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(StoreError::Io(error)),
+        Err(error) => return Err(error),
     };
-    let journal: PendingAudit = toml::from_str(&text).map_err(|error| {
-        StoreError::InvalidData(format!("{} is malformed: {error}", journal_path.display()))
-    })?;
-    for path in &journal.relative_paths {
-        validate_relative_audit_path(path)?;
+    for target in &journal.targets {
+        validate_relative_audit_path(&target.relative_path)?;
     }
-    commit_paths_checked(&journal.message, &journal.relative_paths)?;
+    if journal.phase == PendingAuditPhase::Prepared {
+        if audit_targets_match(home, &journal.targets, SnapshotSide::Prior)? {
+            std::fs::remove_file(journal_path)?;
+            return Ok(());
+        }
+        validate_audit_targets(home, &journal.targets, SnapshotSide::Expected)?;
+        journal.phase = PendingAuditPhase::Applied;
+        write_pending_audit(&journal_path, &journal)?;
+    }
+    validate_audit_targets(home, &journal.targets, SnapshotSide::Expected)?;
+    let relative_paths: Vec<_> = journal
+        .targets
+        .iter()
+        .map(|target| target.relative_path.clone())
+        .collect();
+    commit_paths_checked(&journal.message, &relative_paths)?;
     std::fs::remove_file(journal_path)?;
     Ok(())
+}
+
+fn read_pending_audit(path: &Path) -> Result<PendingAudit, StoreError> {
+    let text = std::fs::read_to_string(path)?;
+    let journal: PendingAudit = toml::from_str(&text).map_err(|error| {
+        StoreError::InvalidData(format!("{} is malformed: {error}", path.display()))
+    })?;
+    if journal.targets.is_empty() {
+        return Err(StoreError::InvalidData(format!(
+            "{} contains no audit targets",
+            path.display()
+        )));
+    }
+    let mut paths = std::collections::HashSet::new();
+    for target in &journal.targets {
+        validate_relative_audit_path(&target.relative_path)?;
+        let valid_hash =
+            |hash: &str| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit());
+        if !paths.insert(&target.relative_path)
+            || !valid_hash(&target.expected_sha256)
+            || target
+                .prior_sha256
+                .as_deref()
+                .is_some_and(|hash| !valid_hash(hash))
+        {
+            return Err(StoreError::InvalidData(format!(
+                "{} has invalid audit target snapshots",
+                path.display()
+            )));
+        }
+    }
+    Ok(journal)
+}
+
+fn write_pending_audit(path: &Path, journal: &PendingAudit) -> Result<(), StoreError> {
+    let text =
+        toml::to_string(journal).map_err(|error| StoreError::InvalidData(error.to_string()))?;
+    atomic_write(path, text.as_bytes())
+}
+
+#[derive(Clone, Copy)]
+enum SnapshotSide {
+    Prior,
+    Expected,
+}
+
+fn audit_targets_match(
+    home: &Path,
+    targets: &[AuditTargetSnapshot],
+    side: SnapshotSide,
+) -> Result<bool, StoreError> {
+    for target in targets {
+        let actual = file_sha256(&home.join(&target.relative_path))?;
+        let wanted = match side {
+            SnapshotSide::Prior => target.prior_sha256.as_ref(),
+            SnapshotSide::Expected => Some(&target.expected_sha256),
+        };
+        if actual.as_ref() != wanted {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn validate_audit_targets(
+    home: &Path,
+    targets: &[AuditTargetSnapshot],
+    side: SnapshotSide,
+) -> Result<(), StoreError> {
+    for target in targets {
+        let actual = file_sha256(&home.join(&target.relative_path))?;
+        let wanted = match side {
+            SnapshotSide::Prior => target.prior_sha256.as_ref(),
+            SnapshotSide::Expected => Some(&target.expected_sha256),
+        };
+        if actual.as_ref() != wanted {
+            return Err(StoreError::AuditConflict {
+                path: home.join(&target.relative_path),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn file_sha256(path: &Path) -> Result<Option<String>, StoreError> {
+    match std::fs::read(path) {
+        Ok(contents) => Ok(Some(sha256(&contents))),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(StoreError::Io(error)),
+    }
+}
+
+fn sha256(contents: &[u8]) -> String {
+    Sha256::digest(contents)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn audit_error(output: std::process::Output) -> StoreError {
@@ -1029,6 +1622,56 @@ mod tests {
         drop(held_lock);
         std::env::remove_var("OMNIPROJ_HOME");
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn fresh_initialization_holds_the_store_lock_before_git_becomes_visible() {
+        let _g = crate::env_guard();
+        let home = unique_home("fresh-init-race");
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        let reached = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let release = std::sync::Arc::new(std::sync::Barrier::new(2));
+        install_fresh_init_test_pause(reached.clone(), release.clone());
+
+        let first = std::thread::spawn(ensure_home);
+        reached.wait();
+        let concurrent = ensure_home();
+        release.wait();
+        first.join().unwrap().unwrap();
+
+        assert!(
+            matches!(concurrent, Err(StoreError::Io(ref error)) if error.kind() == ErrorKind::WouldBlock),
+            "second startup must observe checked lock contention, got {concurrent:?}"
+        );
+        ensure_home().unwrap();
+        assert_eq!(read_version(&home), CURRENT_SCHEMA_VERSION.to_string());
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn fresh_initialization_commits_only_tool_created_paths() {
+        let _g = crate::env_guard();
+        let home = unique_home("fresh-init-exact-audit");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("Human.md"), b"Pre-existing Human bytes\n").unwrap();
+        std::env::set_var("OMNIPROJ_HOME", &home);
+
+        ensure_home().unwrap();
+
+        let mut names: Vec<_> = git_output(&home, &["show", "--format=", "--name-only", "HEAD"])
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect();
+        names.sort();
+        assert_eq!(names, vec![".gitignore", SCHEMA_VERSION_FILE]);
+        assert_eq!(
+            git_output(&home, &["status", "--short", "--", "Human.md"]),
+            "?? Human.md\n"
+        );
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

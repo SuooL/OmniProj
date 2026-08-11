@@ -258,6 +258,76 @@ fn registration_failpoints_never_expose_a_partial_project_and_retry_succeeds() {
     }
 }
 
+#[test]
+fn registration_rename_failure_clears_prepared_audit_and_retry_converges() {
+    let _guard = env_guard();
+    let (home, source) = setup("registration-rename-failure");
+    std::env::set_var(
+        "OMNIPROJ_TEST_FAILPOINT",
+        "registration_directory_rename_failure",
+    );
+
+    assert!(register_project(RegisterProjectInput {
+        location: &source,
+        name: "Rename failure",
+        created_at: CREATED_AT,
+    })
+    .is_err());
+    assert!(list_project_records().unwrap().is_empty());
+    assert!(home.join(".git/omniproj-pending-audit.toml").exists());
+
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+    ensure_home().unwrap();
+    assert!(!home.join(".git/omniproj-pending-audit.toml").exists());
+    assert!(list_project_records().unwrap().is_empty());
+    let created = register(&source, "Rename retry");
+    let root = home.join("projects").join(created.id.as_str());
+    for required in ["auto", "notes", "cache"] {
+        assert!(root.join(required).is_dir());
+    }
+    cleanup(home, [source]);
+}
+
+#[test]
+fn registration_parent_fsync_failure_recognizes_applied_rename_and_audits_without_replay() {
+    let _guard = env_guard();
+    let (home, source) = setup("registration-parent-fsync-failure");
+    std::env::set_var(
+        "OMNIPROJ_TEST_FAILPOINT",
+        "registration_parent_fsync_failure",
+    );
+
+    assert!(register_project(RegisterProjectInput {
+        location: &source,
+        name: "Parent fsync failure",
+        created_at: CREATED_AT,
+    })
+    .is_err());
+    let durable = list_project_records().unwrap();
+    assert_eq!(durable.len(), 1, "rename must already be visible");
+    assert!(home.join(".git/omniproj-pending-audit.toml").exists());
+
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+    ensure_home().unwrap();
+    assert!(!home.join(".git/omniproj-pending-audit.toml").exists());
+    assert_eq!(list_project_records().unwrap(), durable);
+    let retry = register_project(RegisterProjectInput {
+        location: &source,
+        name: "must stay existing",
+        created_at: CREATED_AT,
+    })
+    .unwrap();
+    assert!(matches!(retry, RegisterOutcome::Existing(ref id) if id == &durable[0].id));
+    assert_eq!(
+        git_names(&home, "HEAD"),
+        vec![
+            format!("projects/{}/meta.toml", durable[0].id),
+            format!("projects/{}/notes/project.md", durable[0].id),
+        ]
+    );
+    cleanup(home, [source]);
+}
+
 #[cfg(unix)]
 #[test]
 fn registration_audit_failure_is_recovered_without_replaying_or_staging_human_edits() {
@@ -303,6 +373,41 @@ fn registration_audit_failure_is_recovered_without_replaying_or_staging_human_ed
     );
     assert!(git_output(&home, &["status", "--short", "--", "human-draft.md"]).starts_with("??"));
     assert!(!home.join(".git/omniproj-pending-audit.toml").exists());
+    cleanup(home, [source]);
+}
+
+#[cfg(unix)]
+#[test]
+fn registration_audit_recovery_rejects_a_same_path_human_edit_before_git_add() {
+    let _guard = env_guard();
+    let (home, source) = setup("register-same-path-audit-conflict");
+    std::fs::write(home.join("human-draft.md"), b"Unrelated Human draft\n").unwrap();
+    let hook = install_failing_commit_hook(&home);
+
+    assert!(register_project(RegisterProjectInput {
+        location: &source,
+        name: "Snapshot recovery",
+        created_at: CREATED_AT,
+    })
+    .is_err());
+    let durable = list_project_records().unwrap().pop().unwrap();
+    let relative_state = format!("projects/{}/notes/project.md", durable.id);
+    let state = home.join(&relative_state);
+    let human_edit = b"Human replaced the pending audit target\n";
+    std::fs::write(&state, human_edit).unwrap();
+    std::fs::remove_file(hook).unwrap();
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::AuditConflict { .. }));
+    assert_eq!(std::fs::read(&state).unwrap(), human_edit);
+    assert_ne!(
+        git_output(&home, &["show", &format!(":{relative_state}")]).as_bytes(),
+        human_edit,
+        "recovery must not stage the Human replacement"
+    );
+    assert!(git_output(&home, &["status", "--short", "--", "human-draft.md"]).starts_with("??"));
+    assert!(home.join(".git/omniproj-pending-audit.toml").exists());
     cleanup(home, [source]);
 }
 

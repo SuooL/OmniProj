@@ -94,6 +94,19 @@ fn add_v1_project(home: &Path, project_id: &str, location: &str) {
     .unwrap();
 }
 
+fn write_legacy_migration_journal(home: &Path, project_ids: &[&str]) {
+    let ids = project_ids
+        .iter()
+        .map(|id| format!("{id:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    std::fs::write(
+        home.join(".migration-v2"),
+        format!("target_schema_version = 2\nproject_ids = [{ids}]\n"),
+    )
+    .unwrap();
+}
+
 #[cfg(unix)]
 fn install_failing_commit_hook(home: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
@@ -239,6 +252,94 @@ fn migration_failpoints_resume_to_the_same_v2_files() {
 }
 
 #[test]
+fn legacy_migration_journals_resume_from_verifiable_interruption_states() {
+    let _guard = env_guard();
+    for failpoint in [
+        "migration_after_journal_creation",
+        "migration_after_project_audit_commit",
+        "migration_after_schema_stamp",
+    ] {
+        let home = unique_home(&format!("legacy-journal-{failpoint}"));
+        seed_v1_store(&home);
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        std::env::set_var("OMNIPROJ_TEST_FAILPOINT", failpoint);
+        assert!(ensure_home().is_err());
+        write_legacy_migration_journal(&home, &[PROJECT_ID]);
+
+        std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+        ensure_home().unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
+            "2\n"
+        );
+        assert!(!home.join(".migration-v2").exists());
+        assert!(load_project(&ProjectId::parse(PROJECT_ID).unwrap()).is_ok());
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+}
+
+#[test]
+fn ambiguous_legacy_journal_state_is_a_typed_conflict_and_is_not_rewritten() {
+    let _guard = env_guard();
+    let home = unique_home("ambiguous-legacy-journal");
+    seed_v1_store(&home);
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    std::env::set_var(
+        "OMNIPROJ_TEST_FAILPOINT",
+        "migration_after_project_state_write",
+    );
+    assert!(ensure_home().is_err());
+    write_legacy_migration_journal(&home, &[PROJECT_ID]);
+    let state = home
+        .join("projects")
+        .join(PROJECT_ID)
+        .join("notes/project.md");
+    let before = std::fs::read(&state).unwrap();
+    std::env::remove_var("OMNIPROJ_TEST_FAILPOINT");
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::MigrationConflict { .. }));
+    assert_eq!(std::fs::read(&state).unwrap(), before);
+    assert_eq!(
+        std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
+        "1\n"
+    );
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn malformed_legacy_journal_is_rejected_without_guessing_or_writes() {
+    let _guard = env_guard();
+    for journal in [
+        format!("project_ids = [{PROJECT_ID:?}]\n"),
+        format!("target_schema_version = 2\nproject_ids = [{PROJECT_ID:?}]\nunexpected = true\n"),
+        format!("target_schema_version = 2\nproject_ids = [{PROJECT_ID:?}, {PROJECT_ID:?}]\n"),
+    ] {
+        let home = unique_home("malformed-legacy-journal");
+        seed_v1_store(&home);
+        std::fs::write(home.join(".migration-v2"), &journal).unwrap();
+        let meta = home.join("projects").join(PROJECT_ID).join("meta.toml");
+        let meta_before = std::fs::read(&meta).unwrap();
+        std::env::set_var("OMNIPROJ_HOME", &home);
+
+        let error = ensure_home().unwrap_err();
+
+        assert!(matches!(error, StoreError::InvalidData(_)));
+        assert_eq!(std::fs::read(&meta).unwrap(), meta_before);
+        assert_eq!(
+            std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
+            "1\n"
+        );
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+}
+
+#[test]
 fn migration_refuses_an_unrecognized_project_state_without_overwriting_it() {
     let _guard = env_guard();
     let home = unique_home("conflict");
@@ -319,6 +420,84 @@ fn migration_retries_gitignore_audit_after_a_real_commit_failure() {
             .contains("ignore v2 migration journal")
     );
 
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn migration_gitignore_recovery_rejects_a_same_path_human_edit_before_git_add() {
+    let _guard = env_guard();
+    let home = unique_home("migration-gitignore-audit-conflict");
+    seed_v1_store(&home);
+    let hook = install_failing_commit_hook(&home);
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    assert!(matches!(ensure_home(), Err(StoreError::AuditCommit(_))));
+    let mut human_edit = std::fs::read_to_string(home.join(".gitignore")).unwrap();
+    human_edit.push_str("# Human ignore edit\n");
+    std::fs::write(home.join(".gitignore"), &human_edit).unwrap();
+    std::fs::remove_file(hook).unwrap();
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::AuditConflict { .. }));
+    assert_eq!(
+        std::fs::read_to_string(home.join(".gitignore")).unwrap(),
+        human_edit
+    );
+    assert!(!git_output(&home, &["show", ":.gitignore"]).contains("Human ignore edit"));
+    assert_eq!(
+        std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
+        "1\n"
+    );
+    assert!(home.join(".migration-v2").exists());
+    std::env::remove_var("OMNIPROJ_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn migration_audit_recovery_rejects_a_same_path_human_edit_before_git_add() {
+    let _guard = env_guard();
+    let home = unique_home("migration-same-path-audit-conflict");
+    seed_v1_store(&home);
+    let mut ignore = std::fs::read_to_string(home.join(".gitignore")).unwrap();
+    ignore.push_str("/.migration-v2\n");
+    std::fs::write(home.join(".gitignore"), ignore).unwrap();
+    run_git(&home, &["add", "--", ".gitignore"]);
+    run_git(
+        &home,
+        &[
+            "-c",
+            "user.name=omniproj-test",
+            "-c",
+            "user.email=omniproj-test@local",
+            "commit",
+            "-q",
+            "-m",
+            "seed migration ignore",
+        ],
+    );
+    let hook = install_failing_commit_hook(&home);
+    std::env::set_var("OMNIPROJ_HOME", &home);
+    assert!(matches!(ensure_home(), Err(StoreError::AuditCommit(_))));
+    let relative_meta = format!("projects/{PROJECT_ID}/meta.toml");
+    let meta = home.join(&relative_meta);
+    let mut human_edit = std::fs::read_to_string(&meta).unwrap();
+    human_edit = human_edit.replacen("name = \"Legacy Project\"", "name = \"Human rename\"", 1);
+    std::fs::write(&meta, &human_edit).unwrap();
+    std::fs::remove_file(hook).unwrap();
+
+    let error = ensure_home().unwrap_err();
+
+    assert!(matches!(error, StoreError::AuditConflict { .. }));
+    assert_eq!(std::fs::read_to_string(&meta).unwrap(), human_edit);
+    assert!(!git_output(&home, &["show", &format!(":{relative_meta}")]).contains("Human rename"));
+    assert_eq!(
+        std::fs::read_to_string(home.join("SCHEMA_VERSION")).unwrap(),
+        "1\n"
+    );
+    assert!(home.join(".migration-v2").exists());
     std::env::remove_var("OMNIPROJ_HOME");
     std::fs::remove_dir_all(home).unwrap();
 }

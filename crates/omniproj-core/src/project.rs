@@ -15,8 +15,8 @@ use crate::paths::project_hash;
 use crate::paths::{omniproj_home, project_dir, project_dir_for};
 use crate::project_state::ProjectStateDoc;
 use crate::store::{
-    atomic_write, begin_pending_audit, ensure_home, finish_pending_audit, with_store_txn,
-    StoreError,
+    atomic_write, audit_target_snapshot, begin_pending_audit, ensure_home, finish_pending_audit,
+    mark_pending_audit_applied, with_store_txn, StoreError,
 };
 
 #[cfg(test)]
@@ -449,7 +449,8 @@ pub fn register_project(
             cadence: None,
         };
 
-        let projects_root = omniproj_home().join("projects");
+        let home = omniproj_home();
+        let projects_root = home.join("projects");
         std::fs::create_dir_all(&projects_root)?;
         let staging = projects_root.join(format!(".staging-{project_id}"));
         for subdir in ["auto", "notes", "cache"] {
@@ -464,17 +465,28 @@ pub fn register_project(
         write_record_to_path(&record, &staging.join("meta.toml"))?;
         registry_failpoint("registration_after_metadata_write")?;
         sync_directory(&staging)?;
-        let audit_paths = [
-            PathBuf::from(format!("projects/{project_id}/meta.toml")),
-            PathBuf::from(format!("projects/{project_id}/notes/project.md")),
+        let audit_targets = [
+            audit_target_snapshot(
+                &home,
+                PathBuf::from(format!("projects/{project_id}/meta.toml")),
+                &std::fs::read(staging.join("meta.toml"))?,
+            )?,
+            audit_target_snapshot(
+                &home,
+                PathBuf::from(format!("projects/{project_id}/notes/project.md")),
+                &std::fs::read(staging.join("notes/project.md"))?,
+            )?,
         ];
         registry_failpoint("registration_before_directory_rename")?;
-        begin_pending_audit(&omniproj_home(), "project: register source", &audit_paths)?;
+        begin_pending_audit(&home, "project: register source", &audit_targets)?;
 
         let final_dir = project_dir_for(&project_id);
+        registry_failpoint("registration_directory_rename_failure")?;
         std::fs::rename(&staging, &final_dir)?;
+        registry_failpoint("registration_parent_fsync_failure")?;
         sync_directory(&projects_root)?;
-        finish_pending_audit(&omniproj_home())?;
+        mark_pending_audit_applied(&home)?;
+        finish_pending_audit(&home)?;
         Ok(RegisterOutcome::Created(record))
     })
 }
@@ -640,9 +652,16 @@ fn write_record_to_path(record: &ProjectRecord, path: &Path) -> Result<(), Proje
 
 fn save_and_audit_record(record: &ProjectRecord, message: &str) -> Result<(), ProjectStoreError> {
     let home = omniproj_home();
-    let audit_paths = [PathBuf::from(format!("projects/{}/meta.toml", record.id))];
-    begin_pending_audit(&home, message, &audit_paths)?;
-    write_record_to_path(record, &project_record_path(&record.id))?;
+    let relative_path = PathBuf::from(format!("projects/{}/meta.toml", record.id));
+    let text = render_project_record(record)?;
+    let audit_targets = [audit_target_snapshot(
+        &home,
+        relative_path,
+        text.as_bytes(),
+    )?];
+    begin_pending_audit(&home, message, &audit_targets)?;
+    atomic_write(&project_record_path(&record.id), text.as_bytes())?;
+    mark_pending_audit_applied(&home)?;
     finish_pending_audit(&home)?;
     Ok(())
 }
