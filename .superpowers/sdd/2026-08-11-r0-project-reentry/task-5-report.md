@@ -167,3 +167,36 @@ Code commit: `a4a423adc3fee6660911d82ea65a48f2fc0ad14c`
   its full-tree and `.git/index` byte-digest/mtime snapshot remains unchanged by observation.
 - Fake Git is isolated in exact child-test processes and mutates neither the source fixture nor
   the parent test environment. Legacy Git APIs and the Task 5 public types remain unchanged.
+
+## Fix Round 3
+
+Code commit: `934af3e071235fae422f60094c9fbe8090ba50b4`
+(`fix(capture): reject invalid deleted status pairs`)
+
+### Reviewer finding and TDD evidence
+
+- RED: after all earlier malformed cases were rejected, the public fake-Git probe returned `DM`.
+  The parser incorrectly produced a successful observation with one changed, one staged, and one
+  unstaged file. This isolated the failure to XY validation rather than record termination.
+- The RED matrix also added `DT`, plus `DR` and `DC` with valid non-empty second NUL paths so those
+  cases can fail only because the XY pair is illegal.
+- GREEN: the malformed-status focused test passed 1/1 after the one-line validator correction;
+  all four index-deleted combinations now return typed `InvalidOutput`.
+- The real-Git state matrix remained green. Its staged deletion is the legal `D ` record, while
+  its worktree deletion is a separate legal ` D` record.
+
+### Fix implementation
+
+- Ordinary index-deleted status now accepts only `D `. Exact `DD` and `DU` remain accepted by the
+  unmerged-state table before ordinary validation.
+- No parsing, counting, canonical digest, command, timestamp, public-type, or legacy-API behavior
+  changed.
+
+### Fresh verification
+
+- `cargo test -p omniproj-capture --test git_observation -- --nocapture`: PASS, 13 tests.
+- `cargo test -p omniproj-capture --locked`: PASS, 24 unit tests plus 13 integration tests.
+- `cargo check --workspace --locked`: PASS; only pre-existing deprecated API warnings in
+  CLI/Desktop.
+- `cargo fmt --all -- --check`: PASS.
+- `git diff --check`: PASS.
