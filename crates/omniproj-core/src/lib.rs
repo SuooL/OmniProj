@@ -12,6 +12,7 @@ pub mod plan;
 pub mod privacy;
 pub mod project;
 pub mod project_state;
+pub mod review;
 pub mod store;
 pub mod user_model;
 
@@ -37,6 +38,10 @@ pub use project::{
 pub use project_state::{
     apply_project_command, CommitmentTransition, CommitmentTransitionKind, ProjectCommand,
     ProjectMutation, ProjectStateDoc, ProjectStateError, ProjectStatus, WorkItem, WorkItemStatus,
+};
+pub use review::{
+    derive_review_reasons, ReviewReason, ReviewReasonCode, DEFAULT_COMMITMENT_REVIEW_DAYS,
+    REVIEW_RULE_VERSION,
 };
 #[allow(deprecated)]
 pub use store::{
