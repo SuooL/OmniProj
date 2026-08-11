@@ -56,3 +56,47 @@ No `Cargo.toml` or `Cargo.lock` changes were required.
 
 - Workspace compilation intentionally reports deprecation warnings for CLI/desktop callers that still use `ProjectMeta`, `load_meta`, `list_projects`, `register`, `store_txn`, or `commit_all`; later staged tasks migrate those callers. Compilation succeeds.
 - A failure after a staging file is written intentionally leaves a non-enumerable, nonempty staging tree. Startup removes only recognized staging trees with no files, as required; a later operational cleanup policy may address retained forensic partials.
+
+## Fix Round 1
+
+Fix commit: `8f7e36f` (`fix(core): make project mutations recoverable`).
+
+### Changed files
+
+- `crates/omniproj-core/src/store.rs`: validates the schema stamp before considering a migration journal; replaces the one-shot journal with explicit durable phases; retries `.gitignore`, project-path, and schema audits; rescans the project set before stamping; records only migration-created state paths; recovers exact-path pending audits; and runs staging cleanup under the checked store lock.
+- `crates/omniproj-core/src/project.rs`: strictly validates v2 identifiers/timestamps/nonempty/coherence invariants; records recoverable audits before registration rename and metadata replacement; keeps CAS mutations non-replayable; and makes the legacy cursor adapter reload/update/audit under the store lock.
+- `crates/omniproj-core/src/project_state.rs`: requires persisted `work_items` and `commitment_transitions` fields instead of silently defaulting absent collections.
+- `crates/omniproj-core/tests/schema_v2_migration.rs`: adds stale-journal stamp protection, real audit-failure retry, project rescan, malformed-resume, and precise state-audit regressions.
+- `crates/omniproj-core/tests/project_source_registry.rs`: adds strict-record and real Git audit-failure recovery regressions for registration, relink, and observation. Unit regressions use one-shot barriers for deterministic cleanup/registration and cursor/relink interleavings.
+
+No `Cargo.toml` or `Cargo.lock` changes were required.
+
+### RED evidence
+
+1. `cargo test -p omniproj-core --test schema_v2_migration stale_journal_cannot_downgrade_a_newer_or_malformed_schema_stamp -- --exact`: `unwrap_err()` received `Ok`; a stale journal bypassed the v3/malformed stamp.
+2. `cargo test -p omniproj-core --test schema_v2_migration migration_retries_gitignore_audit_after_a_real_commit_failure -- --exact`: failed because `.migration-v2` had not been created before the rejected `.gitignore` commit.
+3. `cargo test -p omniproj-core --test schema_v2_migration migration_rescans_projects_added_after_journal_creation -- --exact`: the added project remained v1 after the store stamped v2.
+4. `cargo test -p omniproj-core --test schema_v2_migration migration_resume_rejects_malformed_v2_source_metadata -- --exact`: malformed source `created_at` was accepted.
+5. `cargo test -p omniproj-core --test schema_v2_migration migration_audits_only_project_state_created_by_that_migration -- --exact`: `HEAD^` incorrectly included pre-existing `notes/project.md`.
+6. `cargo test -p omniproj-core --test project_source_registry loading_v2_metadata_rejects_duplicate_sources_bad_timestamps_and_incoherent_fields -- --exact`: duplicate source ID was accepted.
+7. `cargo test -p omniproj-core project_state::tests::parser_requires_persisted_collection_fields -- --exact`: a document missing `work_items` was accepted.
+8. `cargo test -p omniproj-core --test project_source_registry audit_failure -- --nocapture`: all three real-hook cases failed; no pending registration audit existed and relink/observation retries left the earlier registration commit at `HEAD`.
+9. `cargo test -p omniproj-core project::tests::startup_cleanup_cannot_delete_an_active_registration_skeleton -- --exact --nocapture`: startup returned `Ok` while registration held the lock and deleted its empty skeleton.
+10. `cargo test -p omniproj-core project::tests::legacy_cursor_update_cannot_overwrite_a_concurrent_source_relink -- --exact --nocapture`: final source revision was `0` instead of `1`, proving stale whole-record overwrite.
+
+### GREEN evidence and final verification
+
+- `cargo test -p omniproj-core --test schema_v2_migration --test project_source_registry`: 20 passed, 0 failed.
+- `cargo test -p omniproj-core project_state::tests -- --nocapture`: 9 passed, 0 failed.
+- `cargo test -p omniproj-core --lib`: 80 passed, 0 failed.
+- `cargo test -p omniproj-core --tests`: 100 passed, 0 failed across unit and integration suites.
+- `cargo check --workspace`: exit 0; only the already-expected staged-migration deprecation warnings remain.
+- `cargo fmt --all --check`: exit 0.
+- `git diff --check`: exit 0 before the fix commit.
+
+### Design decisions and concerns
+
+- Migration recovery uses a small enumerated phase protocol, including `schema_stamp_pending`, so crashes on either side of the cross-file stamp transition have an explicit legal resume state. A phase/stamp mismatch is rejected rather than guessed.
+- The mutation audit journal lives below the store's own `.git` directory, contains only a message and validated store-relative paths, and is removed only after the exact-path commit succeeds. Recovery audits durable state but never replays the mutation, so registration retries return `Existing` and stale relink/observation retries remain CAS conflicts.
+- Store-lock contention remains a checked error (`WouldBlock`) rather than implicit waiting. This is existing `with_store_txn` behavior and prevents startup cleanup from crossing an active registration.
+- Legacy nonempty staging trees remain intentionally preserved as forensic partials, matching the original Task 2 boundary.
