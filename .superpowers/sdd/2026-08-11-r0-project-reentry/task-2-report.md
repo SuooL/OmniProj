@@ -252,3 +252,36 @@ Code commit: `77a8c80` (`fix(core): validate recovery writes against trusted pat
 - Store targets are resolved lexically below the configured home and checked from its canonical root with `symlink_metadata`; every existing intermediate component must be a real directory. Mutation leaves remain missing or regular files, while directory operations separately require real directories or an explicitly allowed missing leaf.
 - The no-follow guard runs during snapshot/decoder validation, around directory creation, before temporary-file creation and destination rename, before registration directory rename/fsync, and before Git add/commit. The audit journal itself remains under the store's real `.git` directory and is never a worktree audit target.
 - The first project-state regression run exposed the prior public behavior of saving below an absent store root. The final implementation restores only that root creation at the public entry point; initialized migration and registration paths retain the stricter guarded contract.
+
+## Correction Round 6
+
+Code commit: `e2aa3b2` (`fix(core): validate all migration journal formats`).
+
+### Changed files
+
+- `crates/omniproj-core/src/store.rs`: routes tagged, Round-2, Round-1, and legacy migration journals through one pure current-representation validation pipeline before return or compatibility-journal rewrite; extends authoritative and phase-state validation to schema phases; and makes project enumeration reject any valid ProjectId entry that is not a real directory.
+- `crates/omniproj-core/tests/schema_v2_migration.rs`: covers tagged prepared journals with wrong-but-valid expected hashes, an external v1 project behind a valid-ID symlink root, and a valid-ID regular file discovered by the pre-stamp rescan.
+
+### RED evidence
+
+1. `cargo test -p omniproj-core --test schema_v2_migration tagged_ignore_prepared_rejects_a_non_authoritative_expected_hash_before_writes -- --exact --nocapture` failed because recovery appended `/.migration-v2` to `.gitignore` before rejecting the false tagged expected hash.
+2. `cargo test -p omniproj-core --test schema_v2_migration tagged_projects_prepared_rejects_non_authoritative_expected_hashes_before_writes -- --exact --nocapture` failed because recovery replaced strict v1 metadata with v2 bytes before rejecting the false tagged expected hash; the fixture iterates metadata and migration-created state targets.
+3. `cargo test -p omniproj-core --test schema_v2_migration migration_rejects_a_valid_project_id_symlink_root_without_following_it -- --exact --nocapture` failed because `unwrap_err()` received `Ok(home)`, proving the external legacy project behind the valid-ID symlink did not block migration.
+4. `cargo test -p omniproj-core --test schema_v2_migration migration_rescan_rejects_a_valid_project_id_regular_file_before_mutation -- --exact --nocapture` failed because the pre-stamp rescan skipped the project-shaped regular file and completed migration.
+
+### GREEN evidence and final verification
+
+- All four focused regressions passed. Invalid tagged fixtures retain target, journal, schema, and index bytes; the symlink/file fixtures retain external or Human bytes, symlink type, migration journal, schema 1, and an empty index.
+- `cargo test -p omniproj-core --test schema_v2_migration --test project_source_registry`: 51 passed, 0 failed.
+- `cargo test -p omniproj-core --lib project_state -- --nocapture`: 9 passed, 0 failed.
+- `cargo test -p omniproj-core --lib`: 89 passed, 0 failed.
+- `cargo test -p omniproj-core --tests`: 140 passed, 0 failed across unit and integration suites.
+- `cargo check --workspace`: exit 0; only the existing staged-migration deprecation warnings remain.
+- `cargo fmt --all --check`: exit 0.
+- `git diff --check`: exit 0 before the code commit and report commit.
+
+### Design decisions and concerns
+
+- Structural validation remains an early pre-normalization gate, but every successfully decoded or upgraded journal then passes one side-effect-free pipeline over the normalized current representation: exact shape/phase/target set, safe target paths and leaf types, deterministic authoritative snapshots, and actual phase state. Compatibility upgrades write their normalized journal only after this pipeline succeeds.
+- Authoritative validation now applies uniformly to tagged and flat SHA formats. Ignore targets must hash `pending_ignore_contents`; project prior/expected identities must match strict Git-backed v1 inputs and deterministic v2 bytes; schema prior/expected identities must match Git history and literal `2\n`.
+- Project enumeration obtains no data through a symlink. Invalid/tool-reserved entry names retain their prior behavior, while any entry whose name parses as a ProjectId must be a real directory or migration returns a typed conflict. The same function is used for initial discovery and every pre-stamp rescan.
