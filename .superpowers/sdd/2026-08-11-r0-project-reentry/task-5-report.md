@@ -118,3 +118,52 @@ Code commit: `5f6bcef93a3fd4664ea58aa059babc8d3ffbc338`
   fixture config writes occur before each snapshot, and observation itself remains read-only.
 - Legacy `collect`, `commit_log`, and `commit_graph` remain outside the typed reader and retain
   their prior behavior.
+
+## Fix Round 2
+
+Code commit: `a4a423adc3fee6660911d82ea65a48f2fc0ad14c`
+(`fix(capture): validate porcelain status states`)
+
+### Reviewer finding and TDD evidence
+
+- RED: the public-API fake-Git probe successfully supplied bare-repository, symbolic HEAD,
+  verified HEAD, and last-commit outputs, then returned a blank/blank status record. The parser
+  incorrectly returned a successful observation with `changed=1`, zero category counts, and a
+  digest instead of `InvalidOutput`.
+- GREEN: the malformed-status matrix passed 1/1 after XY validation. Nine child-process cases now
+  return typed `InvalidOutput` without a production panic: blank/blank, single-sided `?`,
+  single-sided `!`, a legal-character but illegal `AC` pair, an unknown code, a truncated normal
+  record, a rename without its second NUL terminator, a copy with an empty second path, and valid
+  status followed by trailing non-NUL bytes.
+- A real-Git state matrix passed before and after the fix, demonstrating that the validator did
+  not reject the supported ordinary states. It covers unstaged/staged/both-modified, staged add,
+  added-then-modified, staged/worktree delete, intent-to-add, staged rename, staged/worktree type
+  changes, and untracked files.
+
+### Fix implementation
+
+- Porcelain special states are limited to the exact `??` and `!!` pairs.
+- Unmerged states are limited to Git's exact `DD`, `AU`, `UD`, `UA`, `DU`, `AA`, and `UU` pairs;
+  `U` cannot enter an ordinary state.
+- Ordinary states follow the porcelain-v1 XY table while retaining `T`, staged-plus-unstaged
+  combinations, and worktree `A` for intent-to-add. Blank/blank, single-sided special markers,
+  unknown codes, and invalid legal-code combinations are rejected.
+- Rename/copy codes are accepted only on their valid side/pair combinations and still require a
+  second non-empty NUL-delimited path. Canonical semantic encoding and all count logic remain
+  unchanged after successful validation.
+
+### Fresh verification
+
+- `cargo test -p omniproj-capture --test git_observation -- --nocapture`: PASS, 13 tests.
+- `cargo test -p omniproj-capture --locked`: PASS, 24 unit tests plus 13 integration tests.
+- `cargo check --workspace --locked`: PASS; only pre-existing deprecated API warnings in
+  CLI/Desktop.
+- `cargo fmt --all -- --check`: PASS.
+- `git diff --check`: PASS.
+
+### Fix Round 2 boundaries
+
+- The real state matrix reports exactly 12 changed, 7 staged, 6 unstaged, and 1 untracked file;
+  its full-tree and `.git/index` byte-digest/mtime snapshot remains unchanged by observation.
+- Fake Git is isolated in exact child-test processes and mutates neither the source fixture nor
+  the parent test environment. Legacy Git APIs and the Task 5 public types remain unchanged.
