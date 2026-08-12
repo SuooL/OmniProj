@@ -1,21 +1,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import "./index.css";
 import { App } from "./App";
+import { createQueryClient } from "./queryClient";
 
-// Pull, don't push (charter §8): no refetch on window focus or interval — data is
-// fresh until the user clicks refresh. Nothing here produces a visual interruption.
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: false,
-      staleTime: Infinity,
-      retry: 1,
-    },
-  },
-});
+// Pull, don't push: the shared client never refetches on its own (see queryClient.ts).
+const queryClient = createQueryClient();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
