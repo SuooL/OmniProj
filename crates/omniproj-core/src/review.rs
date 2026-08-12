@@ -126,27 +126,26 @@ pub fn derive_review_reasons(
         }
     }
 
-    if matches!(state.status, ProjectStatus::Waiting | ProjectStatus::Parked) && !source_unavailable
-    {
-        if state
+    if matches!(state.status, ProjectStatus::Waiting | ProjectStatus::Parked)
+        && !source_unavailable
+        && state
             .review_at
             .as_deref()
             .is_some_and(|review_at| timestamp_at_or_before(review_at, now))
-        {
-            reasons.push(reason(
-                ReviewReasonCode::ScheduledReview,
-                vec![
-                    format!(
-                        "status reason: {}",
-                        state.status_reason.as_deref().unwrap_or("none recorded")
-                    ),
-                    format!(
-                        "review date: {}",
-                        state.review_at.as_deref().unwrap_or_default()
-                    ),
-                ],
-            ));
-        }
+    {
+        reasons.push(reason(
+            ReviewReasonCode::ScheduledReview,
+            vec![
+                format!(
+                    "status reason: {}",
+                    state.status_reason.as_deref().unwrap_or("none recorded")
+                ),
+                format!(
+                    "review date: {}",
+                    state.review_at.as_deref().unwrap_or_default()
+                ),
+            ],
+        ));
     }
 
     reasons

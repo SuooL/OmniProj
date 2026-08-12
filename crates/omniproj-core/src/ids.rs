@@ -42,6 +42,9 @@ macro_rules! typed_id {
         pub struct $name(String);
 
         impl $name {
+            // An opaque id has no meaningful `Default`; `new()` deliberately mints a
+            // fresh UUIDv7, so a blanket `Default` impl would be a misuse hazard.
+            #[allow(clippy::new_without_default)]
             pub fn new() -> Self {
                 Self(uuid::Uuid::now_v7().to_string())
             }
@@ -152,6 +155,6 @@ mod tests {
         ] {
             assert!(ProjectId::parse(raw).is_err(), "{raw} must be rejected");
         }
-        assert!(ProjectId::parse(&"a".repeat(65)).is_err());
+        assert!(ProjectId::parse("a".repeat(65)).is_err());
     }
 }

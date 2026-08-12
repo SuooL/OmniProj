@@ -1,6 +1,11 @@
 //! omniproj-distill — Layer 2 (spec §5). Turn a substrate digest into the three state files.
 //! The only crate that links an LLM.
 
+// Legacy surface: the distill tests still version via the deprecated `commit_all`
+// helper pending migration to `commit_paths_checked`. Silence the staged-migration
+// deprecation warnings, matching `omniproj-core`'s own allows.
+#![allow(deprecated)]
+
 pub mod breakdown;
 pub mod clarify;
 pub mod config;

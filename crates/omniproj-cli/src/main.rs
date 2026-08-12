@@ -4,6 +4,12 @@
 //! daemon, the axum dashboard, and the distill/opinion/eval surface were removed with
 //! the pivot to the Tauri desktop app.
 
+// The CLI is the legacy compatibility surface: it still uses the deprecated
+// document/store helpers (`commit_all`, `store_txn`, `NextDoc`/`PlanDoc`) pending a
+// separate migration to the R0 project_state model. Silence the staged-migration
+// deprecation warnings here, matching `omniproj-core`'s own re-export allows.
+#![allow(deprecated)]
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
