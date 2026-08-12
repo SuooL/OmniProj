@@ -153,7 +153,10 @@ export interface ProjectOverview {
   revision: number;
 }
 
-// --- Source validation (valid preview only; failures arrive as CommandError) --
+// --- Source validation ------------------------------------------------------
+// `validate_project_source` returns a typed state for BOTH the valid preview (`ok`) and
+// the recoverable rejections (missing / unreadable / non-Git / bare / observation failed /
+// duplicate). Only unexpected/internal failures reject as a `CommandError`.
 export type SourceValidation =
   | { state: "ok"; location: string; head: HeadState; last_commit: Commit | null }
   | { state: "missing"; location: string }
