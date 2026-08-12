@@ -521,8 +521,8 @@ fn refresh_success_caches_observation_and_populates_observed_actual() {
     assert!(observed.last_commit.is_some());
 
     // The cache file exists and is keyed to the project's source.
-    let source_id = record.primary_git_source().unwrap().id.clone();
-    assert!(repository_cache::load(&record.id, &source_id).is_some());
+    let source = record.primary_git_source().unwrap();
+    assert!(repository_cache::load(source).is_some());
 
     // The overview carries the same observed actual.
     let overview = service.get_project_overview(record.id.clone()).unwrap();
@@ -704,6 +704,111 @@ fn refresh_never_clobbers_a_concurrent_relink() {
         final_source.location
     );
     assert!(final_source.revision > expected_revision);
+}
+
+#[test]
+fn refresh_relink_to_a_new_repo_invalidates_the_stale_cache() {
+    // A relink keeps the same source id but changes the location. The previous repo's
+    // observed facts must not survive as the current observed-actual.
+    let _guard = env_guard();
+    let _home = Home::new("relink-invalidate");
+    let source_a = repo_with_commit("relink-invalidate-a");
+    let record = register(&source_a, "Relinked");
+    let service = service();
+
+    block_on(service.refresh_projects(Some(vec![record.id.clone()]))).unwrap();
+    assert!(service
+        .get_project_overview(record.id.clone())
+        .unwrap()
+        .observed_actual
+        .is_some());
+
+    // Relink to a different repository.
+    let source_b = repo_with_commit("relink-invalidate-b");
+    let current = omniproj_core::load_project(&record.id).unwrap();
+    let current_source = current.primary_git_source().unwrap();
+    block_on(service.relink_project_source(dto::RelinkProjectInput {
+        project_id: record.id.clone(),
+        expected_source_revision: current_source.revision,
+        expected_location: current_source.location.clone(),
+        new_location: source_b.to_string_lossy().into_owned(),
+    }))
+    .unwrap();
+
+    // The stale cache (repo A) must be suppressed until a fresh observation of repo B.
+    assert!(
+        service
+            .get_project_overview(record.id.clone())
+            .unwrap()
+            .observed_actual
+            .is_none(),
+        "stale observed-actual survived a relink to a different repo"
+    );
+
+    // Refreshing repopulates it against the new source.
+    block_on(service.refresh_projects(Some(vec![record.id.clone()]))).unwrap();
+    assert!(service
+        .get_project_overview(record.id.clone())
+        .unwrap()
+        .observed_actual
+        .is_some());
+}
+
+#[test]
+fn service_undo_error_codes_are_distinguished() {
+    let _guard = env_guard();
+    let _home = Home::new("undo-codes");
+    let project = register(&unique_path("undo-codes-src"), "Undo");
+    let service = service();
+
+    let after_setup = service
+        .complete_project_setup(dto::CompleteProjectSetupInput {
+            project_id: project.id.clone(),
+            expected_revision: 0,
+            objective: "o".into(),
+            desired_outcome: "d".into(),
+            phase: None,
+            first_commitment: "first".into(),
+        })
+        .unwrap();
+    let set_transition = after_setup.last_transition.unwrap().id;
+
+    // An unknown transition id -> transition_not_found (not a generic undo_conflict).
+    let unknown = omniproj_core::CommitmentTransitionId::new();
+    let error = service
+        .apply_project_mutation(dto::ProjectMutationInput {
+            project_id: project.id.clone(),
+            expected_revision: 1,
+            command: dto::MutationCommand::Undo {
+                transition_id: unknown,
+            },
+        })
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::TransitionNotFound);
+
+    // Undo the Set (revision 1 -> 2, appending a Correction).
+    service
+        .apply_project_mutation(dto::ProjectMutationInput {
+            project_id: project.id.clone(),
+            expected_revision: 1,
+            command: dto::MutationCommand::Undo {
+                transition_id: set_transition.clone(),
+            },
+        })
+        .unwrap();
+
+    // Now the newest transition is a correction, so nothing is undoable: undoing the
+    // (still-present) Set id -> undo_not_available.
+    let error = service
+        .apply_project_mutation(dto::ProjectMutationInput {
+            project_id: project.id.clone(),
+            expected_revision: 2,
+            command: dto::MutationCommand::Undo {
+                transition_id: set_transition,
+            },
+        })
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::UndoNotAvailable);
 }
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use omniproj_capture::git::{HeadState, RepositoryObservation};
 use omniproj_core::ids::{ProjectId, ProjectSourceId, WorkItemId};
 use omniproj_core::paths::cache_dir_for;
+use omniproj_core::project::ProjectSource;
 use omniproj_core::store::{atomic_write, StoreError};
 
 use crate::dto::{CommitDto, HeadStateDto, ObservedActualDto};
@@ -24,6 +25,11 @@ const CACHE_FILE: &str = "r0-observation.json";
 pub struct CachedObservation {
     pub project_id: ProjectId,
     pub source_id: ProjectSourceId,
+    /// The source location observed. A relink keeps the same `source_id` but changes the
+    /// location, so the cache must be keyed on location too — otherwise the previous
+    /// repository's facts would be shown as the current observed-actual after a relink.
+    #[serde(default)]
+    pub source_location: String,
     pub observed_at: String,
     pub head: HeadStateDto,
     pub last_commit: Option<CommitDto>,
@@ -47,6 +53,7 @@ impl CachedObservation {
     pub fn from_observation(
         project_id: ProjectId,
         source_id: ProjectSourceId,
+        source_location: String,
         observation: &RepositoryObservation,
         commitment_work_item_id: Option<WorkItemId>,
         commits_since_commitment: Option<u32>,
@@ -54,6 +61,7 @@ impl CachedObservation {
         Self {
             project_id,
             source_id,
+            source_location,
             observed_at: observation.observed_at.clone(),
             head: head_state_dto(&observation.head_state),
             last_commit: observation.last_commit.as_ref().map(|commit| CommitDto {
@@ -112,11 +120,13 @@ fn cache_path(project_id: &ProjectId) -> std::path::PathBuf {
 }
 
 /// Load the cached observation, or `None` if absent/corrupt (the cache is disposable).
-/// A cache that belongs to a different source (after a relink) is treated as absent.
-pub fn load(project_id: &ProjectId, source_id: &ProjectSourceId) -> Option<CachedObservation> {
-    let bytes = std::fs::read(cache_path(project_id)).ok()?;
+/// A cache that no longer matches the current source — different `source_id`, or the same
+/// source relinked to a different `location` — is treated as absent, so stale facts from a
+/// previous repository are never shown as the current observed-actual.
+pub fn load(source: &ProjectSource) -> Option<CachedObservation> {
+    let bytes = std::fs::read(cache_path(&source.project_id)).ok()?;
     let cached: CachedObservation = serde_json::from_slice(&bytes).ok()?;
-    if &cached.source_id != source_id {
+    if cached.source_id != source.id || cached.source_location != source.location {
         return None;
     }
     Some(cached)

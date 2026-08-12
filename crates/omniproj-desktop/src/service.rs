@@ -25,10 +25,11 @@ use omniproj_core::project_state::{
 use omniproj_core::review::{derive_review_reasons, ReviewReason, DEFAULT_COMMITMENT_REVIEW_DAYS};
 
 use crate::dto::{
-    assemble_index_item, assemble_overview, index_sort_key, CommitDto, CompleteProjectSetupInput,
-    MutationCommand, ObservedActualDto, ProjectIndexItemDto, ProjectIndexResponseDto,
-    ProjectMutationInput, ProjectOverviewDto, RefreshOutcome, RefreshResultDto,
-    RegisterProjectInput, RelinkProjectInput, ReviewPolicyDto, SourceValidationDto,
+    assemble_index_item, assemble_overview, index_sort_key, undoable_transition_id, CommitDto,
+    CompleteProjectSetupInput, MutationCommand, ObservedActualDto, ProjectIndexItemDto,
+    ProjectIndexResponseDto, ProjectMutationInput, ProjectOverviewDto, RefreshOutcome,
+    RefreshResultDto, RegisterProjectInput, RelinkProjectInput, ReviewPolicyDto,
+    SourceValidationDto,
 };
 use crate::error::{CommandError, CommandResult, ErrorCode};
 use crate::repository_cache::{self, head_state_dto, CachedObservation};
@@ -124,7 +125,7 @@ impl<C: Clock> DesktopService<C> {
             None => Vec::new(),
         };
         let observed_actual = source
-            .and_then(|source| repository_cache::load(&record.id, &source.id))
+            .and_then(repository_cache::load)
             .map(|cache| cache.to_observed_actual(state.current_next_action_id.as_ref()));
         (source, reasons, observed_actual)
     }
@@ -171,6 +172,41 @@ impl<C: Clock> DesktopService<C> {
         let record = load_project(project_id)?;
         let now = self.now()?;
         Ok(self.overview(&record, &mutation.state, now))
+    }
+
+    /// Refine a core `UndoConflict` into the precise wire code. Runs only on the error
+    /// path, re-reading the (post-conflict) state:
+    /// - the transition id does not exist at all -> `transition_not_found`;
+    /// - nothing is undoable (e.g. the newest transition is itself a correction)
+    ///   -> `undo_not_available`;
+    /// - otherwise the requested id simply is not the newest undoable -> the original
+    ///   `undo_conflict`.
+    fn refine_undo_error(
+        &self,
+        project_id: &ProjectId,
+        transition_id: &omniproj_core::ids::CommitmentTransitionId,
+        fallback: CommandError,
+    ) -> CommandError {
+        let Ok(state) = ProjectStateDoc::load(project_id) else {
+            return fallback;
+        };
+        let exists = state
+            .commitment_transitions
+            .iter()
+            .any(|transition| &transition.id == transition_id);
+        if !exists {
+            return CommandError::new(
+                ErrorCode::TransitionNotFound,
+                format!("transition {transition_id} was not found"),
+            );
+        }
+        if undoable_transition_id(&state).is_none() {
+            return CommandError::new(
+                ErrorCode::UndoNotAvailable,
+                "there is no undoable transition to reverse",
+            );
+        }
+        fallback
     }
 
     /// The atomic setup-completion command (framing + first commitment + activation).
@@ -288,6 +324,7 @@ impl<C: Clock> DesktopService<C> {
                         let cached = CachedObservation::from_observation(
                             project_id.clone(),
                             source_id.clone(),
+                            expected_location.clone(),
                             &observation,
                             current_commitment.clone(),
                             commits_since,
@@ -543,7 +580,21 @@ impl<C: Clock> R0Service for DesktopService<C> {
             },
             MutationCommand::Undo { transition_id } => ProjectCommand::Undo { transition_id },
         };
-        self.apply_core(&input.project_id, input.expected_revision, command)
+        // For an Undo, core collapses "no such transition", "nothing undoable", and "not
+        // the newest undoable" into one UndoConflict. Refine that into the distinct wire
+        // codes the UI contract promises.
+        let undo_transition = if let ProjectCommand::Undo { transition_id } = &command {
+            Some(transition_id.clone())
+        } else {
+            None
+        };
+        let result = self.apply_core(&input.project_id, input.expected_revision, command);
+        match (result, undo_transition) {
+            (Err(error), Some(transition_id)) if error.code == ErrorCode::UndoConflict => {
+                Err(self.refine_undo_error(&input.project_id, &transition_id, error))
+            }
+            (result, _) => result,
+        }
     }
 }
 
