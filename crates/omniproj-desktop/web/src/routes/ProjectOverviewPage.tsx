@@ -1,5 +1,5 @@
 // The L2 full-page route. It fetches the Overview and renders the shared ProjectOverview as a
-// full page (direct access or an Index-origin Peek promoted via "Open as page"). Loading /
+// full page. Loading /
 // error / not-found are handled here; the content and its DOM order live in ProjectOverview.
 
 import { useEffect, useRef } from "react";
@@ -19,8 +19,8 @@ export function ProjectOverviewPage() {
     queryFn: () => api.getProjectOverview(id),
   });
 
-  // Land focus in the content once when it first loads (direct access or a Peek promoted to a
-  // full page), so keyboard/AT users are not stranded on the shell. Setup lets Objective win.
+  // Land focus in the content once when it first loads, so keyboard/AT users are not stranded
+  // on the shell. Setup lets Objective win.
   const headingRef = useRef<HTMLHeadingElement>(null);
   const didFocus = useRef(false);
   useEffect(() => {
@@ -42,7 +42,7 @@ export function ProjectOverviewPage() {
         </div>
       )}
       {data && (
-        <ProjectOverview overview={data} now={new Date()} variant="page" headingRef={headingRef} />
+        <ProjectOverview overview={data} now={new Date()} headingRef={headingRef} />
       )}
     </main>
   );

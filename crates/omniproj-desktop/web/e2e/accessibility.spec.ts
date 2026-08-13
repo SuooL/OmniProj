@@ -44,7 +44,7 @@ const TEXT_PAIRS = [
   { label: "ProjectStateTag", selector: ".op-tag", min: 4.5 },
   { label: "ReviewSignalBadge", selector: ".op-badge", min: 4.5 },
   { label: "row name", selector: ".op-row__name", min: 4.5 },
-  { label: "observed note", selector: ".op-observed-note", min: 4.5 },
+  { label: "row metadata", selector: ".op-row__metadata", min: 4.5 },
 ];
 
 for (const scheme of ["light", "dark"] as const) {
@@ -89,13 +89,12 @@ test("axe: the full Overview page has no critical/serious violations", async ({ 
   await expectNoSeriousAxe(page, "overview-page");
 });
 
-test("axe: the Peek and the Add Project dialog have no critical/serious violations", async ({ page }) => {
+test("axe: project navigation and the Add Project dialog have no critical/serious violations", async ({ page }) => {
   await page.goto("/projects");
   await page.getByRole("link", { name: /^billing-worker/ }).click();
-  await expect(page.getByTestId("overview-peek")).toBeVisible();
-  await expectNoSeriousAxe(page, "peek");
+  await expect(page.getByTestId("overview-page")).toBeVisible();
+  await expectNoSeriousAxe(page, "project-page");
 
-  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Add Project" }).click();
   await expect(page.getByTestId("add-project-dialog")).toBeVisible();
   await expectNoSeriousAxe(page, "add-project-dialog");
@@ -155,7 +154,7 @@ test("non-color semantics survive grayscale: badge text stays readable", async (
   await page.goto("/projects");
   // Colour is stripped, but every signal is redundant with visible text.
   await expect(page.getByText("Source unavailable").first()).toBeVisible();
-  await expect(page.getByText("Waiting").first()).toBeVisible();
+  await expect(page.locator(".op-tag", { hasText: "Waiting" })).toBeVisible();
   await expect(page.getByText("Complete setup").first()).toBeVisible();
 });
 
@@ -177,7 +176,7 @@ test("forced-colors and reduced-motion keep labels and boundaries", async ({ pag
   expect(durationMs, "transitions collapse under reduced motion").not.toBeNull();
   expect(durationMs as number).toBeLessThanOrEqual(1);
 
-  // Open a Peek: its heading and primary action remain reachable.
+  // Open a project page: its heading and primary action remain reachable.
   await page.getByRole("link", { name: /^billing-worker/ }).click();
-  await expect(page.getByTestId("overview-peek").getByRole("button", { name: "Replace" })).toBeVisible();
+  await expect(page.getByTestId("overview-page").getByRole("button", { name: "Replace" })).toBeVisible();
 });

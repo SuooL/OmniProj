@@ -1,8 +1,8 @@
 // Add Project: a native modal that walks select -> validate -> preview -> explicit Register.
 // Validation is read-only (it never mutates the store) and Register stays disabled until a valid
 // preview exists. A duplicate offers "Open existing project" and never registers a second copy.
-// On success the dialog closes, navigates to the new project's canonical Overview as a Peek over
-// the Index, and the setup framing focuses the objective.
+// On success the dialog closes, navigates to the new project's canonical Overview, and the setup
+// framing focuses the objective.
 //
 // It is mounted only while open (AppShell gates it), so opening = mount and closing = unmount;
 // the mount effect enters modal state and restores focus to the trigger on unmount.
@@ -12,7 +12,7 @@ import { useNavigate } from "react-router-dom";
 
 import { api, AppError } from "../api";
 import type { ProjectId, SourceValidation } from "../domain/project";
-import { projectOverviewPath, projectsPath } from "../domain/routes";
+import { projectOverviewPath } from "../domain/routes";
 import { basename, chooseProjectDirectory } from "../platform/dialog";
 import { useAnnouncer } from "./AppShell";
 
@@ -63,10 +63,6 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
     };
   }, []);
 
-  // The new/existing project always opens as a Peek over the Index — never over whatever page
-  // the header-triggered dialog happened to be invoked from (spec: Index background state).
-  const backgroundState = { backgroundLocation: { pathname: projectsPath() } };
-
   async function validatePath(target: string) {
     setBusy(true);
     setError(null);
@@ -97,7 +93,7 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
       const overview = await api.registerProject({ location: path, name: name.trim() });
       onClose();
       announce("polite", "Project registered.");
-      navigate(projectOverviewPath(overview.project_id), { state: backgroundState });
+      navigate(projectOverviewPath(overview.project_id));
     } catch (e) {
       setError(e instanceof AppError ? e.message : "Couldn't register that project.");
     } finally {
@@ -107,7 +103,7 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
 
   function openExisting(existingId: ProjectId) {
     onClose();
-    navigate(projectOverviewPath(existingId), { state: backgroundState });
+    navigate(projectOverviewPath(existingId));
   }
 
   return (

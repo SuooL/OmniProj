@@ -1,4 +1,4 @@
-// The expanded review reasons, shown in the Overview (Peek and full page). Unlike the Index
+// The expanded review reasons shown in the project Overview. Unlike the Index
 // (one primary badge + N), here EVERY reason is a full text row with its server-provided
 // evidence — including, for a review action, the seven-day interval and the last effective
 // set/confirmed timestamp. Evidence strings come from core; the browser never fabricates them.

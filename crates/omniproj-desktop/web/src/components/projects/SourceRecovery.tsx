@@ -9,7 +9,7 @@ import { useNavigate } from "react-router-dom";
 
 import { api, AppError } from "../../api";
 import type { ProjectId, ProjectOverview, ProjectSource, SourceValidation } from "../../domain/project";
-import { projectOverviewPath, projectsPath } from "../../domain/routes";
+import { projectOverviewPath } from "../../domain/routes";
 import { useOverviewMutation } from "../../hooks/useOverviewMutation";
 import { chooseProjectDirectory } from "../../platform/dialog";
 
@@ -73,10 +73,7 @@ export function SourceRecovery({ overview }: SourceRecoveryProps) {
   }
 
   function openExisting(existingId: ProjectId) {
-    // Open the existing project as a Peek over the Index (consistent with Add Project).
-    navigate(projectOverviewPath(existingId), {
-      state: { backgroundLocation: { pathname: projectsPath() } },
-    });
+    navigate(projectOverviewPath(existingId));
   }
 
   return (

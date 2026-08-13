@@ -1,5 +1,5 @@
 // The application root: it owns the BrowserRouter and nothing else. Canonical routes, the
-// interaction frame, and the Peek overlay all live in AppShell. Before the router reads
+// interaction frame and route surfaces live in AppShell. Before the router reads
 // window.location, we restore the last canonical route — but only when the incoming path is
 // "/", so an explicit deep link always wins.
 

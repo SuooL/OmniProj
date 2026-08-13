@@ -1,5 +1,5 @@
 // Vitest global setup: jest-dom matchers, DOM cleanup, and a controllable matchMedia (jsdom
-// ships none). Tests default to a wide (Peek) viewport; set `mediaState.matches = false` before
+// ships none). Tests default to a wide viewport; set `mediaState.matches = false` before
 // rendering to simulate < 800px.
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";

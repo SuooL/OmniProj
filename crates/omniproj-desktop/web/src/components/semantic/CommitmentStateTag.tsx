@@ -1,4 +1,4 @@
-// The commitment lifecycle state, shown in the Current commitment column and the Peek history
+// The commitment lifecycle state, shown in Current commitment and the history
 // rail. Teal/green is reserved for confirmed completion; the caller cannot pick a color.
 
 import type { WorkItemStatus } from "../../domain/project";

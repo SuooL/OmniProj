@@ -2,7 +2,7 @@
 // interval, deterministic order preservation (NEVER re-ranked), transparent opt-in sort, the
 // text/review filters, the empty-state recovery action, and archived exclusion.
 
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -40,15 +40,10 @@ function linkOrder(): string[] {
 }
 
 describe("headers and policy", () => {
-  it("shows the four column headers and a semantic Projects list", () => {
+  it("shows a semantic Projects list without browser-style table headers", () => {
     const { container } = renderIndex();
-    const head = container.querySelector(".op-index__head") as HTMLElement;
-    for (const col of ["Project", "Current commitment", "Observed actual", "Review"]) {
-      expect(within(head).getByText(col)).toBeInTheDocument();
-    }
     expect(screen.getByRole("list", { name: "Projects" })).toBeInTheDocument();
-    // Stacked rows retain the same per-field labels (header + one row => 2 each).
-    expect(screen.getAllByText("Project")).toHaveLength(2);
+    expect(container.querySelector(".op-index__head")).not.toBeInTheDocument();
   });
 
   it("labels the order as review order and never as priority", () => {

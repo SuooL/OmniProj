@@ -1,5 +1,5 @@
-// Project Overview / Peek contract: content order, atomic setup, source-failure recovery,
-// commitment mutations with the full error model, Undo gating, and Peek focus/responsive.
+// Project Overview contract: content order, atomic setup, source-failure recovery,
+// commitment mutations with the full error model, Undo gating, focus, and responsive behavior.
 // Exercised through <App/> so routing, the announcer live regions, and the query cache all run
 // exactly as they ship.
 
@@ -34,6 +34,9 @@ function renderOverview(ov: ProjectOverview, handlers: Handlers = {}) {
   invokeMock.mockImplementation(async (command: string, args?: { input?: Record<string, unknown> }) => {
     if (handlers[command]) return handlers[command](args ?? {});
     if (command === "get_project_overview") return ov;
+    if (command === "list_project_index") {
+      return indexResponse([indexItem({ project_id: ov.project_id, name: ov.name })]);
+    }
     return ov; // mutations echo the overview by default
   });
   const client = new QueryClient({
@@ -46,7 +49,7 @@ function renderOverview(ov: ProjectOverview, handlers: Handlers = {}) {
   );
 }
 
-/** Render <App/> on the Index, seeded, so a row click opens a Peek (wide viewport). */
+/** Render <App/> on the Index, seeded, so a row click opens the full project surface. */
 function renderIndexThenPeek(ov: ProjectOverview) {
   window.history.replaceState(null, "", "/projects");
   invokeMock.mockImplementation(async (command: string) => {
@@ -359,8 +362,8 @@ describe("lifecycle and source recovery", () => {
   });
 });
 
-describe("peek focus and responsive", () => {
-  it("opens a Peek that focuses its heading and closes on Escape restoring row focus", async () => {
+describe("desktop detail focus and responsive", () => {
+  it("opens the project in the main content surface and focuses its heading", async () => {
     const user = userEvent.setup();
     renderIndexThenPeek(overview({ project_id: overview().project_id, name: "Alpha" }));
 
@@ -369,13 +372,9 @@ describe("peek focus and responsive", () => {
     });
     await user.click(row);
 
-    const peek = await screen.findByTestId("overview-peek");
-    await waitFor(() => expect(within(peek).getByTestId("overview-heading")).toHaveFocus());
-    expect(screen.getByTestId("projects-index")).toBeInTheDocument(); // background navigable
-
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByTestId("overview-peek")).not.toBeInTheDocument());
-    expect(document.activeElement).toBe(row); // row focus restored by stable id
+    const page = await screen.findByTestId("overview-page");
+    await waitFor(() => expect(within(page).getByTestId("overview-heading")).toHaveFocus());
+    expect(screen.queryByTestId("projects-index")).not.toBeInTheDocument();
   });
 
   it("below 800px renders a full-page detail with no Index or Peek landmark", async () => {

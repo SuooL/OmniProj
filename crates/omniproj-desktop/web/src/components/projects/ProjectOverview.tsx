@@ -1,8 +1,7 @@
-// The shared Project Overview content, identical for the Peek and the full page. DOM order is
+// The full-page Project Overview content. DOM order is
 // the spec's fixed sequence (9.3): identity + lifecycle -> all review reasons -> current
 // commitment (or the atomic Complete-setup framing in `setup`) -> observed actual -> recent
-// transition rail -> Open as page (peek only). The full source path appears ONLY here, never in
-// the Index. The wrapper (page or Peek aside) adds navigation/focus; content lives here.
+// transition rail. The full source path appears ONLY here, never in the Index.
 
 import type { Ref } from "react";
 
@@ -19,16 +18,12 @@ import { SourceRecovery } from "./SourceRecovery";
 export interface ProjectOverviewProps {
   overview: ProjectOverviewDto;
   now: Date;
-  variant: "peek" | "page";
-  onOpenAsPage?: () => void;
   headingRef?: Ref<HTMLHeadingElement>;
 }
 
 export function ProjectOverview({
   overview,
   now,
-  variant,
-  onOpenAsPage,
   headingRef,
 }: ProjectOverviewProps) {
   const isSetup = overview.status === "setup";
@@ -80,13 +75,6 @@ export function ProjectOverview({
           </div>
         )}
       </div>
-
-      {/* 6. Open as page (peek only) */}
-      {variant === "peek" && onOpenAsPage && (
-        <button className="op-button op-button--secondary op-overview__open-page" type="button" data-testid="open-as-page" onClick={onOpenAsPage}>
-          Open as page
-        </button>
-      )}
     </article>
   );
 }

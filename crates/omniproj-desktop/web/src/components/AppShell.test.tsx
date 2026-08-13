@@ -69,13 +69,11 @@ afterEach(() => {
 });
 
 describe("primary navigation", () => {
-  it("exposes Projects as the only primary destination", async () => {
+  it("exposes Projects as the sidebar navigation group", async () => {
     renderAppAt("/projects");
     await screen.findByTestId("projects-index");
     const nav = screen.getByRole("navigation", { name: /primary/i });
-    const links = within(nav).getAllByRole("link");
-    expect(links).toHaveLength(1);
-    expect(links[0]).toHaveAccessibleName("All projects");
+    expect(within(nav).getByText("Projects")).toBeInTheDocument();
     expect(
       screen.queryByRole("link", { name: /settings|attention|agents?/i }),
     ).not.toBeInTheDocument();
@@ -83,26 +81,32 @@ describe("primary navigation", () => {
 });
 
 describe("desktop sidebar", () => {
-  it("expands and collapses the Projects disclosure", async () => {
+  it("expands the current project into section navigation", async () => {
+    renderAppAt("/projects/p1/overview", [indexItem({ project_id: "p1" as never, name: "Alpha" })]);
+    await screen.findByTestId("overview-page");
+    expect(screen.getByRole("button", { name: "Alpha" })).toHaveAttribute("data-active", "true");
+    expect(screen.getByText("Overview")).toHaveClass("is-active");
+  });
+
+  it("can be hidden and restored from the main toolbar", async () => {
     const user = userEvent.setup();
     renderAppAt("/projects");
     await screen.findByTestId("projects-index");
-    const disclosure = screen.getByRole("button", { name: "Projects" });
-    expect(disclosure).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("link", { name: "All projects" })).toBeInTheDocument();
 
-    await user.click(disclosure);
-    expect(disclosure).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByRole("link", { name: "All projects" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
+    expect(document.querySelector(".app-shell")).toHaveAttribute("data-sidebar-open", "false");
+
+    await user.click(screen.getByRole("button", { name: "Show sidebar" }));
+    expect(document.querySelector(".app-shell")).toHaveAttribute("data-sidebar-open", "true");
   });
 });
 
 describe("native window chrome", () => {
-  it("starts native dragging from an empty toolbar area", async () => {
+  it("starts native dragging from the sidebar chrome", async () => {
     renderAppAt("/projects");
     await screen.findByTestId("projects-index");
 
-    const toolbar = document.querySelector<HTMLElement>(".app-shell__bar");
+    const toolbar = document.querySelector<HTMLElement>(".app-shell__sidebar-chrome");
     expect(toolbar).not.toBeNull();
     await userEvent.setup().click(toolbar!);
 
@@ -161,7 +165,7 @@ describe("keyboard shortcuts", () => {
 });
 
 describe("stacked Escape", () => {
-  it("closes the Add Project modal before the Peek", async () => {
+  it("closes the Add Project modal while a project page remains open", async () => {
     const user = userEvent.setup();
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
@@ -169,29 +173,21 @@ describe("stacked Escape", () => {
         name: /^Alpha\b/,
       }),
     );
-    await screen.findByTestId("overview-peek");
+    await screen.findByTestId("overview-page");
 
     await user.keyboard("{Control>}n{/Control}");
     expect(screen.getByRole("dialog", { name: /add project/i })).toBeInTheDocument();
 
-    // First Escape: only the modal closes; the Peek stays open.
     await user.keyboard("{Escape}");
     expect(
       screen.queryByRole("dialog", { name: /add project/i }),
     ).not.toBeInTheDocument();
-    expect(screen.getByTestId("overview-peek")).toBeInTheDocument();
-
-    // Second Escape: the Peek closes and the Index remains.
-    await user.keyboard("{Escape}");
-    await waitFor(() =>
-      expect(screen.queryByTestId("overview-peek")).not.toBeInTheDocument(),
-    );
-    expect(screen.getByTestId("projects-index")).toBeInTheDocument();
+    expect(screen.getByTestId("overview-page")).toBeInTheDocument();
   });
 });
 
 describe("visible desktop navigation", () => {
-  it("closes the inspector with a visible control", async () => {
+  it("returns to Projects with the visible back control", async () => {
     const user = userEvent.setup();
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
@@ -199,11 +195,11 @@ describe("visible desktop navigation", () => {
         name: /^Alpha\b/,
       }),
     );
-    await screen.findByTestId("overview-peek");
+    await screen.findByTestId("overview-page");
 
-    await user.click(screen.getByRole("button", { name: /close inspector/i }));
+    await user.click(screen.getByRole("button", { name: /back to projects/i }));
     await waitFor(() =>
-      expect(screen.queryByTestId("overview-peek")).not.toBeInTheDocument(),
+      expect(screen.queryByTestId("overview-page")).not.toBeInTheDocument(),
     );
     expect(screen.getByTestId("projects-index")).toBeInTheDocument();
   });
@@ -213,7 +209,7 @@ describe("visible desktop navigation", () => {
     renderAppAt("/projects");
     await screen.findByTestId("projects-index");
 
-    await user.click(screen.getByRole("button", { name: "Add Project" }));
+    await user.click(screen.getAllByRole("button", { name: "Add Project" })[0]);
     await user.click(screen.getByRole("button", { name: /close add project/i }));
 
     expect(screen.queryByRole("dialog", { name: /add project/i })).not.toBeInTheDocument();
@@ -231,7 +227,7 @@ describe("review-fix regressions", () => {
     expect(window.location.search).toBe("?q=beta");
   });
 
-  it("dismissing a Peek with Escape pops history so Back does not reopen it", async () => {
+  it("Escape on a project page does not unexpectedly navigate", async () => {
     const user = userEvent.setup();
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
@@ -239,21 +235,10 @@ describe("review-fix regressions", () => {
         name: /^Alpha\b/,
       }),
     );
-    await screen.findByTestId("overview-peek");
+    await screen.findByTestId("overview-page");
 
     await user.keyboard("{Escape}");
-    await waitFor(() =>
-      expect(screen.queryByTestId("overview-peek")).not.toBeInTheDocument(),
-    );
-
-    // Because Escape popped (rather than pushed) the Index entry, Back must not resurrect it.
-    await act(async () => {
-      window.history.back();
-    });
-    await waitFor(() =>
-      expect(screen.getByTestId("projects-index")).toBeInTheDocument(),
-    );
-    expect(screen.queryByTestId("overview-peek")).not.toBeInTheDocument();
+    expect(screen.getByTestId("overview-page")).toBeInTheDocument();
   });
 
   it("closes an Add Project modal opened over the plain Index, and is a no-op with nothing open", async () => {

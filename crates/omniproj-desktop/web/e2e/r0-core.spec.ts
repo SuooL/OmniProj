@@ -11,32 +11,31 @@ test("smoke: the dense Index renders the 12-project fixture", async ({ page }) =
   await expect(page.getByRole("list", { name: "Projects" }).getByRole("listitem")).toHaveCount(12);
 });
 
-test("core loop: filter, open a Peek, replace with explicit Save, Undo, Escape restores the row", async ({ page }) => {
+test("core loop: filter, open the project page, replace with explicit Save, Undo, and return", async ({ page }) => {
   await page.goto("/projects");
   await page.getByLabel(/filter projects/i).fill("billing");
   const row = page.getByRole("link", { name: /^billing-worker/ });
   await expect(row).toBeVisible();
   await row.click();
 
-  const peek = page.getByTestId("overview-peek");
-  await expect(peek).toBeVisible();
-  await expect(peek.getByText("Idempotent retries")).toBeVisible();
+  const overview = page.getByTestId("overview-page");
+  await expect(overview).toBeVisible();
+  await expect(overview.getByText("Idempotent retries")).toBeVisible();
 
-  await peek.getByRole("button", { name: "Replace" }).click();
-  await peek.getByLabel("New commitment").fill("Exactly-once delivery");
-  await peek.getByLabel("Replace reason").fill("scope narrowed");
-  await peek.getByRole("button", { name: "Save replacement" }).click();
+  await overview.getByRole("button", { name: "Replace" }).click();
+  await overview.getByLabel("New commitment").fill("Exactly-once delivery");
+  await overview.getByLabel("Replace reason").fill("scope narrowed");
+  await overview.getByRole("button", { name: "Save replacement" }).click();
 
-  await expect(peek.getByText("Exactly-once delivery")).toBeVisible();
-  await expect(peek.getByTestId("undo-button")).toBeVisible();
-  await peek.getByTestId("undo-button").click();
+  await expect(overview.getByText("Exactly-once delivery")).toBeVisible();
+  await expect(overview.getByTestId("undo-button")).toBeVisible();
+  await overview.getByTestId("undo-button").click();
   // Undo is a real inverse: the prior commitment is restored.
-  await expect(peek.getByText("Idempotent retries")).toBeVisible();
-  await expect(peek.getByText("Exactly-once delivery")).toHaveCount(0);
+  await expect(overview.getByText("Idempotent retries")).toBeVisible();
+  await expect(overview.getByText("Exactly-once delivery")).toHaveCount(0);
 
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("overview-peek")).toHaveCount(0);
-  await expect(row).toBeFocused();
+  await page.getByRole("button", { name: "Back to projects" }).click();
+  await expect(page.getByTestId("projects-index")).toBeVisible();
 });
 
 test("a direct deep link renders the full page, not a Peek", async ({ page }) => {
@@ -46,17 +45,17 @@ test("a direct deep link renders the full page, not a Peek", async ({ page }) =>
   await expect(page.getByTestId("overview-heading")).toHaveText("billing-worker");
 });
 
-test("Back and Forward move between the Index and the Peek", async ({ page }) => {
+test("browser history moves between the Index and the project page", async ({ page }) => {
   await page.goto("/projects");
   await page.getByRole("link", { name: /^billing-worker/ }).click();
-  await expect(page.getByTestId("overview-peek")).toBeVisible();
+  await expect(page.getByTestId("overview-page")).toBeVisible();
 
   await page.goBack();
-  await expect(page.getByTestId("overview-peek")).toHaveCount(0);
+  await expect(page.getByTestId("overview-page")).toHaveCount(0);
   await expect(page.getByTestId("projects-index")).toBeVisible();
 
   await page.goForward();
-  await expect(page.getByTestId("overview-peek")).toBeVisible();
+  await expect(page.getByTestId("overview-page")).toBeVisible();
 });
 
 test("Add Project registers a valid directory and opens the new setup project", async ({ page }) => {

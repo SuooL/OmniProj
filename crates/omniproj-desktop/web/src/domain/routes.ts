@@ -19,7 +19,7 @@ export function projectsPath(): string {
   return ROUTES.projects;
 }
 
-/** The canonical Overview URL, shared verbatim by the Peek and the full page. */
+/** The canonical full-page Overview URL. */
 export function projectOverviewPath(id: ProjectId): string {
   return `/projects/${encodeURIComponent(id)}/overview`;
 }

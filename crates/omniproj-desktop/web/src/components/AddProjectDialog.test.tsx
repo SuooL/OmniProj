@@ -19,14 +19,7 @@ import type { SourceValidation } from "../domain/project";
 
 function LocationProbe() {
   const loc = useLocation();
-  const bg =
-    (loc.state as { backgroundLocation?: { pathname?: string } } | null)?.backgroundLocation
-      ?.pathname ?? "";
-  return (
-    <div data-testid="loc" data-bg={bg}>
-      {loc.pathname}
-    </div>
-  );
+  return <div data-testid="loc">{loc.pathname}</div>;
 }
 
 function renderDialog() {
@@ -154,7 +147,7 @@ describe("duplicate", () => {
 
     expect(onClose).toHaveBeenCalled();
     expect(screen.getByTestId("loc")).toHaveTextContent("/projects/proj-existing/overview");
-    expect(screen.getByTestId("loc")).toHaveAttribute("data-bg", "/projects"); // Peek over Index
+    expect(screen.getByTestId("loc")).not.toHaveAttribute("data-bg");
     expect(invokeMock.mock.calls.some((c) => c[0] === "register_project")).toBe(false);
   });
 });
@@ -195,7 +188,7 @@ describe("failure and success", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("on success closes and navigates to the new setup Overview as a Peek over the Index", async () => {
+  it("on success closes and navigates to the new setup Overview page", async () => {
     const user = userEvent.setup();
     openMock.mockResolvedValue("/repo");
     ipc({
@@ -209,7 +202,7 @@ describe("failure and success", () => {
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(screen.getByTestId("loc")).toHaveTextContent("/projects/new-proj/overview");
-    expect(screen.getByTestId("loc")).toHaveAttribute("data-bg", "/projects"); // Peek over Index
+    expect(screen.getByTestId("loc")).not.toHaveAttribute("data-bg");
   });
 });
 

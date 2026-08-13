@@ -27,8 +27,6 @@ const REVIEW_FILTERS: Array<{ value: ReviewFilter; label: string }> = [
   { value: "parked", label: "Parked" },
 ];
 
-const COLUMNS = ["Project", "Current commitment", "Observed actual", "Review"];
-
 function parseFilter(value: string | null): ReviewFilter {
   return value === "needs_review" || value === "waiting" || value === "parked"
     ? value
@@ -137,14 +135,6 @@ export function ProjectsIndex({
       </div>
 
       <div className="op-index__table">
-        <div className="op-index__head" aria-hidden="true">
-          {COLUMNS.map((c) => (
-            <span key={c} className="op-index__col">
-              {c}
-            </span>
-          ))}
-        </div>
-
         {visible.length === 0 ? (
           <p className="op-index__nomatch" data-testid="projects-index-nomatch">
             No projects match this filter.
