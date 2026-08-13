@@ -179,6 +179,13 @@ body,
   height: 100%;
 }
 
+/* Always reserve the scrollbar gutter so the layout width is identical whether or not a
+   vertical scrollbar shows. Without this, a classic (non-overlay) scrollbar — as on Linux/CI —
+   narrows the client width after layout and induces spurious horizontal overflow. */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   margin: 0;
   background-color: var(--op-bg-canvas);
