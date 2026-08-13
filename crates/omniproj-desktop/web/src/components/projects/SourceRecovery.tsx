@@ -5,11 +5,11 @@
 // offers "Open existing project" and NEVER steals the source.
 
 import { useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 import { api, AppError } from "../../api";
 import type { ProjectId, ProjectOverview, ProjectSource, SourceValidation } from "../../domain/project";
-import { projectOverviewPath } from "../../domain/routes";
+import { projectOverviewPath, projectsPath } from "../../domain/routes";
 import { useOverviewMutation } from "../../hooks/useOverviewMutation";
 import { chooseProjectDirectory } from "../../platform/dialog";
 
@@ -26,17 +26,18 @@ export interface SourceRecoveryProps {
 export function SourceRecovery({ overview }: SourceRecoveryProps) {
   const mutation = useOverviewMutation();
   const navigate = useNavigate();
-  const location = useLocation();
   const source = overview.source;
   const [newPath, setNewPath] = useState<string | null>(null);
   const [validation, setValidation] = useState<SourceValidation | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  const [validating, setValidating] = useState(false);
   const [validateError, setValidateError] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
   if (!source || !RECOVERABLE.has(source.status)) return null;
 
   async function choose() {
+    if (validating || mutation.pending) return;
     const chosen = await chooseProjectDirectory();
     if (chosen === null) return;
     setNewPath(chosen);
@@ -44,15 +45,18 @@ export function SourceRecovery({ overview }: SourceRecoveryProps) {
     setConfirmed(false);
     setFailed(false);
     setValidateError(null);
+    setValidating(true);
     try {
       setValidation(await api.validateProjectSource(chosen));
     } catch (e) {
       setValidateError(e instanceof AppError ? e.message : "Couldn't validate that folder.");
+    } finally {
+      setValidating(false);
     }
   }
 
   async function relink() {
-    if (!source || newPath === null || validation?.state !== "ok") return;
+    if (mutation.pending || !source || newPath === null || validation?.state !== "ok") return;
     setFailed(false);
     const result = await mutation.run(
       overview.project_id,
@@ -69,7 +73,10 @@ export function SourceRecovery({ overview }: SourceRecoveryProps) {
   }
 
   function openExisting(existingId: ProjectId) {
-    navigate(projectOverviewPath(existingId), { state: { backgroundLocation: location } });
+    // Open the existing project as a Peek over the Index (consistent with Add Project).
+    navigate(projectOverviewPath(existingId), {
+      state: { backgroundLocation: { pathname: projectsPath() } },
+    });
   }
 
   return (
@@ -80,7 +87,7 @@ export function SourceRecovery({ overview }: SourceRecoveryProps) {
         location to restore observations — the project keeps its identity and history.
       </p>
 
-      <button type="button" onClick={choose} disabled={mutation.pending}>
+      <button type="button" onClick={choose} disabled={mutation.pending || validating}>
         Choose new location…
       </button>
       {newPath && <p data-testid="relink-path">{newPath}</p>}

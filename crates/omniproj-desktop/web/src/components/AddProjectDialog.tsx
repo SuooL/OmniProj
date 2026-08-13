@@ -8,11 +8,11 @@
 // the mount effect enters modal state and restores focus to the trigger on unmount.
 
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 import { api, AppError } from "../api";
 import type { ProjectId, SourceValidation } from "../domain/project";
-import { projectOverviewPath } from "../domain/routes";
+import { projectOverviewPath, projectsPath } from "../domain/routes";
 import { basename, chooseProjectDirectory } from "../platform/dialog";
 import { useAnnouncer } from "./AppShell";
 
@@ -40,7 +40,6 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const navigate = useNavigate();
-  const location = useLocation();
   const announce = useAnnouncer();
 
   const [path, setPath] = useState<string | null>(null);
@@ -64,7 +63,9 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
     };
   }, []);
 
-  const backgroundState = { backgroundLocation: location };
+  // The new/existing project always opens as a Peek over the Index — never over whatever page
+  // the header-triggered dialog happened to be invoked from (spec: Index background state).
+  const backgroundState = { backgroundLocation: { pathname: projectsPath() } };
 
   async function validatePath(target: string) {
     setBusy(true);
@@ -89,7 +90,7 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
   }
 
   async function register() {
-    if (path === null || validation?.state !== "ok") return;
+    if (busy || path === null || validation?.state !== "ok") return;
     setBusy(true);
     setError(null);
     try {
