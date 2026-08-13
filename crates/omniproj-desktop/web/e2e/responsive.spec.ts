@@ -88,6 +88,15 @@ test("200% text: no horizontal overflow and actions stay reachable", async ({ pa
   await page.goto("/projects");
   await expectNoHorizontalScroll(page);
 
+  // Rows grow with the larger text (min-height is a floor, not a fixed height) rather than
+  // clipping it: content height never exceeds the row's own height.
+  const clipped = await page.evaluate(() =>
+    Array.from(document.querySelectorAll<HTMLElement>(".op-row__link")).some(
+      (r) => r.scrollHeight > r.clientHeight + 1,
+    ),
+  );
+  expect(clipped, "no row clips its enlarged text").toBe(false);
+
   await page.getByRole("link", { name: /^billing-worker/ }).click();
   await expect(page.getByTestId("overview-peek").getByRole("button", { name: "Replace" })).toBeVisible();
   await expectNoHorizontalScroll(page);

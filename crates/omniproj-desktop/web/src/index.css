@@ -17,7 +17,9 @@
   /* Text */
   --op-text-primary: #17202a;
   --op-text-secondary: #4b5b6b;
-  --op-text-tertiary: #657789;
+  /* Tertiary must still clear 4.5:1 on the canvas for the necessary text that uses it
+     (definition terms, source path, muted notes): #5f6e7e ~= 4.6:1 on #f5f7fa. */
+  --op-text-tertiary: #5f6e7e;
   --op-text-inverse: #ffffff;
 
   /* Borders */
@@ -211,13 +213,22 @@ body {
   align-items: center;
   gap: 4px;
   min-height: 20px;
+  max-width: 100%;
   padding: 1px 7px;
   border: 1px solid transparent;
   border-radius: var(--op-radius);
   font-size: var(--op-text-size-necessary);
   line-height: var(--op-line-necessary);
   font-weight: 600;
+}
+/* Short lifecycle words stay on one line; review labels may wrap in a narrow column rather
+   than overflow the row (which would force horizontal page scroll). */
+.op-tag {
   white-space: nowrap;
+}
+.op-badge {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .op-plusn {

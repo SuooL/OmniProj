@@ -30,6 +30,9 @@ test("core loop: filter, open a Peek, replace with explicit Save, Undo, Escape r
   await expect(peek.getByText("Exactly-once delivery")).toBeVisible();
   await expect(peek.getByTestId("undo-button")).toBeVisible();
   await peek.getByTestId("undo-button").click();
+  // Undo is a real inverse: the prior commitment is restored.
+  await expect(peek.getByText("Idempotent retries")).toBeVisible();
+  await expect(peek.getByText("Exactly-once delivery")).toHaveCount(0);
 
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("overview-peek")).toHaveCount(0);
@@ -83,12 +86,20 @@ test("relink recovers a moved source with explicit confirmation", async ({ page 
   await expect(page.getByTestId("source-recovery")).toHaveCount(0);
 });
 
-test("a refresh with a partial source failure still completes and announces", async ({ page }) => {
+test("a refresh with a partial source failure completes and announces the failure", async ({ page }) => {
   await page.goto("/projects");
   await page.evaluate(() => ((window as any).__mock.refreshFail = ["p01"]));
-  await page.keyboard.press("Control+r");
-  await expect(page.getByTestId("live-polite")).toHaveText(/refreshing/i);
+  await page.getByRole("button", { name: "Refresh" }).click();
+  // Pull-refresh re-observes via refresh_projects; a source that failed is announced assertively,
+  // not silently dropped, and the Index still renders every project.
+  await expect(page.getByTestId("live-assertive")).toHaveText(/could not be refreshed/i);
   await expect(page.getByRole("list", { name: "Projects" }).getByRole("listitem")).toHaveCount(12);
+});
+
+test("a fully successful refresh announces completion politely", async ({ page }) => {
+  await page.goto("/projects");
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.getByTestId("live-polite")).toHaveText(/projects refreshed/i);
 });
 
 test("a save failure preserves the draft and offers Retry + Copy", async ({ page }) => {
