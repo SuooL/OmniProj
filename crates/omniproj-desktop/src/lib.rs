@@ -45,9 +45,12 @@ pub fn r0_invoke_handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sy
 
 /// Run the OmniProj desktop application.
 pub fn run() {
+    let service = DesktopService::initialize(SystemClock)
+        .expect("could not initialize or migrate the OmniProj store");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(DesktopService::new(SystemClock))
+        .manage(service)
         .setup(|app| {
             use tauri::menu::{MenuBuilder, MenuItemBuilder};
             use tauri::tray::TrayIconBuilder;

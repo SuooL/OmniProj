@@ -189,23 +189,43 @@ export function AppShell() {
       <div className="app-shell">
         <header className="app-shell__bar">
           <nav aria-label="Primary">
-            <Link to={projectsPath()}>Projects</Link>
+            <Link className="app-shell__brand" to={projectsPath()} aria-label="Projects">
+              <span className="app-shell__brand-mark" aria-hidden="true">
+                O
+              </span>
+              <span className="app-shell__brand-copy" aria-hidden="true">
+                <strong>OmniProj</strong>
+                <small>Research workspace</small>
+              </span>
+            </Link>
           </nav>
-          <div role="search">
+          <div className="app-shell__search" role="search">
             <input
               ref={filterRef}
               type="search"
               aria-label="Filter projects"
+              placeholder="Filter projects…"
               value={filterValue}
               onChange={onFilterChange}
             />
+            <kbd aria-hidden="true">⌘F</kbd>
           </div>
-          <button type="button" onClick={openAddProject}>
-            Add Project
-          </button>
-          <button type="button" onClick={onRefresh}>
-            Refresh
-          </button>
+          <div className="app-shell__actions">
+            <button
+              className="op-button op-button--primary"
+              type="button"
+              onClick={openAddProject}
+            >
+              Add Project
+            </button>
+            <button
+              className="op-button op-button--secondary"
+              type="button"
+              onClick={onRefresh}
+            >
+              Refresh
+            </button>
+          </div>
         </header>
 
         {/* The main outlet renders the background (Index) while a Peek is open, so the Index

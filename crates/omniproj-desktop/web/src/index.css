@@ -199,6 +199,17 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
 /* Visible keyboard focus on every focusable surface (>=3:1 boundary). */
 :focus-visible {
   outline: 2px solid var(--op-focus-ring);
@@ -275,30 +286,241 @@ body {
   color: var(--op-status-info-fg);
 }
 
-/* Dense four-column Projects Index. Columns are shared by the header and every row so they
-   stay aligned; rows have a min-height (never a fixed clipped height). */
+/* Application frame. */
+.app-shell {
+  min-height: 100%;
+}
+
 .app-shell__bar {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
-  padding: 8px 12px;
+  gap: 18px;
+  min-height: 54px;
+  box-sizing: border-box;
+  padding: 8px 24px;
+  background: var(--op-bg-surface);
   border-bottom: 1px solid var(--op-border-subtle);
+  box-shadow: 0 1px 0 rgb(15 23 42 / 2%);
 }
-.app-shell__bar [role="search"] {
-  flex: 1 1 160px;
-  min-width: 120px;
+
+.app-shell__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 170px;
+  color: var(--op-text-primary);
+  text-decoration: none;
 }
-.app-shell__bar input[type="search"] {
+
+.app-shell__brand-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--op-text-primary);
+  color: var(--op-bg-surface);
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: -0.04em;
+}
+
+.app-shell__brand-copy {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.05;
+}
+
+.app-shell__brand-copy strong {
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
+.app-shell__brand-copy small {
+  margin-top: 3px;
+  color: var(--op-text-tertiary);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.app-shell__search {
+  position: relative;
+  flex: 1 1 360px;
+  max-width: 620px;
+  min-width: 180px;
+}
+
+.app-shell__search input[type="search"] {
   width: 100%;
-  min-height: var(--op-control-min);
+  min-height: 34px;
   box-sizing: border-box;
   border: 1px solid var(--op-border-strong);
-  border-radius: var(--op-radius);
-  padding: 2px 8px;
+  border-radius: 9px;
+  padding: 5px 48px 5px 12px;
+  background: var(--op-bg-canvas);
+  color: var(--op-text-primary);
+  transition:
+    background-color var(--op-transition),
+    border-color var(--op-transition),
+    box-shadow var(--op-transition);
 }
-.app-shell__bar button {
-  min-height: var(--op-control-min);
+
+.app-shell__search input[type="search"]::placeholder {
+  color: var(--op-text-tertiary);
+}
+
+.app-shell__search input[type="search"]:focus {
+  border-color: var(--op-interactive-fg);
+  background: var(--op-bg-surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--op-focus-ring) 14%, transparent);
+}
+
+.app-shell__search kbd {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  padding: 1px 6px;
+  border: 1px solid var(--op-border-subtle);
+  border-radius: 5px;
+  background: var(--op-bg-surface);
+  color: var(--op-text-tertiary);
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 17px;
+}
+
+.app-shell__actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+}
+
+.op-button {
+  min-height: 32px;
+  padding: 5px 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: var(--op-text-size-necessary);
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    color var(--op-transition),
+    border-color var(--op-transition),
+    background-color var(--op-transition),
+    transform var(--op-transition);
+}
+
+.op-button:active {
+  transform: translateY(1px);
+}
+
+.op-button--primary {
+  border-color: var(--op-interactive-fg);
+  background: var(--op-interactive-fg);
+  color: var(--op-text-inverse);
+}
+
+.op-button--primary:hover {
+  border-color: var(--op-interactive-hover);
+  background: var(--op-interactive-hover);
+}
+
+.op-button--secondary {
+  border-color: var(--op-border-subtle);
+  background: var(--op-bg-surface);
+  color: var(--op-text-secondary);
+}
+
+.op-button--secondary:hover {
+  border-color: var(--op-border-strong);
+  color: var(--op-text-primary);
+}
+
+#projects-index {
+  box-sizing: border-box;
+  padding: 0 24px 24px;
+}
+
+.op-page-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  min-height: 60px;
+  box-sizing: border-box;
+  padding: 7px 2px 6px;
+}
+
+.op-page-heading__eyebrow {
+  margin: 0 0 2px;
+  color: var(--op-interactive-fg);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 14px;
+  text-transform: uppercase;
+}
+
+.op-page-heading h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 720;
+  letter-spacing: -0.035em;
+  line-height: 28px;
+}
+
+.op-page-heading__summary {
+  margin: 3px 0 0;
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-necessary);
+}
+
+.op-page-heading__count {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin: 0 2px 2px 16px;
+  color: var(--op-text-tertiary);
+  font-size: var(--op-text-size-necessary);
+}
+
+.op-page-heading__count strong {
+  color: var(--op-text-primary);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-state-panel {
+  margin: 0;
+  padding: 18px;
+  border: 1px solid var(--op-border-subtle);
+  border-radius: 12px;
+  background: var(--op-bg-surface);
+}
+
+.op-state-panel--error {
+  border-color: var(--op-status-danger-border);
+}
+
+/* Dense four-column Projects Index. */
+.op-index {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.op-index__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border: 1px solid var(--op-border-subtle);
+  border-radius: 11px;
+  background: var(--op-bg-surface);
 }
 
 .op-index__head,
@@ -308,14 +530,16 @@ body {
     minmax(180px, 1.1fr) minmax(240px, 1.5fr) minmax(190px, 1fr) minmax(150px, 0.8fr);
   gap: 16px;
   align-items: start;
-  padding: 0 12px;
+  padding: 0 14px;
 }
 
 .op-index__head {
+  min-height: 28px;
+  box-sizing: border-box;
   padding-top: 6px;
-  padding-bottom: 6px;
+  padding-bottom: 5px;
   border-bottom: 1px solid var(--op-border-subtle);
-  /* Visible column headers: secondary tone so 11px text still clears 4.5:1. */
+  background: var(--op-bg-subtle);
   color: var(--op-text-secondary);
   font-size: var(--op-text-size-micro);
   line-height: var(--op-line-necessary);
@@ -329,50 +553,77 @@ body {
   padding: 0;
 }
 
+.op-index__table {
+  overflow: hidden;
+  border: 1px solid var(--op-border-subtle);
+  border-radius: 12px;
+  background: var(--op-bg-surface);
+  box-shadow: 0 8px 30px rgb(15 23 42 / 4%);
+}
+
 .op-row {
   border-bottom: 1px solid var(--op-border-subtle);
 }
 
+.op-row:last-child {
+  border-bottom: 0;
+}
+
 .op-row__link {
   box-sizing: border-box;
-  min-height: 66px;
-  padding-top: 8px;
-  padding-bottom: 8px;
+  min-height: 64px;
+  padding-top: 7px;
+  padding-bottom: 7px;
   color: inherit;
   text-decoration: none;
   align-content: center;
+  background: var(--op-bg-surface);
+  transition:
+    background-color var(--op-transition),
+    box-shadow var(--op-transition);
 }
+
 .op-row__link:hover {
   background: var(--op-bg-subtle);
+  box-shadow: inset 3px 0 0 var(--op-interactive-fg);
 }
 
 .op-cell {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 3px;
   min-width: 0;
 }
+
 .op-row__name {
   font-size: var(--op-text-size-emphasis);
-  font-weight: 600;
+  font-weight: 650;
   color: var(--op-text-primary);
 }
+
 .op-row__commitment {
   font-size: var(--op-text-size-body);
   color: var(--op-text-primary);
 }
+
 .op-row__commitment--none,
 .op-row__review-clear {
   color: var(--op-text-secondary);
 }
+
+.op-observed-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
 .op-observed-note {
-  /* Carries real information ("no commits", "N changed", commits-since): 12px necessary-text
-     floor and the secondary (not tertiary) tone so small-text contrast stays >= 4.5:1. */
   font-size: var(--op-text-size-necessary);
   color: var(--op-text-secondary);
 }
 
-/* Field labels are for the stacked layout; hidden but present at wide widths. */
 .op-field-label {
   display: none;
   font-size: var(--op-text-size-micro);
@@ -386,36 +637,54 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
+  gap: 5px 12px;
 }
+
+.op-index__meta {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
 .op-index__order {
+  color: var(--op-text-primary);
   font-size: var(--op-text-size-necessary);
-  color: var(--op-text-secondary);
+  font-weight: 620;
 }
+
 .op-index__interval {
+  color: var(--op-text-tertiary);
   font-size: var(--op-text-size-necessary);
-  color: var(--op-text-secondary);
 }
+
 .op-filters {
   display: flex;
   gap: 6px;
 }
+
 .op-sort {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   font-size: var(--op-text-size-necessary);
   color: var(--op-text-secondary);
 }
+
 .op-sort select {
-  min-height: var(--op-control-min);
-  border: 1px solid var(--op-border-strong);
-  border-radius: var(--op-radius);
-  background: var(--op-bg-surface);
+  min-height: 30px;
+  border: 1px solid var(--op-border-subtle);
+  border-radius: 7px;
+  background: var(--op-bg-canvas);
   color: var(--op-text-primary);
-  padding: 2px 6px;
+  padding: 2px 7px;
 }
+
+.op-index__nomatch {
+  margin: 0;
+  padding: 28px 16px;
+  color: var(--op-text-secondary);
+  text-align: center;
+}
+
 .op-primary {
   min-height: var(--op-control-min);
   padding: 4px 14px;
@@ -444,6 +713,41 @@ body {
 /* Stacked layout below 800px: one column, field labels visible, Index becomes the primary
    stacked content. */
 @media (max-width: 799px) {
+  .app-shell__bar {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 8px 14px;
+  }
+  .app-shell__brand {
+    min-width: 0;
+  }
+  .app-shell__brand-copy small {
+    display: none;
+  }
+  .app-shell__search {
+    order: 3;
+    flex-basis: 100%;
+    max-width: none;
+  }
+  #projects-index {
+    padding: 0 14px 18px;
+  }
+  .op-page-heading {
+    min-height: 66px;
+  }
+  .op-page-heading__summary {
+    max-width: 420px;
+  }
+  .op-index__toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .op-index__controls {
+    justify-content: space-between;
+  }
+  .op-filters {
+    flex-wrap: wrap;
+  }
   .op-index__head {
     display: none;
   }

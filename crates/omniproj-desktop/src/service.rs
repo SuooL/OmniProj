@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 
 use omniproj_capture::git::{count_commits_since, observe_repository, RepositoryObservation};
+use omniproj_core::ensure_home;
 use omniproj_core::ids::ProjectId;
 use omniproj_core::project::{
     canonical_source_owner, list_project_records, load_project, record_source_observation,
@@ -85,6 +86,16 @@ pub trait R0Service {
 }
 
 impl<C: Clock> DesktopService<C> {
+    /// Initialize the local store before exposing any desktop command.
+    ///
+    /// `ensure_home` is responsible for fresh-store creation, interrupted-write recovery,
+    /// and schema migration. Keeping that work at the application boundary prevents the first
+    /// Index read from trying to deserialize legacy project records as the current schema.
+    pub fn initialize(clock: C) -> CommandResult<Self> {
+        ensure_home()?;
+        Ok(Self::new(clock))
+    }
+
     pub fn new(clock: C) -> Self {
         Self {
             clock,

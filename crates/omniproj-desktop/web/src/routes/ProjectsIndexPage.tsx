@@ -20,18 +20,40 @@ export function ProjectsIndexPage() {
 
   return (
     <main data-testid="projects-index" aria-labelledby="projects-index-heading">
-      <h1 id="projects-index-heading">Projects</h1>
+      <header className="op-page-heading">
+        <div>
+          <p className="op-page-heading__eyebrow">Workspace</p>
+          <h1 id="projects-index-heading">Projects</h1>
+          <p className="op-page-heading__summary">
+            Re-enter each project through its current commitment and observed work.
+          </p>
+        </div>
+        {data && (
+          <p className="op-page-heading__count">
+            <strong>{data.projects.length}</strong>
+            <span>{data.projects.length === 1 ? "project" : "projects"}</span>
+          </p>
+        )}
+      </header>
 
       {isLoading && (
-        <p data-testid="projects-index-loading" role="status">
+        <p className="op-state-panel" data-testid="projects-index-loading" role="status">
           Loading projects…
         </p>
       )}
 
       {isError && (
-        <div data-testid="projects-index-error" role="alert">
+        <div
+          className="op-state-panel op-state-panel--error"
+          data-testid="projects-index-error"
+          role="alert"
+        >
           <p>{error instanceof AppError ? error.message : "Couldn't load projects."}</p>
-          <button type="button" onClick={() => refetch()}>
+          <button
+            className="op-button op-button--secondary"
+            type="button"
+            onClick={() => refetch()}
+          >
             Try again
           </button>
         </div>
