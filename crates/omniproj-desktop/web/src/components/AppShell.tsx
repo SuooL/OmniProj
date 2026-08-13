@@ -40,6 +40,7 @@ import { NotFoundPage } from "../routes/NotFoundPage";
 import { ProjectOverviewPage } from "../routes/ProjectOverviewPage";
 import { ProjectsIndexPage } from "../routes/ProjectsIndexPage";
 import { ProjectPeek } from "./projects/ProjectPeek";
+import { AddProjectDialog } from "./AddProjectDialog";
 import { LiveStatus } from "./LiveStatus";
 
 // --- Announcer -------------------------------------------------------------
@@ -201,14 +202,7 @@ export function AppShell() {
           </Routes>
         )}
 
-        {addProjectOpen && (
-          <div role="dialog" aria-modal="true" aria-label="Add Project">
-            <h2>Add Project</h2>
-            <button type="button" onClick={() => setAddProjectOpen(false)}>
-              Close
-            </button>
-          </div>
-        )}
+        {addProjectOpen && <AddProjectDialog onClose={() => setAddProjectOpen(false)} />}
 
         <LiveStatus polite={polite} assertive={assertive} />
       </div>
