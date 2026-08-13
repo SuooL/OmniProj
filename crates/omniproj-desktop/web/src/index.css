@@ -22,7 +22,8 @@
 
   /* Borders */
   --op-border-subtle: #d8e0e8;
-  --op-border-strong: #8493a3;
+  /* Strong border doubles as a control boundary, so it must clear 3:1 on the canvas. */
+  --op-border-strong: #647485;
 
   /* Interactive */
   --op-interactive-fg: #006f8b;
@@ -224,7 +225,7 @@ body {
   color: var(--op-text-secondary);
 }
 .op-fact__label {
-  color: var(--op-text-tertiary);
+  color: var(--op-text-secondary);
 }
 
 .op-stamp {
@@ -258,6 +259,30 @@ body {
 
 /* Dense four-column Projects Index. Columns are shared by the header and every row so they
    stay aligned; rows have a min-height (never a fixed clipped height). */
+.app-shell__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--op-border-subtle);
+}
+.app-shell__bar [role="search"] {
+  flex: 1 1 160px;
+  min-width: 120px;
+}
+.app-shell__bar input[type="search"] {
+  width: 100%;
+  min-height: var(--op-control-min);
+  box-sizing: border-box;
+  border: 1px solid var(--op-border-strong);
+  border-radius: var(--op-radius);
+  padding: 2px 8px;
+}
+.app-shell__bar button {
+  min-height: var(--op-control-min);
+}
+
 .op-index__head,
 .op-row__link {
   display: grid;
@@ -272,7 +297,8 @@ body {
   padding-top: 6px;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--op-border-subtle);
-  color: var(--op-text-tertiary);
+  /* Visible column headers: secondary tone so 11px text still clears 4.5:1. */
+  color: var(--op-text-secondary);
   font-size: var(--op-text-size-micro);
   line-height: var(--op-line-necessary);
   text-transform: uppercase;
@@ -290,9 +316,10 @@ body {
 }
 
 .op-row__link {
+  box-sizing: border-box;
   min-height: 66px;
-  padding-top: 10px;
-  padding-bottom: 10px;
+  padding-top: 8px;
+  padding-bottom: 8px;
   color: inherit;
   text-decoration: none;
   align-content: center;
@@ -318,13 +345,13 @@ body {
 }
 .op-row__commitment--none,
 .op-row__review-clear {
-  color: var(--op-text-tertiary);
+  color: var(--op-text-secondary);
 }
 .op-observed-note {
-  /* Carries real information ("no commits", "N changed", commits-since), so it stays at the
-     12px necessary-text floor, not the 11px micro size. */
+  /* Carries real information ("no commits", "N changed", commits-since): 12px necessary-text
+     floor and the secondary (not tertiary) tone so small-text contrast stays >= 4.5:1. */
   font-size: var(--op-text-size-necessary);
-  color: var(--op-text-tertiary);
+  color: var(--op-text-secondary);
 }
 
 /* Field labels are for the stacked layout; hidden but present at wide widths. */
@@ -350,7 +377,7 @@ body {
 }
 .op-index__interval {
   font-size: var(--op-text-size-necessary);
-  color: var(--op-text-tertiary);
+  color: var(--op-text-secondary);
 }
 .op-filters {
   display: flex;
@@ -382,8 +409,22 @@ body {
   cursor: pointer;
 }
 
+/* 800-1099px: keep four columns but narrow them (so nothing overflows at 800) and compress
+   Observed actual to relative time + delta; the branch and commit subject/SHA move to detail. */
+@media (min-width: 800px) and (max-width: 1099px) {
+  .op-index__head,
+  .op-row__link {
+    grid-template-columns:
+      minmax(120px, 1.1fr) minmax(160px, 1.6fr) minmax(90px, 0.9fr) minmax(96px, 0.7fr);
+    gap: 10px;
+  }
+  .op-observed-detail {
+    display: none;
+  }
+}
+
 /* Stacked layout below 800px: one column, field labels visible, Index becomes the primary
-   stacked content. Finer responsive boundaries are hardened in Task 13. */
+   stacked content. */
 @media (max-width: 799px) {
   .op-index__head {
     display: none;

@@ -1,0 +1,83 @@
+import { expect, test, type Page } from "@playwright/test";
+
+import { installMockTauri } from "./support/harness";
+
+test.beforeEach(async ({ page }) => {
+  await installMockTauri(page);
+});
+
+async function expectNoHorizontalScroll(page: Page) {
+  const ok = await page.evaluate(
+    () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+  );
+  expect(ok, "no horizontal page scroll").toBe(true);
+}
+
+test("1280x800: 9-11 rows visible across four aligned columns", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/projects");
+  await expect(page.getByRole("list", { name: "Projects" }).getByRole("listitem")).toHaveCount(12);
+
+  const visible = await page.evaluate(() =>
+    Array.from(document.querySelectorAll(".op-row")).filter((r) => {
+      const b = r.getBoundingClientRect();
+      return b.top < window.innerHeight && b.bottom > 0;
+    }).length,
+  );
+  expect(visible, `visible rows=${visible}`).toBeGreaterThanOrEqual(9);
+  expect(visible).toBeLessThanOrEqual(11);
+  await expect(page.locator(".op-index__head")).toBeVisible();
+  await expectNoHorizontalScroll(page);
+});
+
+test("1100: four columns with full Observed actual, and a Peek opens", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await page.goto("/projects");
+  await expect(page.locator(".op-index__head")).toBeVisible();
+  await expect(page.locator(".op-observed-detail").first()).toBeVisible();
+  await page.getByRole("link", { name: /^billing-worker/ }).click();
+  await expect(page.getByTestId("overview-peek")).toBeVisible();
+  await expectNoHorizontalScroll(page);
+});
+
+test("1099 and 800: four columns but Observed actual compresses (branch/SHA hidden)", async ({ page }) => {
+  for (const width of [1099, 800]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/projects");
+    await expect(page.locator(".op-index__head")).toBeVisible();
+    await expect(page.locator(".op-observed-detail").first()).toBeHidden();
+    await expectNoHorizontalScroll(page);
+  }
+});
+
+test("799 and 640: rows stack and detail is a full page (no Index/Peek landmark)", async ({ page }) => {
+  for (const width of [799, 640]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/projects");
+    await expect(page.locator(".op-index__head")).toBeHidden();
+    await expect(page.locator(".op-field-label").first()).toBeVisible();
+    await expectNoHorizontalScroll(page);
+
+    await page.getByRole("link", { name: /^billing-worker/ }).click();
+    await expect(page.getByTestId("overview-page")).toBeVisible();
+    await expect(page.getByTestId("overview-peek")).toHaveCount(0);
+    await expect(page.getByTestId("projects-index")).toHaveCount(0);
+    await expectNoHorizontalScroll(page);
+  }
+});
+
+test("200% text: no horizontal overflow and actions stay reachable", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  // Double every text token — a faithful text-only zoom (components consume these tokens).
+  await page.addInitScript(() => {
+    const style = document.createElement("style");
+    style.textContent = `:root{--op-text-size-micro:22px;--op-text-size-necessary:24px;--op-text-size-body:26px;--op-text-size-emphasis:30px;--op-line-necessary:32px;--op-line-body:36px;}`;
+    document.documentElement.appendChild(style);
+  });
+  await page.goto("/projects");
+  await expectNoHorizontalScroll(page);
+
+  await page.getByRole("link", { name: /^billing-worker/ }).click();
+  await expect(page.getByTestId("overview-peek").getByRole("button", { name: "Replace" })).toBeVisible();
+  await expectNoHorizontalScroll(page);
+});
