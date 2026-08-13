@@ -79,7 +79,10 @@ export function loadIndexViewState(): IndexViewState | null {
  */
 export function restoreCanonicalRouteOnRoot(): void {
   if (typeof window === "undefined") return;
-  if (window.location.pathname !== "/") return;
+  // Only a bare root ("/", no query or hash) is treated as "no incoming target". A root with
+  // a query/hash is an explicit deep link and wins over saved session state.
+  const { pathname, search, hash } = window.location;
+  if (pathname !== "/" || search !== "" || hash !== "") return;
   const saved = loadCanonicalLocation();
   if (!saved) return;
   window.history.replaceState(window.history.state, "", saved);

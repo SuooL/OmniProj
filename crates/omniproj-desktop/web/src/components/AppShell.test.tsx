@@ -148,6 +148,64 @@ describe("stacked Escape", () => {
   });
 });
 
+describe("review-fix regressions", () => {
+  it("writes the filter back to the canonical q search param", async () => {
+    const user = userEvent.setup();
+    renderAppAt("/projects");
+    await screen.findByTestId("projects-index");
+
+    await user.type(screen.getByLabelText(/filter projects/i), "beta");
+
+    expect(window.location.search).toBe("?q=beta");
+    expect(screen.getByTestId("index-active-filter")).toHaveTextContent(
+      "beta|review",
+    );
+  });
+
+  it("dismissing a Peek with Escape pops history so Back does not reopen it", async () => {
+    const user = userEvent.setup();
+    renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
+    await user.click(
+      within(await screen.findByTestId("projects-index")).getByRole("link", {
+        name: "Alpha",
+      }),
+    );
+    await screen.findByTestId("overview-peek");
+
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByTestId("overview-peek")).not.toBeInTheDocument(),
+    );
+
+    // Because Escape popped (rather than pushed) the Index entry, Back must not resurrect it.
+    await act(async () => {
+      window.history.back();
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("projects-index")).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("overview-peek")).not.toBeInTheDocument();
+  });
+
+  it("closes an Add Project modal opened over the plain Index, and is a no-op with nothing open", async () => {
+    const user = userEvent.setup();
+    renderAppAt("/projects");
+    await screen.findByTestId("projects-index");
+
+    await user.keyboard("{Control>}n{/Control}");
+    expect(screen.getByRole("dialog", { name: /add project/i })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("dialog", { name: /add project/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("projects-index")).toBeInTheDocument();
+
+    // Escape with nothing open neither throws nor navigates away from the Index.
+    await user.keyboard("{Escape}");
+    expect(screen.getByTestId("projects-index")).toBeInTheDocument();
+  });
+});
+
 describe("announcements", () => {
   it("keeps two persistent visually-hidden live regions with the right politeness", async () => {
     renderAppAt("/projects");

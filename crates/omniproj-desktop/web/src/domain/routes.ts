@@ -19,17 +19,7 @@ export function projectsPath(): string {
   return ROUTES.projects;
 }
 
-/** The bare project path, which always redirects to the canonical Overview. */
-export function projectByIdPath(id: ProjectId): string {
-  return `/projects/${encodeURIComponent(id)}`;
-}
-
 /** The canonical Overview URL, shared verbatim by the Peek and the full page. */
 export function projectOverviewPath(id: ProjectId): string {
   return `/projects/${encodeURIComponent(id)}/overview`;
-}
-
-/** True when a pathname is the canonical Overview for some project. */
-export function isOverviewPath(pathname: string): boolean {
-  return /^\/projects\/[^/]+\/overview\/?$/.test(pathname);
 }

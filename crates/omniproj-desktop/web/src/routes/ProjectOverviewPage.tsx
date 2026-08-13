@@ -6,6 +6,7 @@
 import { useNavigate, useParams } from "react-router-dom";
 
 import { projectId as brandProjectId } from "../domain/project";
+import { projectOverviewPath } from "../domain/routes";
 
 export interface ProjectOverviewPageProps {
   /** "peek" renders over the still-mounted Index; "page" is the direct full-page render. */
@@ -18,9 +19,10 @@ export function ProjectOverviewPage({ variant }: ProjectOverviewPageProps) {
   const id = brandProjectId(params.projectId ?? "");
 
   // "Open as page" keeps the object URL and only drops the background state, so the same
-  // canonical Overview promotes from Peek to full page without a navigation to a new URL.
+  // canonical Overview promotes from Peek to full page without a navigation to a new URL. The
+  // URL comes from the shared route builder so it can never drift from the peek/link form.
   function openAsPage() {
-    navigate(`/projects/${encodeURIComponent(id)}/overview`, { replace: true });
+    navigate(projectOverviewPath(id), { replace: true });
   }
 
   const containerTestId = variant === "peek" ? "overview-peek" : "overview-page";
