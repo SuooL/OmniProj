@@ -49,6 +49,7 @@ beforeEach(() => {
     if (command === "get_project_overview") {
       return overview({ project_id: (args?.input?.project_id ?? "project-1") as never });
     }
+    if (command === "refresh_projects") return [];
     return { projects: [], review_policy: reviewPolicy };
   });
   window.sessionStorage.clear();
@@ -108,7 +109,7 @@ describe("keyboard shortcuts", () => {
     const focused = dispatchChord("r");
     expect(focused.defaultPrevented).toBe(true);
     expect(screen.getByTestId("live-polite")).toHaveTextContent(/refreshing/i);
-    expect(invokeMock).toHaveBeenCalledWith("list_project_index");
+    expect(invokeMock).toHaveBeenCalledWith("refresh_projects", { input: { project_ids: null } });
   });
 
   it("Cmd/Ctrl+R still refreshes while a text input is focused", async () => {

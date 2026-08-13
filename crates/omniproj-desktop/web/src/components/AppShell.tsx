@@ -26,8 +26,10 @@ import {
 } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { api, AppError } from "../api";
 import { saveCanonicalLocation } from "../domain/navigationSession";
 import { projectId as brandProjectId } from "../domain/project";
+import type { ProjectIndexResponse } from "../domain/project";
 import {
   ROUTES,
   projectOverviewPath,
@@ -127,9 +129,31 @@ export function AppShell() {
     [location.state, searchParams, setSearchParams],
   );
 
-  const onRefresh = useCallback(() => {
+  // Pull-refresh re-observes every source (refresh_projects), folds each returned row into the
+  // Index cache without a refetch wave, and reports partial failures assertively so a source
+  // that could not be read is never silently dropped.
+  const onRefresh = useCallback(async () => {
     announce("polite", "Refreshing projects…");
-    void queryClient.refetchQueries({ queryKey: queryKeys.projectIndex });
+    try {
+      const results = await api.refreshProjects(null);
+      queryClient.setQueryData<ProjectIndexResponse>(queryKeys.projectIndex, (current) => {
+        if (!current) return current;
+        const byId = new Map(results.filter((r) => r.item).map((r) => [r.project_id, r.item!]));
+        return { ...current, projects: current.projects.map((p) => byId.get(p.project_id) ?? p) };
+      });
+      const failed = results.filter((r) => r.outcome === "source_failed");
+      if (failed.length > 0) {
+        announce(
+          "assertive",
+          `${failed.length} project${failed.length === 1 ? "" : "s"} could not be refreshed.`,
+        );
+      } else {
+        announce("polite", "Projects refreshed.");
+      }
+    } catch (raw) {
+      const err = raw instanceof AppError ? raw : new AppError({ code: "unknown", message: "Refresh failed.", retryable: false, stateApplied: false });
+      announce("assertive", err.message);
+    }
   }, [announce, queryClient]);
 
   const openAddProject = useCallback(() => setAddProjectOpen(true), []);

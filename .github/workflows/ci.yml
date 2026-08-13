@@ -9,8 +9,59 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
+  web:
+    name: Frontend unit + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/omniproj-desktop/web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/omniproj-desktop/web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Build (tsc + vite)
+        run: npm run build
+      - name: Unit tests
+        run: npm test
+
+  e2e:
+    name: Frontend e2e (Playwright)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/omniproj-desktop/web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/omniproj-desktop/web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      # Kept separate from the unit job so a Playwright/system-dependency failure is
+      # distinguishable from a unit-test failure.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: E2E tests
+        run: npm run test:e2e
+
   test:
+    name: Rust workspace
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

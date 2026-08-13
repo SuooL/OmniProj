@@ -131,15 +131,19 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
           </span>
           {observed ? (
             <>
-              <FactLabel value={headText(observed.head)} />
-              {observed.last_commit ? (
-                <FactLabel
-                  value={`${observed.last_commit.short_sha} ${observed.last_commit.subject}`}
-                  title={observed.last_commit.sha}
-                />
-              ) : (
-                <span className="op-observed-note">no commits</span>
-              )}
+              {/* Branch + commit subject/SHA collapse away at 800-1099px (they live in the
+                  Peek/detail there); the relative time and delta always remain. */}
+              <span className="op-observed-detail">
+                <FactLabel value={headText(observed.head)} />
+                {observed.last_commit ? (
+                  <FactLabel
+                    value={`${observed.last_commit.short_sha} ${observed.last_commit.subject}`}
+                    title={observed.last_commit.sha}
+                  />
+                ) : (
+                  <span className="op-observed-note">no commits</span>
+                )}
+              </span>
               {observedTime && (
                 <FactLabel label="observed" value={observedTime.text} title={observedTime.title} />
               )}
