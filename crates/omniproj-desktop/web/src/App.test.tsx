@@ -14,7 +14,18 @@ import { App } from "./App";
 import { loadIndexViewState } from "./domain/navigationSession";
 import { projectId, type ProjectIndexItem } from "./domain/project";
 import { queryKeys } from "./queryKeys";
-import { indexItem, indexResponse, reviewPolicy } from "./test/fixtures";
+import { indexItem, indexResponse, overview, reviewPolicy } from "./test/fixtures";
+
+// Command-aware IPC mock: the index is seeded per-test via setQueryData; the Overview is
+// fetched by the Peek/full page, so echo a valid Overview for the requested id.
+function mockIpc() {
+  invokeMock.mockImplementation(async (command: string, args?: { input?: { project_id?: string } }) => {
+    if (command === "get_project_overview") {
+      return overview({ project_id: (args?.input?.project_id ?? "project-1") as never });
+    }
+    return { projects: [], review_policy: reviewPolicy };
+  });
+}
 
 function renderAppAt(path: string, index: ProjectIndexItem[] = []) {
   window.history.replaceState(null, "", path);
@@ -36,7 +47,7 @@ function currentUrl(): string {
 }
 
 beforeEach(() => {
-  invokeMock.mockResolvedValue({ projects: [], review_policy: reviewPolicy });
+  mockIpc();
   window.sessionStorage.clear();
   window.history.replaceState(null, "", "/");
 });
@@ -145,16 +156,14 @@ describe("background-location Peek", () => {
       }),
     );
 
-    const peek = await screen.findByTestId("overview-peek");
-    expect(within(peek).getByTestId("overview-project-id")).toHaveTextContent(
-      weirdId,
-    );
+    await screen.findByTestId("overview-peek");
+    // The id round-trips decoded through the route param into the IPC call.
+    expect(invokeMock).toHaveBeenCalledWith("get_project_overview", {
+      input: { project_id: weirdId },
+    });
 
     await user.click(screen.getByRole("button", { name: /open as page/i }));
-    const page = await screen.findByTestId("overview-page");
-    expect(within(page).getByTestId("overview-project-id")).toHaveTextContent(
-      weirdId,
-    );
+    expect(await screen.findByTestId("overview-page")).toBeInTheDocument();
     expect(window.location.pathname).toBe(
       `/projects/${encodeURIComponent(weirdId)}/overview`,
     );
@@ -205,6 +214,8 @@ describe("restart restoration and deep-link precedence", () => {
     renderAppAt("/projects/p9/overview");
     expect(await screen.findByTestId("overview-page")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/projects/p9/overview");
-    expect(screen.getByTestId("overview-project-id")).toHaveTextContent("p9");
+    expect(invokeMock).toHaveBeenCalledWith("get_project_overview", {
+      input: { project_id: "p9" },
+    });
   });
 });

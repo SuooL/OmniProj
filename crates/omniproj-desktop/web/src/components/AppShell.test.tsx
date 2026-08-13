@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 import { App } from "../App";
 import type { ProjectIndexItem } from "../domain/project";
 import { queryKeys } from "../queryKeys";
-import { indexItem, indexResponse, reviewPolicy } from "../test/fixtures";
+import { indexItem, indexResponse, overview, reviewPolicy } from "../test/fixtures";
 import { LiveStatus } from "./LiveStatus";
 
 function renderAppAt(path: string, index: ProjectIndexItem[] = []) {
@@ -45,7 +45,12 @@ function dispatchChord(key: string): KeyboardEvent {
 }
 
 beforeEach(() => {
-  invokeMock.mockResolvedValue({ projects: [], review_policy: reviewPolicy });
+  invokeMock.mockImplementation(async (command: string, args?: { input?: { project_id?: string } }) => {
+    if (command === "get_project_overview") {
+      return overview({ project_id: (args?.input?.project_id ?? "project-1") as never });
+    }
+    return { projects: [], review_policy: reviewPolicy };
+  });
   window.sessionStorage.clear();
   window.history.replaceState(null, "", "/");
 });
