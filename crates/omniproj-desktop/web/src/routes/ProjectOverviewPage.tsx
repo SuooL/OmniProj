@@ -2,6 +2,7 @@
 // full page (direct access or an Index-origin Peek promoted via "Open as page"). Loading /
 // error / not-found are handled here; the content and its DOM order live in ProjectOverview.
 
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 
@@ -18,6 +19,16 @@ export function ProjectOverviewPage() {
     queryFn: () => api.getProjectOverview(id),
   });
 
+  // Land focus in the content once when it first loads (direct access or a Peek promoted to a
+  // full page), so keyboard/AT users are not stranded on the shell. Setup lets Objective win.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const didFocus = useRef(false);
+  useEffect(() => {
+    if (!data || didFocus.current) return;
+    didFocus.current = true;
+    if (data.status !== "setup") headingRef.current?.focus();
+  }, [data]);
+
   return (
     <main data-testid="overview-page" aria-labelledby="overview-heading">
       {isLoading && (
@@ -30,7 +41,9 @@ export function ProjectOverviewPage() {
           {error instanceof AppError ? error.message : "Couldn't load this project."}
         </div>
       )}
-      {data && <ProjectOverview overview={data} now={new Date()} variant="page" />}
+      {data && (
+        <ProjectOverview overview={data} now={new Date()} variant="page" headingRef={headingRef} />
+      )}
     </main>
   );
 }

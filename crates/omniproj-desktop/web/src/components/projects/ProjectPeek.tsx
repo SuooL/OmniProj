@@ -24,10 +24,15 @@ export function ProjectPeek() {
     queryKey: queryKeys.projectOverview(id),
     queryFn: () => api.getProjectOverview(id),
   });
+  const didFocus = useRef(false);
 
-  // Focus the heading when the Peek opens.
+  // Focus the heading ONCE when the Peek first has content — never again, so a cache update
+  // from a mutation (e.g. a revision-conflict refetch) does not yank focus off a draft input.
+  // In `setup`, let the objective field's autoFocus win instead.
   useEffect(() => {
-    headingRef.current?.focus();
+    if (!data || didFocus.current) return;
+    didFocus.current = true;
+    if (data.status !== "setup") headingRef.current?.focus();
   }, [data]);
 
   // On close, restore focus to the row that opened the Peek (stable data-focus-id).

@@ -259,12 +259,116 @@ describe("commitment mutations", () => {
     expect(screen.getByTestId("live-assertive")).toHaveTextContent(/state saved; audit commit failed/i);
     expect(callsTo("set_commitment")).toHaveLength(1); // never resent
     await waitFor(() => expect(callsTo("get_project_overview").length).toBeGreaterThanOrEqual(2));
+    expect(screen.getByLabelText("New commitment")).toHaveValue(""); // durable -> draft cleared
+  });
+
+  it("resubmits a conflicted mutation with the revision rebuilt from the refetch", async () => {
+    const user = userEvent.setup();
+    let getCount = 0;
+    let setCount = 0;
+    window.history.replaceState(null, "", "/projects/project-1/overview");
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "get_project_overview") {
+        getCount += 1;
+        return overview({ current_commitment: null, revision: getCount === 1 ? 3 : 5 });
+      }
+      if (command === "set_commitment") {
+        setCount += 1;
+        if (setCount === 1) {
+          throw { code: "revision_conflict", message: "stale", retryable: false, state_applied: false };
+        }
+        return overview({ current_commitment: currentCommitment(), revision: 6 });
+      }
+      return overview();
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity, refetchOnMount: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <App />
+      </QueryClientProvider>,
+    );
+    await screen.findByTestId("set-form");
+    await user.type(screen.getByLabelText("New commitment"), "do it");
+    await user.click(screen.getByRole("button", { name: "Save commitment" }));
+    await screen.findByTestId("conflict-note");
+
+    await user.click(screen.getByRole("button", { name: "Save commitment" }));
+    await waitFor(() => expect(callsTo("set_commitment")).toHaveLength(2));
+    const [, arg] = callsTo("set_commitment")[1] as [string, { input: Record<string, unknown> }];
+    expect(arg.input).toMatchObject({ expected_revision: 5, text: "do it" });
   });
 
   it("shows Undo only when a newest undoable transition is returned", async () => {
     renderOverview(overview({ undoable_transition_id: null }));
     await screen.findByTestId("current-commitment");
     expect(screen.queryByTestId("undo-button")).not.toBeInTheDocument();
+  });
+});
+
+describe("lifecycle and source recovery", () => {
+  it("enforces reason + review date before enabling a Waiting save", async () => {
+    const user = userEvent.setup();
+    renderOverview(overview({ status: "active", revision: 1 }), {
+      set_project_status: () => overview({ status: "waiting", revision: 2 }),
+    });
+    const control = within(await screen.findByTestId("lifecycle-control"));
+    await user.selectOptions(control.getByLabelText("Set status"), "waiting");
+    const save = control.getByRole("button", { name: "Update status" });
+    expect(save).toBeDisabled();
+    await user.type(control.getByLabelText("Status reason"), "waiting on API");
+    expect(save).toBeDisabled();
+    await user.type(control.getByLabelText("Review date"), "2026-09-01");
+    expect(save).toBeEnabled();
+
+    await user.click(save);
+    await waitFor(() => expect(callsTo("set_project_status")).toHaveLength(1));
+    const [, arg] = callsTo("set_project_status")[0] as [string, { input: Record<string, unknown> }];
+    expect(arg.input).toMatchObject({
+      status: "waiting",
+      reason: "waiting on API",
+      review_at: "2026-09-01T00:00:00Z",
+      expected_revision: 1,
+    });
+  });
+
+  it("requires archive confirmation, and returns to active with no reason or date", async () => {
+    const user = userEvent.setup();
+    renderOverview(overview({ status: "parked", status_reason: "later" }), {
+      set_project_status: () => overview({ status: "active", revision: 2 }),
+    });
+    const control = within(await screen.findByTestId("lifecycle-control"));
+
+    await user.selectOptions(control.getByLabelText("Set status"), "archived");
+    expect(control.getByRole("button", { name: "Update status" })).toBeDisabled();
+    await user.click(control.getByLabelText("Confirm archive"));
+    expect(control.getByRole("button", { name: "Update status" })).toBeEnabled();
+
+    await user.selectOptions(control.getByLabelText("Set status"), "active");
+    await user.click(control.getByRole("button", { name: "Update status" }));
+    await waitFor(() => expect(callsTo("set_project_status")).toHaveLength(1));
+    const [, arg] = callsTo("set_project_status")[0] as [string, { input: Record<string, unknown> }];
+    expect(arg.input).toMatchObject({ status: "active", reason: null, review_at: null });
+  });
+
+  it("relinks a missing source with the expected source revision and old location", async () => {
+    const user = userEvent.setup();
+    renderOverview(
+      overview({ source: projectSource({ status: "missing", location: "/old", revision: 2 }) }),
+      { relink_project_source: () => overview({ source: projectSource({ location: "/new", revision: 3 }) }) },
+    );
+    const rec = within(await screen.findByTestId("source-recovery"));
+    await user.type(rec.getByLabelText("New source location"), "/new");
+    await user.click(rec.getByRole("button", { name: "Relink source" }));
+
+    await waitFor(() => expect(callsTo("relink_project_source")).toHaveLength(1));
+    const [, arg] = callsTo("relink_project_source")[0] as [string, { input: Record<string, unknown> }];
+    expect(arg.input).toMatchObject({
+      expected_source_revision: 2,
+      expected_location: "/old",
+      new_location: "/new",
+    });
   });
 });
 
