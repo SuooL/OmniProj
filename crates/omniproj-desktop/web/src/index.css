@@ -907,6 +907,303 @@ button {
   }
 }
 
+/* Desktop-native density. Keep structure flat: selection, separators, and typography carry
+   hierarchy; containers do not imitate dashboard cards. */
+.app-shell__bar {
+  background: var(--op-bg-subtle);
+  box-shadow: none;
+}
+
+.app-shell__sidebar {
+  padding: 10px 8px 12px;
+  background: var(--op-bg-subtle);
+}
+
+.app-shell__disclosure,
+.app-shell__nav-action {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 28px;
+  box-sizing: border-box;
+  gap: 7px;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--op-text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell__disclosure {
+  color: var(--op-text-primary);
+  font-size: var(--op-text-size-necessary);
+  font-weight: 680;
+}
+
+.app-shell__chevron {
+  width: 12px;
+  color: var(--op-text-tertiary);
+  font-size: 17px;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform var(--op-transition);
+}
+
+.app-shell__disclosure[aria-expanded="true"] .app-shell__chevron {
+  transform: rotate(90deg);
+}
+
+.app-shell__nav-group {
+  display: grid;
+  gap: 1px;
+  margin: 1px 0 0 10px;
+}
+
+.app-shell__nav-item,
+.app-shell__nav-action {
+  min-height: 29px;
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: transparent;
+  font-size: var(--op-text-size-necessary);
+  font-weight: 520;
+}
+
+.app-shell__nav-item {
+  background: color-mix(in srgb, var(--op-text-primary) 7%, transparent);
+}
+
+.app-shell__nav-item > span:first-child,
+.app-shell__nav-action > span:first-child {
+  width: 14px;
+  color: var(--op-text-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.app-shell__nav-action:hover,
+.app-shell__disclosure:hover {
+  background: color-mix(in srgb, var(--op-text-primary) 5%, transparent);
+}
+
+.op-toolbar-button,
+.op-window-button,
+.op-button {
+  border-radius: 5px;
+  box-shadow: none;
+}
+
+.op-toolbar-button--accent {
+  border-color: var(--op-border-subtle);
+  background: var(--op-bg-surface);
+}
+
+#projects-index {
+  padding: 20px 28px 28px;
+}
+
+.op-page-heading {
+  min-height: 58px;
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--op-border-subtle);
+}
+
+.op-page-heading__eyebrow {
+  display: none;
+}
+
+.op-page-heading h1 {
+  font-size: 22px;
+  line-height: 27px;
+}
+
+.op-index {
+  gap: 0;
+}
+
+.op-index__toolbar {
+  min-height: 42px;
+  padding: 6px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.op-index__meta {
+  gap: 0;
+}
+
+.op-index__order {
+  font-weight: 560;
+}
+
+.op-chip {
+  min-height: 26px;
+  padding: 1px 8px;
+  border-color: transparent;
+  border-radius: 5px;
+  background: transparent;
+}
+
+.op-chip[aria-pressed="true"] {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--op-text-primary) 8%, transparent);
+  color: var(--op-text-primary);
+}
+
+.op-sort select {
+  min-height: 26px;
+  border-color: transparent;
+  border-radius: 5px;
+  background: transparent;
+}
+
+.op-index__table {
+  border-width: 1px 0 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.op-index__head {
+  min-height: 26px;
+  padding-right: 10px;
+  padding-left: 10px;
+  background: transparent;
+}
+
+.op-row__link {
+  min-height: 58px;
+  padding-right: 10px;
+  padding-left: 10px;
+  background: transparent;
+}
+
+.op-row__link:hover {
+  background: color-mix(in srgb, var(--op-text-primary) 4%, transparent);
+  box-shadow: none;
+}
+
+.op-row__link:focus-visible {
+  background: color-mix(in srgb, var(--op-interactive-fg) 8%, transparent);
+  outline-offset: -2px;
+}
+
+.op-tag,
+.op-badge {
+  min-height: auto;
+  padding: 0;
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent !important;
+  color: var(--op-text-secondary) !important;
+  font-size: 11px;
+  font-weight: 560;
+}
+
+.op-badge::before {
+  content: "•";
+  margin-right: 5px;
+  color: currentColor;
+}
+
+.op-peek {
+  width: clamp(480px, 43vw, 600px);
+  padding: 0 26px 40px;
+  background: var(--op-bg-surface);
+  box-shadow: -10px 0 28px rgb(15 23 42 / 10%);
+}
+
+.op-peek__rail {
+  display: none;
+}
+
+.op-peek__toolbar {
+  margin: 0 -26px 24px;
+  padding: 0 14px 0 20px;
+  background: var(--op-bg-subtle);
+  backdrop-filter: none;
+}
+
+.op-overview {
+  gap: 0;
+}
+
+.op-overview__hero {
+  padding: 0 0 18px;
+}
+
+.op-overview__eyebrow,
+.op-section__kicker {
+  color: var(--op-text-tertiary);
+}
+
+.op-source-path,
+.op-path-box {
+  padding: 5px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.op-overview__primary,
+.op-overview__secondary,
+.op-overview__settings {
+  display: block;
+}
+
+.op-section {
+  padding: 18px 0;
+  border-width: 0 0 1px;
+  border-color: var(--op-border-subtle) !important;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none;
+}
+
+.op-section__header {
+  margin-bottom: 12px;
+}
+
+.op-section__count {
+  display: inline;
+  min-width: 0;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+  color: var(--op-text-tertiary);
+}
+
+.op-section__indicator {
+  border-radius: 50%;
+  box-shadow: none;
+}
+
+.op-overview__open-page {
+  margin-top: 16px;
+}
+
+.op-dialog {
+  border-radius: 10px;
+}
+
+.op-dialog__header {
+  background: var(--op-bg-subtle);
+}
+
+.op-dialog__icon,
+.op-picker__mark {
+  border-radius: 6px;
+}
+
+.op-picker,
+.op-validation-card,
+.op-state-panel {
+  border-radius: 6px;
+  box-shadow: none;
+}
+
 /* Project Overview + Peek. Both variants share one composition and component grammar. */
 .op-overview-page {
   box-sizing: border-box;
@@ -1416,6 +1713,100 @@ button {
 .op-dialog__header .op-window-button {
   flex: 0 0 auto;
   margin-left: auto;
+}
+
+/* Final flat-shell overrides. These sit after the component rules intentionally so legacy
+   visual declarations cannot reintroduce dashboard cards into the desktop detail flow. */
+.app-shell__project-tree {
+  display: grid;
+  max-height: min(48vh, 340px);
+  overflow-y: auto;
+  margin: 2px 0;
+}
+
+.app-shell__project-item {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  min-height: 27px;
+  padding: 1px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-necessary);
+  text-decoration: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell__project-item > span:first-child {
+  color: var(--op-text-tertiary);
+  text-align: center;
+}
+
+.app-shell__project-item:hover {
+  background: color-mix(in srgb, var(--op-text-primary) 5%, transparent);
+}
+
+.app-shell__project-item[data-active="true"] {
+  background: color-mix(in srgb, var(--op-text-primary) 8%, transparent);
+  color: var(--op-text-primary);
+  font-weight: 600;
+}
+
+.op-overview {
+  gap: 0;
+}
+
+.op-overview__primary,
+.op-overview__secondary,
+.op-overview__settings,
+.op-overview-page .op-overview__primary,
+.op-overview-page .op-overview__secondary,
+.op-overview-page .op-overview__settings {
+  display: block;
+}
+
+.op-section,
+.op-section--commitment,
+.op-section--review,
+.op-section--danger,
+.op-section--setup {
+  min-width: 0;
+  padding: 18px 0;
+  border: 0;
+  border-bottom: 1px solid var(--op-border-subtle);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.op-section__count {
+  display: inline;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--op-text-tertiary);
+}
+
+.op-section__indicator--clear {
+  box-shadow: none;
+}
+
+.op-source-path,
+.op-path-box {
+  padding: 5px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.op-validation-card {
+  border-radius: 5px;
 }
 
 .op-dialog__icon {

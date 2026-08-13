@@ -6,8 +6,14 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+const { invokeMock, startDraggingMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+  startDraggingMock: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({ startDragging: startDraggingMock }),
+}));
 
 import { App } from "../App";
 import type { ProjectIndexItem } from "../domain/project";
@@ -45,6 +51,7 @@ function dispatchChord(key: string): KeyboardEvent {
 }
 
 beforeEach(() => {
+  startDraggingMock.mockResolvedValue(undefined);
   invokeMock.mockImplementation(async (command: string, args?: { input?: { project_id?: string } }) => {
     if (command === "get_project_overview") {
       return overview({ project_id: (args?.input?.project_id ?? "project-1") as never });
@@ -58,6 +65,7 @@ beforeEach(() => {
 
 afterEach(() => {
   invokeMock.mockReset();
+  startDraggingMock.mockClear();
 });
 
 describe("primary navigation", () => {
@@ -67,10 +75,38 @@ describe("primary navigation", () => {
     const nav = screen.getByRole("navigation", { name: /primary/i });
     const links = within(nav).getAllByRole("link");
     expect(links).toHaveLength(1);
-    expect(links[0]).toHaveAccessibleName("Projects");
+    expect(links[0]).toHaveAccessibleName("All projects");
     expect(
       screen.queryByRole("link", { name: /settings|attention|agents?/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("desktop sidebar", () => {
+  it("expands and collapses the Projects disclosure", async () => {
+    const user = userEvent.setup();
+    renderAppAt("/projects");
+    await screen.findByTestId("projects-index");
+    const disclosure = screen.getByRole("button", { name: "Projects" });
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "All projects" })).toBeInTheDocument();
+
+    await user.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("link", { name: "All projects" })).not.toBeInTheDocument();
+  });
+});
+
+describe("native window chrome", () => {
+  it("starts native dragging from an empty toolbar area", async () => {
+    renderAppAt("/projects");
+    await screen.findByTestId("projects-index");
+
+    const toolbar = document.querySelector<HTMLElement>(".app-shell__bar");
+    expect(toolbar).not.toBeNull();
+    await userEvent.setup().click(toolbar!);
+
+    expect(startDraggingMock).toHaveBeenCalledOnce();
   });
 });
 

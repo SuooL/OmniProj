@@ -24,7 +24,8 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { api, AppError } from "../api";
 import { saveCanonicalLocation } from "../domain/navigationSession";
@@ -95,8 +96,14 @@ export function AppShell() {
   const [searchParams, setSearchParams] = useSearchParams();
   const filterRef = useRef<HTMLInputElement>(null);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
+  const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [polite, setPolite] = useState("");
   const [assertive, setAssertive] = useState("");
+  const { data: sidebarProjects } = useQuery({
+    queryKey: queryKeys.projectIndex,
+    queryFn: api.listProjectIndex,
+    enabled: location.pathname === projectsPath(),
+  });
 
   // A Peek only exists on a wide viewport; below 800px an Index-origin navigation is a real
   // full-page detail (no Peek, no lingering Index in the DOM/a11y tree).
@@ -182,6 +189,15 @@ export function AppShell() {
     else navigate(projectsPath());
   }, [effectiveBackgroundLocation, navigate]);
 
+  const startWindowDrag = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("button, input, select, textarea, a, [role='button']")) return;
+    void getCurrentWindow().startDragging().catch(() => {
+      // Browser tests and preview builds do not expose a native window.
+    });
+  }, []);
+
   useAppShortcuts({
     onFocusFilter: () => filterRef.current?.focus(),
     onOpenAddProject: openAddProject,
@@ -193,7 +209,11 @@ export function AppShell() {
     <AnnouncerContext.Provider value={announce}>
       <AppActionsContext.Provider value={appActions}>
       <div className="app-shell">
-        <header className="app-shell__bar" data-tauri-drag-region>
+        <header
+          className="app-shell__bar"
+          data-tauri-drag-region
+          onMouseDown={startWindowDrag}
+        >
           <div className="app-shell__history">
             <button
               aria-label="Back to projects"
@@ -239,19 +259,49 @@ export function AppShell() {
 
         <div className="app-shell__workspace">
           <aside className="app-shell__sidebar">
-            <div className="app-shell__identity" aria-label="OmniProj">
-              <span className="app-shell__brand-mark" aria-hidden="true">O</span>
-              <span>
-                <strong>OmniProj</strong>
-                <small>Research workspace</small>
-              </span>
-            </div>
             <nav aria-label="Primary" className="app-shell__nav">
-              <p>Workspace</p>
-              <Link className="app-shell__nav-item" to={projectsPath()} aria-label="Projects">
-                <span aria-hidden="true">▦</span>
+              <button
+                className="app-shell__disclosure"
+                type="button"
+                aria-expanded={projectsExpanded}
+                onClick={() => setProjectsExpanded((current) => !current)}
+              >
+                <span className="app-shell__chevron" aria-hidden="true">›</span>
                 <span>Projects</span>
-              </Link>
+              </button>
+              {projectsExpanded && (
+                <div className="app-shell__nav-group">
+                  <Link className="app-shell__nav-item" to={projectsPath()} aria-label="All projects">
+                    <span aria-hidden="true">⌘</span>
+                    <span>All projects</span>
+                  </Link>
+                  <div className="app-shell__project-tree">
+                    {(sidebarProjects?.projects ?? [])
+                      .filter((project) => project.status !== "archived")
+                      .map((project) => (
+                        <button
+                          className="app-shell__project-item"
+                          data-active={location.pathname.includes(`/projects/${project.project_id}`)}
+                          key={project.project_id}
+                          type="button"
+                          onClick={() => navigate(projectOverviewPath(project.project_id))}
+                        >
+                          <span aria-hidden="true">•</span>
+                          <span>{project.name}</span>
+                        </button>
+                      ))}
+                  </div>
+                  <button
+                    aria-label="New project from sidebar"
+                    className="app-shell__nav-action"
+                    type="button"
+                    onClick={openAddProject}
+                  >
+                    <span aria-hidden="true">＋</span>
+                    <span>Add project</span>
+                  </button>
+                </div>
+              )}
             </nav>
             <div className="app-shell__sidebar-footer">
               <span><kbd>⌘F</kbd> Search</span>

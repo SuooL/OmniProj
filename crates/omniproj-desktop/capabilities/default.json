@@ -3,5 +3,9 @@
   "identifier": "default",
   "description": "R0 capability for the main window: core plus the native directory picker.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:allow-open"
+  ]
 }
