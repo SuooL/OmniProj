@@ -1,135 +1,152 @@
 # OmniProj
 
-**Re-enter any project in under 5 minutes.** OmniProj passively captures your work — git activity plus Claude Code / Codex sessions — and distills it into a small set of state files (`briefing.md`, `decisions.md`, `open.md`) so future-you (or your agent) knows exactly where things stand.
+**Re-enter any project in under five minutes.** OmniProj is a local-first, single-user
+desktop environment for researchers and independent developers. It holds your **human-authored
+intent** next to the **machine-observed actual** state of each repository, and lets you reconcile
+them — confirm, complete, replace, or clear one explicit next action — without leaving your real
+tools.
 
-> The difference from "yet another AI memory tool": concrete citations are code-checked, not trusted on prompt obedience. Capture produces a deterministic `FactSheet` (real commits, real repo paths); the LLM is grounded on it, and a post-distill **verify gate** flags commit hashes and repo-path tokens the FactSheet can't vouch for. Trust-critical tokens are enforced by code, not by prompt wishes.
+> The core contract: *human-authored intent + machine-observed actual, reconciled locally and
+> audibly, with the human keeping judgment.* OmniProj never writes to your source repositories; it
+> only reads them, and it records its own state in a local store you control.
+
+The first proven loop (this is R0):
+
+```text
+Projects Index  →  re-enter one project  →  see the current commitment and the observed actual
+                →  confirm / complete / replace / clear one action  →  work in your real repo
+                →  observed activity flows back on the next refresh
+```
+
+R0 deliberately ships **only** the Projects surface. There is no Agent chat, notifications,
+Attention inbox, Git graph, decisions log, settings screen, or activity sparkline in R0 — those
+are deferred until the re-entry loop is proven in daily use (see [Dogfood gate](#dogfood-gate)).
 
 ---
 
-- **Platform:** macOS & Linux; the Tauri desktop app (in progress) targets macOS first.
-- **Privacy:** persistent state stays **local** in `~/.omniproj`. Distillation sends a **scrubbed** digest to your configured LLM provider — sensitive paths (`.env*`, `*.key`, `*.pem`, `id_rsa*`, `secrets/`, …) are dropped and common secret shapes (`sk-…`, `AKIA…`, `Bearer …`) are masked, both on by default. Run `omniproj digest` to preview the **exact** outbound text before it leaves the machine, or point `default_model` at a local **Ollama** model so nothing leaves at all. → [Privacy boundary](#privacy-boundary) for the full contract.
+## Platform & privacy
 
----
+- **Platform:** the Tauri desktop app targets **macOS** as the R0 acceptance platform (Linux is
+  used for CI). Rust + React inside a native webview.
+- **Local by default:** all persistent state lives under `~/.omniproj` (override with the
+  `OMNIPROJ_HOME` environment variable). Nothing about your projects leaves the machine in R0.
+- **Source repositories are read-only.** OmniProj runs read-only Git commands against your repos
+  and writes only to its own store. A move/rename never corrupts a project — you relink it.
 
-## Demo
+## Local file layout
 
-*Re-entry in seconds: register a project, then `omniproj recall` prints the stored briefing / open questions / decisions with **no LLM call**:*
+Each project gets a stable, permanent `ProjectId` and its own directory:
 
-```console
-$ omniproj add ~/code/photon-tracer
-[omniproj] registered photon-tracer [f4cab7831a56170f] -> ~/code/photon-tracer
-
-$ omniproj recall
-# OmniProj recall — photon-tracer (last distilled: 2026-07-12T09:15:41Z)
-
-## briefing
-On `feat/adaptive-sampling` (HEAD f435e4e). Adaptive Monte-Carlo sampler now
-converges ~2x faster on the caustics scene; the variance-threshold path landed
-this session. Back-to-work first step: wire the new sampler into
-`render::integrate` behind the `--adaptive` flag.
-
-## open
-- Denoiser still assumes fixed samples/pixel — the adaptive count must be threaded
-  through `render::integrate` before it can ship.
-- Caustics regression scene not yet in CI. ⚠ (test count self-reported this
-  session, not verified against a live run)
-
-## decisions
-- 2026-07-12T09:15:41Z — Chose stratified over Halton sequences: better cache
-  locality on the tiled backend (3f062b1).
+```text
+~/.omniproj/
+  meta.toml                        # (schema v2) registry — not per project
+  projects/<ProjectId>/
+    meta.toml                      # this project's registry record + ProjectSource envelope
+    notes/project.md               # your single human-state document: TOML front matter +
+                                   #   a byte-preserved Markdown body. OmniProj never rewrites
+                                   #   your prose; it only edits the front matter atomically.
+    cache/r0-observation.json      # last successful repository observation (derived, regenerable)
+    auto/  learned.md              # legacy pre-R0 documents — preserved untouched, not used by R0
 ```
 
-## How it works
+- **`ProjectId` is permanent.** Relinking a moved repository changes only
+  `ProjectSource.location`, never the identity — every cache and index entry stays keyed by
+  `ProjectId`, so history and search survive a move.
+- Every store mutation is **atomic** and **audited** with the exact paths it touched. A human
+  mutation uses an expected revision and appends to an immutable transition history.
 
-```
-capture → ground → distill → verify → (learn / curate)
- (no LLM)  (no LLM)  (the ONE     (no LLM,
-                      LLM call)    deterministic)
-```
+## Migration & recovery
 
-- **Capture** — git log/status/diff + Claude Code & Codex transcripts for the project directory. Passive; never writes to your repo.
-- **Ground** — a `FactSheet` of verified git facts (branch, HEAD, commit hashes, repo paths) extracted deterministically; refresh gating separately tracks a dirty-worktree fingerprint.
-- **Distill** — one LLM call turns the substrate into `briefing` / `decisions` / `open`. Provider-neutral: Anthropic, OpenAI, DeepSeek, Groq, OpenRouter, Gemini, Ollama, any OpenAI-compatible endpoint.
-- **Verify** — commit hashes and repo-relative file paths in the output are checked against FactSheet whitelists; unverified ones get flagged `⚠`, never silently passed.
-> The distill/verify pipeline above ships as library code in `omniproj-distill`; the CLI
-> commands that drove it end-to-end (`briefing`/`refresh`/`correct`/`curate`/`reconcile`)
-> were removed in the desktop pivot and will return as desktop actions.
+- A pre-R0 (schema v1) store migrates **idempotently** to schema v2: running it twice produces an
+  identical tree, and it **never changes your legacy human/agent documents** (`notes/`, `plan.md`,
+  `auto/`, `learned.md` are byte-preserved).
+- If a source repository is **missing, moved, unreadable, non-Git, bare, or has an unborn/detached
+  HEAD**, OmniProj keeps showing the **last successful observation** with its timestamp and offers
+  a **Relink** action — it never claims "no activity" when it simply could not read the source.
 
-Your files are ground truth (charter §5 原则4). AI-written state lives in `auto/`, your own notes in `notes/` — physically separate, and **the AI never silently overwrites your edits**. `omniproj recall` surfaces your `notes/` alongside any stored AI state.
+## Using it
 
-All state lives in `~/.omniproj` — plain markdown, versioned by its own git repo (every write is an independent, revertable commit). Nothing is ever written into your project.
+### Canonical routes
 
-The store records its on-disk layout in `~/.omniproj/SCHEMA_VERSION`. Upgrades are forward-compat-strict: a newer OmniProj migrates an older store forward (stepwise, each migration a revertable commit), but an **older** binary refuses to touch a store written by a newer one rather than silently downgrading it. A pre-versioning `~/.omniproj` is adopted as v1 non-destructively (nothing is converted).
+R0 uses real path-based routes (never hash routes):
 
-## Quickstart
-
-```sh
-# 1. Install (build from source; binaries on the Releases page)
-cargo install --git https://github.com/SuooL/OmniProj omniproj-cli
-
-# 2. Configure a model (any OpenAI-compatible provider works)
-omniproj init                          # writes ~/.omniproj/config.toml
-export DEEPSEEK_API_KEY=sk-...      # or ANTHROPIC_API_KEY, OPENAI_API_KEY, ...
-
-# 3. Register a project and start a next-action list
-omniproj add ~/code/my-project
-omniproj note add "wire the new sampler into render::integrate"
-omniproj recall                        # print stored context + your notes (no LLM)
-```
-
-> Automatic background refresh (the daemon) and the one-shot `briefing` distill were removed
-> in the desktop pivot; keeping projects fresh moves into the Tauri app. The CLI today is for
-> registration, your `notes/` next-actions, `clarify`, `search`, `recall`, and `digest`.
-
-### Privacy boundary
-
-Persistent state stays local in `~/.omniproj`, but distillation sends the captured digest (git/session-derived text) to your configured LLM provider unless you select a local endpoint such as Ollama. Before sending, OmniProj scrubs the **outbound digest**: sensitive paths (`.env*`, `*.key`, `*.pem`, `id_rsa*`, `secrets/`, `credentials*`, …) are dropped and common secret shapes (`sk-…`, `AKIA…`, `Bearer …`, `KEY=value`) are masked — both on by default. Run `omniproj digest` to see the **exact** text that would leave the machine before it does. For a nothing-leaves-the-machine setup, point `default_model` at a local Ollama model. The deny-list is configurable (`[privacy] deny_globs`) and masking can be turned off per run with `--no-redact` (the deny-list still applies). Treat captured sessions as potentially sensitive.
-
-### Agent integration (hooks)
-
-`omniproj recall` is the no-LLM instant recall built for SessionStart/SessionEnd hooks — drop it into your agent's hook config to print the stored context + your `notes/` at session start. (The MCP server (`omniproj mcp`) was removed in the desktop pivot; the desktop app will own richer agent integration.)
-
-## Commands
-
-| Command | What it does |
+| Route | What it shows |
 |---|---|
-| `omniproj add / list / remove` | register projects (state lives in `~/.omniproj`, never your repo) |
-| `omniproj note [add\|done\|rm]` / `omniproj next` | your next-action list per project (`notes/next.md`, user ground truth) / cross-project overview |
-| `omniproj clarify <id>` | one bounded round of adversarial questioning on a not-yet-clear item (标记+理由, never a recommendation) |
-| `omniproj recall` | print the stored re-entry context + your `notes/` (no LLM, instant — built for hooks) |
-| `omniproj search <query>` | full-text search across captured sessions (FTS5, local, CJK-aware) |
-| `omniproj digest` | inspect the raw captured substrate (no LLM) |
-| `omniproj stats` | per-project state-file sizes + store history |
-| `omniproj providers` / `omniproj init` | provider catalog / starter config |
+| `/` | redirects to `/projects` |
+| `/projects` | the dense operating **Index** (one row per project) |
+| `/projects/:projectId` | redirects to that project's canonical Overview |
+| `/projects/:projectId/overview` | the **Project Overview** — a **Peek** over the Index when opened from a row on a wide window (≥ 800 px), or a **full page** on direct access / narrow windows |
 
-> **Pivoting to a desktop app.** OmniProj is moving from this CLI to a Tauri desktop
-> "project advancer" (see [`docs/desktop-design.md`](docs/desktop-design.md)). The background
-> daemon, the axum web dashboard, and the briefing/opinion/curate/eval distillation surface
-> were removed in that teardown; the CLI now keeps project registration plus the capture-side
-> and notes utilities the desktop has not yet subsumed. The higher-level pitch above still
-> describes the pre-pivot product and will be rewritten as the desktop app lands.
+On restart, OmniProj returns you to the last canonical URL; an explicit deep link always wins.
 
-## Architecture
+### Keyboard shortcuts
 
-Rust workspace, hexagonal core. One binary (`omniproj`) today; a Tauri desktop shell (`omniproj-desktop`) is being built out.
+| Key | Action |
+|---|---|
+| `Cmd/Ctrl + F` | focus the local project filter |
+| `Cmd/Ctrl + N` | open **Add Project** |
+| `Cmd/Ctrl + R` | pull-refresh (re-observe sources); prevents the browser reload only while the OmniProj window is focused |
+| `Enter` | open the focused project |
+| `Esc` | close the top surface — the Add Project modal before the Peek — and restore focus to the originating row |
+| `Tab` / `Shift+Tab` | standard control navigation |
 
+### The Index and the seven-day review rule
+
+The Index is ordered in a **deterministic review order** — source unavailable, setup incomplete,
+needs commitment, review action, scheduled review — explicitly **not** a priority or health
+ranking. A transparent, opt-in sort (name, recently observed) is available; the default is always
+the review order.
+
+Beside the order label the Index shows **`Commitment review interval: 7 days`**, read from the
+backend `review_policy` (never a hard-coded frontend constant). A commitment with no confirmed
+activity within that window surfaces a *Review action* signal. All color is redundant with visible
+text, and there is no arbitrary-color badge.
+
+### Editing state
+
+Every human change is an **explicit Save** — a blur never persists anything. Setup completes
+atomically (objective + desired outcome + first commitment in one write). Commitment actions (set,
+confirm, complete, replace, clear) and **Undo** append to history. If a save conflicts with a newer
+revision, OmniProj refetches and keeps your draft; if a write's audit commit fails after the state
+is durable, it reloads the saved state and never re-sends your change.
+
+## Build, run, and test
+
+```bash
+# Rust workspace
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo build --workspace --locked
+cargo test --workspace --locked
+
+# Frontend (crates/omniproj-desktop/web)
+npm ci
+npm run build          # tsc + vite
+npm test               # Vitest unit tests
+npx playwright install chromium
+npm run test:e2e       # Playwright: core loop, responsive, accessibility
+
+# Desktop app (from crates/omniproj-desktop)
+cargo tauri dev        # run the app in development
+cargo tauri build      # production bundle
 ```
-omniproj-core      domain types, ~/.omniproj layout, FactSheet (no async/net/llm)
-omniproj-capture   git + Claude Code/Codex parsers → unified Session
-omniproj-distill   the only crate that links an LLM (provider adapters + verify gate + clarify)
-omniproj-index     disposable FTS5 index over raw normalized sessions
-omniproj-cli       clap CLI (the `omniproj` binary)
-omniproj-desktop   Tauri desktop shell (WIP — the pivot target)
-```
 
-## Platform support
+CI runs the frontend unit/build job, a separate Playwright e2e job, and the Rust workspace job on
+every PR to `dev`/`main`.
 
-macOS and Linux; the Tauri desktop app targets macOS first. See the [banner](#omniproj) at the top for the privacy boundary summary.
+## Dogfood gate
 
-## Status
+Passing the engineering gates only **begins** dogfood — it does not declare success. R1 (Agent
+capabilities, deeper surfaces) stays blocked until the re-entry loop earns it in real use:
 
-**In transition.** The shipped CLI product (capture → distill → verify, background daemon, dashboard, opinion, MCP) is being pivoted to a Tauri desktop "project advancer" (see [`docs/desktop-design.md`](docs/desktop-design.md)). The daemon, axum dashboard, and distillation/opinion/eval CLI surface have been removed; `omniproj-core` / `omniproj-capture` / `omniproj-distill` (provider + verify + clarify) and the FTS5 index are retained and being rebuilt behind the desktop app. See [CHANGELOG.md](CHANGELOG.md).
+- **2–4 weeks** of daily use,
+- across **at least five real projects**,
+- producing **at least twenty re-entry events**, with the agreed re-entry metrics recorded.
 
-## License
+These are **product-learning thresholds to force honest evaluation — not scientific universals.**
+Navigation and features are earned by a repeated, durable workflow, not added speculatively.
 
-[MIT](LICENSE)
+---
+
+*A trimmed command-line interface (`omniproj`) also exists for registering and inspecting projects;
+the desktop app is the R0 product.*

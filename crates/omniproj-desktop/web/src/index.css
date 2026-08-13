@@ -18,7 +18,7 @@
   --op-text-primary: #17202a;
   --op-text-secondary: #4b5b6b;
   /* Tertiary must still clear 4.5:1 on the canvas for the necessary text that uses it
-     (definition terms, source path, muted notes): #5f6e7e ~= 4.6:1 on #f5f7fa. */
+     (definition terms, source path, muted notes) — this value measures ~4.6:1. */
   --op-text-tertiary: #5f6e7e;
   --op-text-inverse: #ffffff;
 
