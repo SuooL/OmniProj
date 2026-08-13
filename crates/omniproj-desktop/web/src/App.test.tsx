@@ -176,11 +176,11 @@ describe("background-location Peek", () => {
 
 describe("filter/sort in search params", () => {
   it("reflects q and sort from the canonical search params", async () => {
-    renderAppAt("/projects?q=alpha&sort=recent");
+    renderAppAt("/projects?q=alpha&sort=name", [indexItem({ name: "Alpha" })]);
     await screen.findByTestId("projects-index");
     expect(screen.getByLabelText(/filter projects/i)).toHaveValue("alpha");
-    expect(screen.getByTestId("index-active-filter")).toHaveTextContent(
-      "alpha|recent",
+    expect(screen.getByRole("combobox", { name: /review order/i })).toHaveValue(
+      "name",
     );
   });
 });

@@ -157,9 +157,6 @@ describe("review-fix regressions", () => {
     await user.type(screen.getByLabelText(/filter projects/i), "beta");
 
     expect(window.location.search).toBe("?q=beta");
-    expect(screen.getByTestId("index-active-filter")).toHaveTextContent(
-      "beta|review",
-    );
   });
 
   it("dismissing a Peek with Escape pops history so Back does not reopen it", async () => {
