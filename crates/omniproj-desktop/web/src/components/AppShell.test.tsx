@@ -124,7 +124,7 @@ describe("stacked Escape", () => {
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
       within(await screen.findByTestId("projects-index")).getByRole("link", {
-        name: "Alpha",
+        name: /^Alpha\b/,
       }),
     );
     await screen.findByTestId("overview-peek");
@@ -164,7 +164,7 @@ describe("review-fix regressions", () => {
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
       within(await screen.findByTestId("projects-index")).getByRole("link", {
-        name: "Alpha",
+        name: /^Alpha\b/,
       }),
     );
     await screen.findByTestId("overview-peek");

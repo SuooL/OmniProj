@@ -9,6 +9,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -127,6 +128,10 @@ export function AppShell() {
   }, [announce, queryClient]);
 
   const openAddProject = useCallback(() => setAddProjectOpen(true), []);
+  const appActions = useMemo(
+    () => ({ openAddProject, refresh: onRefresh }),
+    [openAddProject, onRefresh],
+  );
 
   // Escape closes only the topmost surface: the Add Project modal before the Peek. Closing a
   // Peek pops history (rather than pushing a fresh Index entry) so the original Index entry —
@@ -151,7 +156,7 @@ export function AppShell() {
 
   return (
     <AnnouncerContext.Provider value={announce}>
-      <AppActionsContext.Provider value={{ openAddProject, refresh: onRefresh }}>
+      <AppActionsContext.Provider value={appActions}>
       <div className="app-shell">
         <header className="app-shell__bar">
           <nav aria-label="Primary">

@@ -32,8 +32,11 @@ function renderIndex(
   );
 }
 
+// The row link's accessible name is a composed summary; the stable visible name is .op-row__name.
 function linkOrder(): string[] {
-  return screen.getAllByRole("link").map((l) => l.getAttribute("aria-label") ?? "");
+  return screen
+    .getAllByRole("link")
+    .map((l) => l.querySelector(".op-row__name")?.textContent ?? "");
 }
 
 describe("headers and policy", () => {
@@ -80,6 +83,22 @@ describe("deterministic order and transparent sort", () => {
   it("applies a transparent name sort only when opted in", () => {
     renderIndex(projects, { url: "/projects?sort=name" });
     expect(linkOrder()).toEqual(["Alpha", "Bravo", "Charlie"]);
+  });
+
+  it("never hoists a high-priority review reason above the received order", () => {
+    // The backend would sort a source_unavailable project first; here it arrives LAST. The
+    // frontend must render it last (it preserves the backend order and never re-ranks by reason).
+    const outOfOrder = [
+      indexItem({ project_id: projectId("x"), name: "Xray", review_reasons: [] }),
+      indexItem({ project_id: projectId("y"), name: "Yankee", review_reasons: [] }),
+      indexItem({
+        project_id: projectId("z"),
+        name: "Zulu",
+        review_reasons: [reviewReason("source_unavailable")],
+      }),
+    ];
+    renderIndex(outOfOrder);
+    expect(linkOrder()).toEqual(["Xray", "Yankee", "Zulu"]);
   });
 });
 

@@ -29,8 +29,10 @@ function renderRow(item = indexItem()) {
 describe("four fields behind one canonical link", () => {
   it("links to the canonical Overview with the project name as its accessible name", () => {
     renderRow(indexItem({ project_id: projectId("p-42"), name: "Atlas" }));
-    const link = screen.getByRole("link", { name: "Atlas" });
+    const link = screen.getByRole("link", { name: /^Atlas\b/ });
     expect(link).toHaveAttribute("href", "/projects/p-42/overview");
+    // The composed accessible name conveys the whole row, not just the project name.
+    expect(link).toHaveAccessibleName(/Atlas\. .*Commitment/);
   });
 
   it("shows the commitment text and the observed branch, SHA subject, and time", () => {

@@ -80,13 +80,15 @@ export function ProjectsIndex({
     setSearchParams(next, { replace: true, state: null });
   };
 
+  const nonArchived = useMemo(() => excludeArchived(projects), [projects]);
   const visible = useMemo(() => {
-    const base = applyReviewFilter(excludeArchived(projects), filter);
+    const base = applyReviewFilter(nonArchived, filter);
     return applySort(filterByText(base, query), sort);
-  }, [projects, filter, query, sort]);
+  }, [nonArchived, filter, query, sort]);
 
-  // A truly empty store (no projects at all) offers the primary recovery action.
-  if (projects.length === 0) {
+  // A store with no non-archived projects offers the primary recovery action (an all-archived
+  // store is empty for R0 purposes, not a dead "no matches" screen).
+  if (nonArchived.length === 0) {
     return (
       <section data-testid="projects-index-empty" aria-labelledby="projects-empty-heading">
         <h2 id="projects-empty-heading">No projects yet</h2>

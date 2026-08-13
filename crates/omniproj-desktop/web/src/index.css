@@ -321,7 +321,9 @@ body {
   color: var(--op-text-tertiary);
 }
 .op-observed-note {
-  font-size: var(--op-text-size-micro);
+  /* Carries real information ("no commits", "N changed", commits-since), so it stays at the
+     12px necessary-text floor, not the 11px micro size. */
+  font-size: var(--op-text-size-necessary);
   color: var(--op-text-tertiary);
 }
 
