@@ -164,6 +164,19 @@ test("forced-colors and reduced-motion keep labels and boundaries", async ({ pag
   await page.goto("/projects");
   await expect(page.getByRole("list", { name: "Projects" })).toBeVisible();
   await expect(page.getByText("Source unavailable").first()).toBeVisible();
+
+  // Reduced motion genuinely collapses transitions (the chip normally animates on hover/press).
+  const durationMs = await page.evaluate(() => {
+    const chip = document.querySelector(".op-chip");
+    if (!chip) return null;
+    return getComputedStyle(chip)
+      .transitionDuration.split(",")
+      .map((d) => (d.trim().endsWith("ms") ? parseFloat(d) : parseFloat(d) * 1000))
+      .reduce((max, v) => Math.max(max, v), 0);
+  });
+  expect(durationMs, "transitions collapse under reduced motion").not.toBeNull();
+  expect(durationMs as number).toBeLessThanOrEqual(1);
+
   // Open a Peek: its heading and primary action remain reachable.
   await page.getByRole("link", { name: /^billing-worker/ }).click();
   await expect(page.getByTestId("overview-peek").getByRole("button", { name: "Replace" })).toBeVisible();
