@@ -7,10 +7,21 @@ test.beforeEach(async ({ page }) => {
 });
 
 async function expectNoHorizontalScroll(page: Page) {
-  const ok = await page.evaluate(
-    () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-  );
-  expect(ok, "no horizontal page scroll").toBe(true);
+  const info = await page.evaluate(() => {
+    const de = document.documentElement;
+    const offenders: string[] = [];
+    document.querySelectorAll<HTMLElement>("*").forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.right > de.clientWidth + 0.5) {
+        offenders.push(`${el.tagName}.${(el.className || "").toString().slice(0, 40)}=${Math.round(r.right)}`);
+      }
+    });
+    return { scrollWidth: de.scrollWidth, clientWidth: de.clientWidth, offenders: offenders.slice(0, 8) };
+  });
+  expect(
+    info.scrollWidth,
+    `h-overflow: scrollWidth=${info.scrollWidth} clientWidth=${info.clientWidth} offenders=${JSON.stringify(info.offenders)}`,
+  ).toBeLessThanOrEqual(info.clientWidth);
 }
 
 test("1280x800: 9-11 rows visible across four aligned columns", async ({ page }) => {
