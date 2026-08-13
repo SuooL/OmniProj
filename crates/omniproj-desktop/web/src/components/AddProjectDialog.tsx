@@ -128,6 +128,9 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
           <h2>Add Project</h2>
           <p>Register a repository without changing anything inside it.</p>
         </div>
+        <button className="op-window-button" type="button" onClick={onClose} aria-label="Close Add Project">
+          <span aria-hidden="true">×</span>
+        </button>
       </div>
 
       <div className="op-dialog__body">

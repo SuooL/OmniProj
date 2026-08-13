@@ -176,6 +176,12 @@ export function AppShell() {
     }
   }, [addProjectOpen, effectiveBackgroundLocation, navigate]);
 
+  const showBack = Boolean(effectiveBackgroundLocation) || location.pathname !== projectsPath();
+  const goBackToProjects = useCallback(() => {
+    if (effectiveBackgroundLocation) navigate(-1);
+    else navigate(projectsPath());
+  }, [effectiveBackgroundLocation, navigate]);
+
   useAppShortcuts({
     onFocusFilter: () => filterRef.current?.focus(),
     onOpenAddProject: openAddProject,
@@ -187,18 +193,18 @@ export function AppShell() {
     <AnnouncerContext.Provider value={announce}>
       <AppActionsContext.Provider value={appActions}>
       <div className="app-shell">
-        <header className="app-shell__bar">
-          <nav aria-label="Primary">
-            <Link className="app-shell__brand" to={projectsPath()} aria-label="Projects">
-              <span className="app-shell__brand-mark" aria-hidden="true">
-                O
-              </span>
-              <span className="app-shell__brand-copy" aria-hidden="true">
-                <strong>OmniProj</strong>
-                <small>Research workspace</small>
-              </span>
-            </Link>
-          </nav>
+        <header className="app-shell__bar" data-tauri-drag-region>
+          <div className="app-shell__history">
+            <button
+              aria-label="Back to projects"
+              className="op-toolbar-button"
+              type="button"
+              onClick={goBackToProjects}
+              disabled={!showBack}
+            >
+              <span aria-hidden="true">‹</span>
+            </button>
+          </div>
           <div className="app-shell__search" role="search">
             <input
               ref={filterRef}
@@ -212,31 +218,59 @@ export function AppShell() {
           </div>
           <div className="app-shell__actions">
             <button
-              className="op-button op-button--primary"
+              className="op-toolbar-button op-toolbar-button--accent"
               type="button"
               onClick={openAddProject}
+              aria-label="Add Project"
             >
-              Add Project
+              <span aria-hidden="true">＋</span>
+              <span>Add Project</span>
             </button>
             <button
-              className="op-button op-button--secondary"
+              className="op-toolbar-button"
               type="button"
               onClick={onRefresh}
+              aria-label="Refresh"
             >
-              Refresh
+              <span className="op-toolbar-button__symbol" aria-hidden="true">↻</span>
             </button>
           </div>
         </header>
 
-        {/* The main outlet renders the background (Index) while a Peek is open, so the Index
-            stays mounted underneath it. */}
-        <Routes location={effectiveBackgroundLocation ?? location}>
-          <Route path={ROUTES.root} element={<Navigate to={projectsPath()} replace />} />
-          <Route path={ROUTES.projects} element={<ProjectsIndexPage />} />
-          <Route path={ROUTES.projectById} element={<ProjectIdRedirect />} />
-          <Route path={ROUTES.projectOverview} element={<ProjectOverviewPage />} />
-          <Route path={ROUTES.notFound} element={<NotFoundPage />} />
-        </Routes>
+        <div className="app-shell__workspace">
+          <aside className="app-shell__sidebar">
+            <div className="app-shell__identity" aria-label="OmniProj">
+              <span className="app-shell__brand-mark" aria-hidden="true">O</span>
+              <span>
+                <strong>OmniProj</strong>
+                <small>Research workspace</small>
+              </span>
+            </div>
+            <nav aria-label="Primary" className="app-shell__nav">
+              <p>Workspace</p>
+              <Link className="app-shell__nav-item" to={projectsPath()} aria-label="Projects">
+                <span aria-hidden="true">▦</span>
+                <span>Projects</span>
+              </Link>
+            </nav>
+            <div className="app-shell__sidebar-footer">
+              <span><kbd>⌘F</kbd> Search</span>
+              <span><kbd>⌘N</kbd> New project</span>
+            </div>
+          </aside>
+
+          <div className="app-shell__content">
+            {/* The main outlet renders the background (Index) while a Peek is open, so the Index
+                stays mounted underneath it. */}
+            <Routes location={effectiveBackgroundLocation ?? location}>
+              <Route path={ROUTES.root} element={<Navigate to={projectsPath()} replace />} />
+              <Route path={ROUTES.projects} element={<ProjectsIndexPage />} />
+              <Route path={ROUTES.projectById} element={<ProjectIdRedirect />} />
+              <Route path={ROUTES.projectOverview} element={<ProjectOverviewPage />} />
+              <Route path={ROUTES.notFound} element={<NotFoundPage />} />
+            </Routes>
+          </div>
+        </div>
 
         {/* The Peek overlay: the same canonical Overview URL, rendered over the still-mounted
             Index — but only on a wide viewport. */}

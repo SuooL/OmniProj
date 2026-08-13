@@ -154,6 +154,36 @@ describe("stacked Escape", () => {
   });
 });
 
+describe("visible desktop navigation", () => {
+  it("closes the inspector with a visible control", async () => {
+    const user = userEvent.setup();
+    renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
+    await user.click(
+      within(await screen.findByTestId("projects-index")).getByRole("link", {
+        name: /^Alpha\b/,
+      }),
+    );
+    await screen.findByTestId("overview-peek");
+
+    await user.click(screen.getByRole("button", { name: /close inspector/i }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("overview-peek")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("projects-index")).toBeInTheDocument();
+  });
+
+  it("closes the Add Project sheet with a visible control", async () => {
+    const user = userEvent.setup();
+    renderAppAt("/projects");
+    await screen.findByTestId("projects-index");
+
+    await user.click(screen.getByRole("button", { name: "Add Project" }));
+    await user.click(screen.getByRole("button", { name: /close add project/i }));
+
+    expect(screen.queryByRole("dialog", { name: /add project/i })).not.toBeInTheDocument();
+  });
+});
+
 describe("review-fix regressions", () => {
   it("writes the filter back to the canonical q search param", async () => {
     const user = userEvent.setup();

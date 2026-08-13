@@ -48,6 +48,7 @@ export function ProjectPeek() {
   }, []);
 
   const openAsPage = () => navigate(projectOverviewPath(id), { replace: true });
+  const close = () => navigate(-1);
 
   return (
     <aside
@@ -56,6 +57,12 @@ export function ProjectPeek() {
       data-testid="overview-peek"
     >
       <div className="op-peek__rail" aria-hidden="true" />
+      <div className="op-peek__toolbar">
+        <span>Inspector</span>
+        <button className="op-window-button" type="button" onClick={close} aria-label="Close inspector">
+          <span aria-hidden="true">×</span>
+        </button>
+      </div>
       {isLoading && <p className="op-state-panel" role="status">Loading project…</p>}
       {isError && (
         <p className="op-state-panel op-state-panel--error" role="alert">
