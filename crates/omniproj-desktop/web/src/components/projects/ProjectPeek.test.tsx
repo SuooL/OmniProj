@@ -352,23 +352,10 @@ describe("lifecycle and source recovery", () => {
     expect(arg.input).toMatchObject({ status: "active", reason: null, review_at: null });
   });
 
-  it("relinks a missing source with the expected source revision and old location", async () => {
-    const user = userEvent.setup();
-    renderOverview(
-      overview({ source: projectSource({ status: "missing", location: "/old", revision: 2 }) }),
-      { relink_project_source: () => overview({ source: projectSource({ location: "/new", revision: 3 }) }) },
-    );
-    const rec = within(await screen.findByTestId("source-recovery"));
-    await user.type(rec.getByLabelText("New source location"), "/new");
-    await user.click(rec.getByRole("button", { name: "Relink source" }));
-
-    await waitFor(() => expect(callsTo("relink_project_source")).toHaveLength(1));
-    const [, arg] = callsTo("relink_project_source")[0] as [string, { input: Record<string, unknown> }];
-    expect(arg.input).toMatchObject({
-      expected_source_revision: 2,
-      expected_location: "/old",
-      new_location: "/new",
-    });
+  it("surfaces the source-recovery affordance when the source has moved (relink flow covered in AddProjectDialog.test)", async () => {
+    renderOverview(overview({ source: projectSource({ status: "missing", location: "/old", revision: 2 }) }));
+    expect(await screen.findByTestId("source-recovery")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /choose new location/i })).toBeInTheDocument();
   });
 });
 
