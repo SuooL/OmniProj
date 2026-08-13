@@ -1,57 +1,50 @@
-// The L1 dense operating index. Task 9 establishes only its routing role: it stays mounted
-// beneath a Peek, it reads its filter/sort from the canonical search params, and each row
-// opens the project's Overview as a Peek over this still-mounted Index. The dense semantic
-// grammar (columns, badges, review order) is Task 10; here rows are intentionally minimal.
+// The L1 route. It owns the Index query and its loading/error/empty/content states, then hands
+// content to the dense <ProjectsIndex>. The outer container keeps a stable testid across every
+// state. Filter and sort are canonical search params, read inside ProjectsIndex.
 
 import { useQuery } from "@tanstack/react-query";
-import { Link, useLocation, useSearchParams } from "react-router-dom";
 
-import { api } from "../api";
-import { saveIndexViewState } from "../domain/navigationSession";
-import { projectOverviewPath } from "../domain/routes";
+import { api, AppError } from "../api";
+import { ProjectsIndex } from "../components/projects/ProjectsIndex";
+import { useAppActions } from "../components/AppShell";
 import { queryKeys } from "../queryKeys";
 
-/** The canonical Index search params. Filter and sort are URL state, never session-only. */
-export function readIndexParams(params: URLSearchParams): { query: string; sort: string } {
-  return { query: params.get("q") ?? "", sort: params.get("sort") ?? "review" };
-}
-
 export function ProjectsIndexPage() {
-  const location = useLocation();
-  const [searchParams] = useSearchParams();
-  const { query, sort } = readIndexParams(searchParams);
-
-  const { data } = useQuery({
+  const { openAddProject } = useAppActions();
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: queryKeys.projectIndex,
     queryFn: api.listProjectIndex,
   });
-  const projects = data?.projects ?? [];
+
+  const now = new Date();
 
   return (
     <main data-testid="projects-index" aria-labelledby="projects-index-heading">
       <h1 id="projects-index-heading">Projects</h1>
-      <p data-testid="index-active-filter" hidden>
-        {query}|{sort}
-      </p>
-      <ul>
-        {projects.map((item) => (
-          <li key={item.project_id}>
-            <Link
-              to={projectOverviewPath(item.project_id)}
-              state={{ backgroundLocation: location }}
-              data-focus-id={item.project_id}
-              onClick={() =>
-                saveIndexViewState({
-                  scrollY: typeof window !== "undefined" ? window.scrollY : 0,
-                  focusId: item.project_id,
-                })
-              }
-            >
-              {item.name}
-            </Link>
-          </li>
-        ))}
-      </ul>
+
+      {isLoading && (
+        <p data-testid="projects-index-loading" role="status">
+          Loading projects…
+        </p>
+      )}
+
+      {isError && (
+        <div data-testid="projects-index-error" role="alert">
+          <p>{error instanceof AppError ? error.message : "Couldn't load projects."}</p>
+          <button type="button" onClick={() => refetch()}>
+            Try again
+          </button>
+        </div>
+      )}
+
+      {data && (
+        <ProjectsIndex
+          projects={data.projects}
+          reviewPolicy={data.review_policy}
+          now={now}
+          onAddProject={openAddProject}
+        />
+      )}
     </main>
   );
 }

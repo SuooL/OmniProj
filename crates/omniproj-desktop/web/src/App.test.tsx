@@ -80,7 +80,7 @@ describe("background-location Peek", () => {
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
 
     const index = await screen.findByTestId("projects-index");
-    await user.click(within(index).getByRole("link", { name: "Alpha" }));
+    await user.click(within(index).getByRole("link", { name: /^Alpha\b/ }));
 
     expect(await screen.findByTestId("overview-peek")).toBeInTheDocument();
     // The Index remains mounted beneath the Peek, and the URL is the canonical Overview.
@@ -93,7 +93,7 @@ describe("background-location Peek", () => {
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
       within(await screen.findByTestId("projects-index")).getByRole("link", {
-        name: "Alpha",
+        name: /^Alpha\b/,
       }),
     );
     await screen.findByTestId("overview-peek");
@@ -112,7 +112,7 @@ describe("background-location Peek", () => {
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
       within(await screen.findByTestId("projects-index")).getByRole("link", {
-        name: "Alpha",
+        name: /^Alpha\b/,
       }),
     );
     await screen.findByTestId("overview-peek");
@@ -141,7 +141,7 @@ describe("background-location Peek", () => {
     ]);
     await user.click(
       within(await screen.findByTestId("projects-index")).getByRole("link", {
-        name: "Weird",
+        name: /^Weird\b/,
       }),
     );
 
@@ -165,7 +165,7 @@ describe("background-location Peek", () => {
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
       within(await screen.findByTestId("projects-index")).getByRole("link", {
-        name: "Alpha",
+        name: /^Alpha\b/,
       }),
     );
     await screen.findByTestId("overview-peek");
@@ -176,11 +176,11 @@ describe("background-location Peek", () => {
 
 describe("filter/sort in search params", () => {
   it("reflects q and sort from the canonical search params", async () => {
-    renderAppAt("/projects?q=alpha&sort=recent");
+    renderAppAt("/projects?q=alpha&sort=name", [indexItem({ name: "Alpha" })]);
     await screen.findByTestId("projects-index");
     expect(screen.getByLabelText(/filter projects/i)).toHaveValue("alpha");
-    expect(screen.getByTestId("index-active-filter")).toHaveTextContent(
-      "alpha|recent",
+    expect(screen.getByRole("combobox", { name: /review order/i })).toHaveValue(
+      "name",
     );
   });
 });

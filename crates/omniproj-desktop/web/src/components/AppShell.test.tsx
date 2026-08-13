@@ -124,7 +124,7 @@ describe("stacked Escape", () => {
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
       within(await screen.findByTestId("projects-index")).getByRole("link", {
-        name: "Alpha",
+        name: /^Alpha\b/,
       }),
     );
     await screen.findByTestId("overview-peek");
@@ -157,9 +157,6 @@ describe("review-fix regressions", () => {
     await user.type(screen.getByLabelText(/filter projects/i), "beta");
 
     expect(window.location.search).toBe("?q=beta");
-    expect(screen.getByTestId("index-active-filter")).toHaveTextContent(
-      "beta|review",
-    );
   });
 
   it("dismissing a Peek with Escape pops history so Back does not reopen it", async () => {
@@ -167,7 +164,7 @@ describe("review-fix regressions", () => {
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
       within(await screen.findByTestId("projects-index")).getByRole("link", {
-        name: "Alpha",
+        name: /^Alpha\b/,
       }),
     );
     await screen.findByTestId("overview-peek");

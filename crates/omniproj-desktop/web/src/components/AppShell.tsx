@@ -9,6 +9,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -54,6 +55,23 @@ export function useAnnouncer(): Announce {
     throw new Error("useAnnouncer must be used within the AppShell");
   }
   return announce;
+}
+
+// Shell-owned actions any screen can invoke without owning the modal/refresh state (e.g. the
+// Index empty state's "Add project", or a future toolbar).
+export interface AppActions {
+  openAddProject: () => void;
+  refresh: () => void;
+}
+
+const AppActionsContext = createContext<AppActions | null>(null);
+
+export function useAppActions(): AppActions {
+  const actions = useContext(AppActionsContext);
+  if (actions === null) {
+    throw new Error("useAppActions must be used within the AppShell");
+  }
+  return actions;
 }
 
 interface BackgroundState {
@@ -110,6 +128,10 @@ export function AppShell() {
   }, [announce, queryClient]);
 
   const openAddProject = useCallback(() => setAddProjectOpen(true), []);
+  const appActions = useMemo(
+    () => ({ openAddProject, refresh: onRefresh }),
+    [openAddProject, onRefresh],
+  );
 
   // Escape closes only the topmost surface: the Add Project modal before the Peek. Closing a
   // Peek pops history (rather than pushing a fresh Index entry) so the original Index entry —
@@ -134,6 +156,7 @@ export function AppShell() {
 
   return (
     <AnnouncerContext.Provider value={announce}>
+      <AppActionsContext.Provider value={appActions}>
       <div className="app-shell">
         <header className="app-shell__bar">
           <nav aria-label="Primary">
@@ -190,6 +213,7 @@ export function AppShell() {
 
         <LiveStatus polite={polite} assertive={assertive} />
       </div>
+      </AppActionsContext.Provider>
     </AnnouncerContext.Provider>
   );
 }
