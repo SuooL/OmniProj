@@ -97,9 +97,11 @@ export function AppShell() {
       const next = new URLSearchParams(searchParams);
       if (event.target.value) next.set("q", event.target.value);
       else next.delete("q");
-      setSearchParams(next, { replace: true });
+      // Preserve the current history state so filtering while a Peek is open does not drop
+      // `backgroundLocation` and silently reinterpret the Overview URL as a full page.
+      setSearchParams(next, { replace: true, state: location.state });
     },
-    [searchParams, setSearchParams],
+    [location.state, searchParams, setSearchParams],
   );
 
   const onRefresh = useCallback(() => {
@@ -109,14 +111,17 @@ export function AppShell() {
 
   const openAddProject = useCallback(() => setAddProjectOpen(true), []);
 
-  // Escape closes only the topmost surface: the Add Project modal before the Peek.
+  // Escape closes only the topmost surface: the Add Project modal before the Peek. Closing a
+  // Peek pops history (rather than pushing a fresh Index entry) so the original Index entry —
+  // which carries scroll offset and return-focus id in history state — is restored, and Back
+  // does not re-open the just-dismissed Peek.
   const handleEscape = useCallback(() => {
     if (addProjectOpen) {
       setAddProjectOpen(false);
       return;
     }
     if (backgroundLocation) {
-      navigate(backgroundLocation.pathname + backgroundLocation.search);
+      navigate(-1);
     }
   }, [addProjectOpen, backgroundLocation, navigate]);
 

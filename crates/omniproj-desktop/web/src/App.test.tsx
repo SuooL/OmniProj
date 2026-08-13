@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
 import { App } from "./App";
 import { loadIndexViewState } from "./domain/navigationSession";
-import type { ProjectIndexItem } from "./domain/project";
+import { projectId, type ProjectIndexItem } from "./domain/project";
 import { queryKeys } from "./queryKeys";
 import { indexItem, indexResponse, reviewPolicy } from "./test/fixtures";
 
@@ -130,6 +130,33 @@ describe("background-location Peek", () => {
     });
     await waitFor(() =>
       expect(screen.getByTestId("overview-peek")).toBeInTheDocument(),
+    );
+  });
+
+  it("round-trips a project id with special characters through link, route param, and Open as page", async () => {
+    const user = userEvent.setup();
+    const weirdId = "weird/id %#";
+    renderAppAt("/projects", [
+      indexItem({ project_id: projectId(weirdId), name: "Weird" }),
+    ]);
+    await user.click(
+      within(await screen.findByTestId("projects-index")).getByRole("link", {
+        name: "Weird",
+      }),
+    );
+
+    const peek = await screen.findByTestId("overview-peek");
+    expect(within(peek).getByTestId("overview-project-id")).toHaveTextContent(
+      weirdId,
+    );
+
+    await user.click(screen.getByRole("button", { name: /open as page/i }));
+    const page = await screen.findByTestId("overview-page");
+    expect(within(page).getByTestId("overview-project-id")).toHaveTextContent(
+      weirdId,
+    );
+    expect(window.location.pathname).toBe(
+      `/projects/${encodeURIComponent(weirdId)}/overview`,
     );
   });
 
