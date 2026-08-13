@@ -37,8 +37,13 @@ export function ObservedActual({ observed, source, now }: ObservedActualProps) {
 
   if (!observed) {
     return (
-      <section aria-labelledby="observed-heading" data-testid="observed-actual">
-        <h3 id="observed-heading">Observed actual</h3>
+      <section className="op-section op-section--facts" aria-labelledby="observed-heading" data-testid="observed-actual">
+        <div className="op-section__header">
+          <div>
+            <p className="op-section__kicker">Repository facts</p>
+            <h3 id="observed-heading">Observed actual</h3>
+          </div>
+        </div>
         <p className="op-muted">
           {sourceFailed
             ? "The source could not be read; there is no earlier observation to show."
@@ -51,8 +56,14 @@ export function ObservedActual({ observed, source, now }: ObservedActualProps) {
   const observedTime = formatRelativeTime(observed.observed_at, now);
 
   return (
-    <section aria-labelledby="observed-heading" data-testid="observed-actual">
-      <h3 id="observed-heading">Observed actual</h3>
+    <section className="op-section op-section--facts" aria-labelledby="observed-heading" data-testid="observed-actual">
+      <div className="op-section__header">
+        <div>
+          <p className="op-section__kicker">Repository facts</p>
+          <h3 id="observed-heading">Observed actual</h3>
+        </div>
+        {observedTime && <span className="op-section__meta">{observedTime.text}</span>}
+      </div>
       {sourceFailed && (
         <p className="op-observed-stale" data-testid="observed-stale">
           Source currently unavailable — showing the last successful observation

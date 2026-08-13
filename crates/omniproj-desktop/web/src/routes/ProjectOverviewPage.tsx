@@ -30,14 +30,14 @@ export function ProjectOverviewPage() {
   }, [data]);
 
   return (
-    <main data-testid="overview-page" aria-labelledby="overview-heading">
+    <main className="op-overview-page" data-testid="overview-page" aria-labelledby="overview-heading">
       {isLoading && (
-        <p role="status" data-testid="overview-loading">
+        <p className="op-state-panel" role="status" data-testid="overview-loading">
           Loading project…
         </p>
       )}
       {isError && (
-        <div role="alert" data-testid="overview-error">
+        <div className="op-state-panel op-state-panel--error" role="alert" data-testid="overview-error">
           {error instanceof AppError ? error.message : "Couldn't load this project."}
         </div>
       )}

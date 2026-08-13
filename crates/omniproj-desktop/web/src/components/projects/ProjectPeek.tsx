@@ -55,9 +55,10 @@ export function ProjectPeek() {
       aria-label="Project overview"
       data-testid="overview-peek"
     >
-      {isLoading && <p role="status">Loading project…</p>}
+      <div className="op-peek__rail" aria-hidden="true" />
+      {isLoading && <p className="op-state-panel" role="status">Loading project…</p>}
       {isError && (
-        <p role="alert">
+        <p className="op-state-panel op-state-panel--error" role="alert">
           {error instanceof AppError ? error.message : "Couldn't load this project."}
         </p>
       )}

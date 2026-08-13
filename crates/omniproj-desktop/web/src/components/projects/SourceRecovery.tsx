@@ -80,36 +80,41 @@ export function SourceRecovery({ overview }: SourceRecoveryProps) {
   }
 
   return (
-    <section aria-labelledby="source-recovery-heading" data-testid="source-recovery">
-      <h3 id="source-recovery-heading">Source unavailable</h3>
+    <section className="op-section op-section--danger" aria-labelledby="source-recovery-heading" data-testid="source-recovery">
+      <div className="op-section__header">
+        <div>
+          <p className="op-section__kicker">Recovery required</p>
+          <h3 id="source-recovery-heading">Source unavailable</h3>
+        </div>
+      </div>
       <p>
         This project's source is <strong>{source.status}</strong>. Point it at the repository's new
         location to restore observations — the project keeps its identity and history.
       </p>
 
-      <button type="button" onClick={choose} disabled={mutation.pending || validating}>
+      <button className="op-button op-button--secondary" type="button" onClick={choose} disabled={mutation.pending || validating}>
         Choose new location…
       </button>
-      {newPath && <p data-testid="relink-path">{newPath}</p>}
+      {newPath && <p className="op-path-box" data-testid="relink-path">{newPath}</p>}
 
       {validation?.state === "duplicate" && (
-        <div data-testid="relink-duplicate" role="alert">
+        <div className="op-validation-card op-validation-card--warning" data-testid="relink-duplicate" role="alert">
           <p>That folder is already registered as “{validation.existing_name}”.</p>
-          <button type="button" onClick={() => openExisting(validation.existing_project_id)}>
+          <button className="op-button op-button--secondary" type="button" onClick={() => openExisting(validation.existing_project_id)}>
             Open existing project
           </button>
         </div>
       )}
 
       {validation && validation.state !== "ok" && validation.state !== "duplicate" && (
-        <p role="alert" data-testid="relink-invalid">
+        <p className="op-mutation-error" role="alert" data-testid="relink-invalid">
           That folder can't be used ({validation.state.replace(/_/g, " ")}).
         </p>
       )}
 
       {validation?.state === "ok" && (
-        <div data-testid="relink-confirm">
-          <label>
+        <div className="op-relink-confirm" data-testid="relink-confirm">
+          <label className="op-check-field">
             <input
               type="checkbox"
               aria-label="Confirm relink"
@@ -119,6 +124,7 @@ export function SourceRecovery({ overview }: SourceRecoveryProps) {
             I confirm this is the same project's repository.
           </label>
           <button
+            className="op-button op-button--primary"
             type="button"
             disabled={mutation.pending || !confirmed}
             onClick={relink}

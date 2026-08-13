@@ -36,44 +36,54 @@ export function ProjectOverview({
   return (
     <article data-testid="project-overview" className="op-overview">
       {/* 1. Identity + lifecycle */}
-      <section data-testid="overview-identity">
-        <h2 ref={headingRef} tabIndex={-1} data-testid="overview-heading" className="op-overview__name">
-          {overview.name}
-        </h2>
-        <ProjectStateTag status={overview.status} />
+      <header className="op-overview__hero" data-testid="overview-identity">
+        <div className="op-overview__hero-main">
+          <p className="op-overview__eyebrow">Project overview</p>
+          <div className="op-overview__title-row">
+            <h2 ref={headingRef} tabIndex={-1} data-testid="overview-heading" className="op-overview__name">
+              {overview.name}
+            </h2>
+            <ProjectStateTag status={overview.status} />
+          </div>
+        </div>
         {overview.source && (
           <p data-testid="source-path" className="op-source-path">
             {overview.source.location}
           </p>
         )}
+      </header>
+
+      <div className="op-overview__primary">
+        {/* 2. Expanded review reasons */}
+        <ReviewReasons reasons={overview.review_reasons} />
+
+        {/* 3. Current commitment actions — or the atomic Complete-setup framing */}
+        {isSetup ? (
+          <ProjectFramingForm overview={overview} />
+        ) : (
+          <CurrentCommitment overview={overview} />
+        )}
+      </div>
+
+      <div className="op-overview__secondary">
+        {/* 4. Observed actual + source recovery */}
+        <ObservedActual observed={overview.observed_actual} source={overview.source} now={now} />
+        <SourceRecovery overview={overview} />
+
+        {/* 5. Recent commitment transition rail */}
+        <CommitmentHistory transitions={overview.recent_transitions} now={now} />
+
         {!isSetup && (
-          <>
+          <div className="op-overview__settings">
             <ProjectFramingForm overview={overview} />
             <ProjectLifecycleControl overview={overview} />
-          </>
+          </div>
         )}
-      </section>
-
-      {/* 2. Expanded review reasons */}
-      <ReviewReasons reasons={overview.review_reasons} />
-
-      {/* 3. Current commitment actions — or the atomic Complete-setup framing */}
-      {isSetup ? (
-        <ProjectFramingForm overview={overview} />
-      ) : (
-        <CurrentCommitment overview={overview} />
-      )}
-
-      {/* 4. Observed actual + source recovery */}
-      <ObservedActual observed={overview.observed_actual} source={overview.source} now={now} />
-      <SourceRecovery overview={overview} />
-
-      {/* 5. Recent commitment transition rail */}
-      <CommitmentHistory transitions={overview.recent_transitions} now={now} />
+      </div>
 
       {/* 6. Open as page (peek only) */}
       {variant === "peek" && onOpenAsPage && (
-        <button type="button" data-testid="open-as-page" onClick={onOpenAsPage}>
+        <button className="op-button op-button--secondary op-overview__open-page" type="button" data-testid="open-as-page" onClick={onOpenAsPage}>
           Open as page
         </button>
       )}

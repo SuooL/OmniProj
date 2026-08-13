@@ -7,9 +7,12 @@ import { projectsPath } from "../domain/routes";
 
 export function NotFoundPage() {
   return (
-    <main data-testid="not-found">
+    <main className="op-empty-page" data-testid="not-found">
+      <div className="op-empty-page__mark" aria-hidden="true">404</div>
+      <p className="op-page-heading__eyebrow">Unknown route</p>
       <h1>Page not found</h1>
-      <Link to={projectsPath()}>Back to Projects</Link>
+      <p>The page may have moved, but your projects and local state are unchanged.</p>
+      <Link className="op-button op-button--primary" to={projectsPath()}>Back to Projects</Link>
     </main>
   );
 }
