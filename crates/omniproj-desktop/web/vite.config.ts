@@ -1,10 +1,11 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 // The build is embedded into the omniproj binary (see build.rs / rust-embed), so output
-// goes to a committed `dist/`. Relative base so it works served from `/`. During dev,
-// `vite` proxies /api to a locally-running `omniproj dashboard`.
+// goes to a committed `dist/`. Relative base so it works served from `/`. R0 is pull-only
+// and talks to the backend over Tauri IPC, so there is no dev HTTP proxy.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: "./",
@@ -14,7 +15,14 @@ export default defineConfig({
     // One JS + one CSS keeps the embed and the serve handler simple.
     rollupOptions: { output: { manualChunks: undefined } },
   },
-  server: {
-    proxy: { "/api": "http://127.0.0.1:7700" },
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
+    css: true,
+    globals: false,
+    clearMocks: true,
+    mockReset: true,
+    restoreMocks: true,
+    include: ["src/**/*.test.{ts,tsx}"],
   },
 });

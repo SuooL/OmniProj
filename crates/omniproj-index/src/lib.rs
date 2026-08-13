@@ -10,11 +10,10 @@
 //! default can't segment Chinese). Queries shorter than 3 chars won't match;
 //! acceptable for a recall tool.
 
-use std::path::Path;
-
 use anyhow::{Context, Result};
-use omniproj_capture::Substrate;
+use omniproj_core::{ProjectId, Session};
 use rusqlite::Connection;
+use std::path::Path;
 
 /// One search hit, newest-relevance first.
 #[derive(Debug)]
@@ -28,12 +27,12 @@ pub struct Hit {
     pub snippet: String,
 }
 
-fn index_path(hash: &str) -> std::path::PathBuf {
-    omniproj_core::cache_dir(hash).join("index.sqlite")
+pub fn index_path(project_id: &ProjectId) -> std::path::PathBuf {
+    omniproj_core::cache_dir_for(project_id).join("index.sqlite")
 }
 
-fn open(hash: &str) -> Result<Connection> {
-    let path = index_path(hash);
+fn open(project_id: &ProjectId) -> Result<Connection> {
+    let path = index_path(project_id);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -49,16 +48,16 @@ fn open(hash: &str) -> Result<Connection> {
 
 /// The substrate's change signature: rebuild only when it moves. (Full rebuild —
 /// sessions are small and parse in ms; incremental bookkeeping isn't worth it yet.)
-fn signature(sub: &Substrate) -> String {
-    let max_mtime = sub.sessions.iter().map(|s| s.mtime).fold(0.0f64, f64::max);
-    format!("{}:{max_mtime}", sub.sessions.len())
+fn signature(sessions: &[Session]) -> String {
+    let max_mtime = sessions.iter().map(|s| s.mtime).fold(0.0f64, f64::max);
+    format!("{}:{max_mtime}", sessions.len())
 }
 
 /// Ensure the project's index reflects the captured substrate. Returns true when a
 /// rebuild happened. Disposable contract: corruption → delete the file and re-run.
-pub fn ensure_index(sub: &Substrate) -> Result<bool> {
-    let conn = open(&sub.hash)?;
-    let sig = signature(sub);
+pub fn ensure_index_for(project_id: &ProjectId, sessions: &[Session]) -> Result<bool> {
+    let conn = open(project_id)?;
+    let sig = signature(sessions);
     let stored: Option<String> = conn
         .query_row(
             "SELECT value FROM idx_meta WHERE key='signature'",
@@ -74,7 +73,7 @@ pub fn ensure_index(sub: &Substrate) -> Result<bool> {
         let mut ins = conn.prepare(
             "INSERT INTO msg(text, session_id, source, role, mtime) VALUES (?1,?2,?3,?4,?5)",
         )?;
-        for s in &sub.sessions {
+        for s in sessions {
             for m in &s.messages {
                 let role = match m.role {
                     omniproj_core::Role::User => "user",
@@ -103,8 +102,8 @@ pub fn ensure_index(sub: &Substrate) -> Result<bool> {
 }
 
 /// FTS5 search over a project's indexed sessions, best-match first (bm25).
-pub fn search(hash: &str, query: &str, limit: usize) -> Result<Vec<Hit>> {
-    let conn = open(hash)?;
+pub fn search_for(project_id: &ProjectId, query: &str, limit: usize) -> Result<Vec<Hit>> {
+    let conn = open(project_id)?;
     let mut stmt = conn.prepare(
         "SELECT session_id, source, role, mtime,
                 snippet(msg, 0, '«', '»', '…', 16)
@@ -122,25 +121,40 @@ pub fn search(hash: &str, query: &str, limit: usize) -> Result<Vec<Hit>> {
             snippet: r.get(4)?,
         })
     })?;
-    Ok(rows.filter_map(|r| r.ok()).collect())
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .context("decode index search result")
 }
 
-/// Capture → ensure index → search, for a project directory. The one-call API the
-/// CLI / dashboard / MCP tool share.
+/// Legacy wrapper for callers which still hold a path-derived substrate.
+#[deprecated(note = "use ensure_index_for with a permanent ProjectId")]
+pub fn ensure_index(sub: &omniproj_capture::Substrate) -> Result<bool> {
+    ensure_index_for(&sub.project_id, &sub.sessions)
+}
+
+/// Legacy wrapper for path-derived IDs.
+#[deprecated(note = "use search_for with a permanent ProjectId")]
+pub fn search(hash: &str, query: &str, limit: usize) -> Result<Vec<Hit>> {
+    let project_id =
+        ProjectId::parse(hash).context("legacy search hash is not a valid project id")?;
+    search_for(&project_id, query, limit)
+}
+
+/// Legacy path-based capture, indexing, and search wrapper.
+#[deprecated(note = "resolve a registered ProjectSource, then use ensure_index_for and search_for")]
 pub fn search_project(dir: &Path, query: &str, limit: usize) -> Result<Vec<Hit>> {
+    #[allow(deprecated)]
     let sub = omniproj_capture::capture(dir)?;
-    ensure_index(&sub)?;
-    search(&sub.hash, query, limit)
+    ensure_index_for(&sub.project_id, &sub.sessions)?;
+    search_for(&sub.project_id, query, limit)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use omniproj_core::{Message, Role, Session, Source};
+    use omniproj_core::{Message, ProjectId, Role, Session, Source};
 
-    fn substrate(hash: &str, msgs: &[(&str, f64)]) -> Substrate {
-        let sessions = msgs
-            .iter()
+    fn test_sessions(msgs: &[(&str, f64)]) -> Vec<Session> {
+        msgs.iter()
             .enumerate()
             .map(|(i, (text, mtime))| Session {
                 id: format!("s{i}"),
@@ -156,16 +170,7 @@ mod tests {
                     ts: None,
                 }],
             })
-            .collect();
-        Substrate {
-            path: "/tmp/p".into(),
-            name: "p".into(),
-            hash: hash.into(),
-            git: None,
-            sessions,
-            claude_n: msgs.len(),
-            codex_n: 0,
-        }
+            .collect()
     }
 
     /// Serialization lock for the process-global `OMNIPROJ_HOME` env var: every test
@@ -204,27 +209,27 @@ mod tests {
     fn index_and_search_cjk_and_latin() {
         let _g = env_guard();
         let _home = TempHome::new("cjk");
-        let hash = "p";
-        let sub = substrate(
-            hash,
-            &[
-                ("我们决定存储层使用 SQLite 而不是 Postgres", 10.0),
-                ("the daemon uses a staleness floor", 20.0),
-            ],
+        let project_id = ProjectId::parse("project-index-cjk").unwrap();
+        let sessions = test_sessions(&[
+            ("我们决定存储层使用 SQLite 而不是 Postgres", 10.0),
+            ("the daemon uses a staleness floor", 20.0),
+        ]);
+        assert!(
+            ensure_index_for(&project_id, &sessions).unwrap(),
+            "first build indexes"
         );
-        assert!(ensure_index(&sub).unwrap(), "first build indexes");
 
-        let hits = search(hash, "SQLite", 10).unwrap();
+        let hits = search_for(&project_id, "SQLite", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].snippet.contains("«SQLite»"));
 
-        let hits = search(hash, "存储层", 10).unwrap();
+        let hits = search_for(&project_id, "存储层", 10).unwrap();
         assert_eq!(hits.len(), 1, "trigram tokenizer must match CJK");
 
-        let hits = search(hash, "staleness floor", 10).unwrap();
+        let hits = search_for(&project_id, "staleness floor", 10).unwrap();
         assert_eq!(hits.len(), 1);
 
-        let hits = search(hash, "nonexistent-term", 10).unwrap();
+        let hits = search_for(&project_id, "nonexistent-term", 10).unwrap();
         assert!(hits.is_empty());
     }
 
@@ -232,26 +237,34 @@ mod tests {
     fn rebuild_only_when_substrate_changes() {
         let _g = env_guard();
         let _home = TempHome::new("rebuild");
-        let hash = "p";
-        let sub = substrate(hash, &[("hello world", 10.0)]);
-        assert!(ensure_index(&sub).unwrap());
-        assert!(!ensure_index(&sub).unwrap(), "same signature → no rebuild");
+        let project_id = ProjectId::parse("project-index-rebuild").unwrap();
+        let sessions = test_sessions(&[("hello world", 10.0)]);
+        assert!(ensure_index_for(&project_id, &sessions).unwrap());
+        assert!(
+            !ensure_index_for(&project_id, &sessions).unwrap(),
+            "same signature → no rebuild"
+        );
 
-        let sub2 = substrate(hash, &[("hello world", 10.0), ("new session", 30.0)]);
-        assert!(ensure_index(&sub2).unwrap(), "new session → rebuild");
-        assert_eq!(search(hash, "new session", 10).unwrap().len(), 1);
+        let sessions2 = test_sessions(&[("hello world", 10.0), ("new session", 30.0)]);
+        assert!(
+            ensure_index_for(&project_id, &sessions2).unwrap(),
+            "new session → rebuild"
+        );
+        assert_eq!(search_for(&project_id, "new session", 10).unwrap().len(), 1);
     }
 
     #[test]
     fn query_operators_are_treated_literally() {
         let _g = env_guard();
         let _home = TempHome::new("operators");
-        let hash = "p";
-        let sub = substrate(hash, &[("plain text only here", 10.0)]);
-        ensure_index(&sub).unwrap();
+        let project_id = ProjectId::parse("project-index-operators").unwrap();
+        let sessions = test_sessions(&[("plain text only here", 10.0)]);
+        ensure_index_for(&project_id, &sessions).unwrap();
         // would be a syntax error / column filter if not quoted
-        assert!(search(hash, "text AND here", 10).unwrap().is_empty());
-        assert!(search(hash, "role:user", 10).unwrap().is_empty());
+        assert!(search_for(&project_id, "text AND here", 10)
+            .unwrap()
+            .is_empty());
+        assert!(search_for(&project_id, "role:user", 10).unwrap().is_empty());
     }
 
     /// Regression guard for the pollution bug: indexing must land under `OMNIPROJ_HOME`,
@@ -260,9 +273,10 @@ mod tests {
     fn index_stays_inside_temp_home() {
         let _g = env_guard();
         let home = TempHome::new("scoped");
-        let sub = substrate("p", &[("hello world", 10.0)]);
-        ensure_index(&sub).unwrap();
-        let path = index_path("p");
+        let project_id = ProjectId::parse("project-index-scoped").unwrap();
+        let sessions = test_sessions(&[("hello world", 10.0)]);
+        ensure_index_for(&project_id, &sessions).unwrap();
+        let path = index_path(&project_id);
         assert!(
             path.starts_with(&home.0),
             "index escaped the sandbox: {}",

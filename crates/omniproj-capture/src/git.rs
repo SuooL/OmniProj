@@ -3,7 +3,496 @@
 //! `None` for non-git projects, and the pipeline falls back to session/fs signals (spec §5).
 
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepositoryReadErrorKind {
+    PathMissing,
+    PermissionDenied,
+    NotRepository,
+    BareRepository,
+    GitUnavailable,
+    CommandFailed,
+    InvalidOutput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryReadError {
+    pub kind: RepositoryReadErrorKind,
+    pub message: String,
+}
+
+impl RepositoryReadError {
+    fn new(kind: RepositoryReadErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for RepositoryReadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for RepositoryReadError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadState {
+    Attached { branch: String },
+    Detached,
+    Unborn { branch: Option<String> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitObservation {
+    pub sha: String,
+    pub short_sha: String,
+    pub subject: String,
+    pub committed_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryObservation {
+    pub observed_at: String,
+    pub head_state: HeadState,
+    pub head_sha: Option<String>,
+    pub last_commit: Option<CommitObservation>,
+    pub changed_files: usize,
+    pub staged_files: usize,
+    pub unstaged_files: usize,
+    pub untracked_files: usize,
+    pub status_digest: String,
+}
+
+fn read_error(kind: RepositoryReadErrorKind, message: impl Into<String>) -> RepositoryReadError {
+    RepositoryReadError::new(kind, message)
+}
+
+fn validate_rfc3339_input(value: &str, field: &str) -> Result<(), RepositoryReadError> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|_| ())
+        .map_err(|_| {
+            read_error(
+                RepositoryReadErrorKind::InvalidOutput,
+                format!("invalid {field}: expected an RFC3339 timestamp"),
+            )
+        })
+}
+
+/// Run one source-repository read with optional index refreshes disabled. This helper
+/// is intentionally separate from the legacy `git` wrapper below so existing callers
+/// retain their fail-soft behavior until they migrate to typed observations.
+fn read_git(path: &Path, args: &[&str]) -> Result<Output, RepositoryReadError> {
+    Command::new("git")
+        .arg("--no-optional-locks")
+        .args(["-c", "status.renames=true"])
+        .args(["-c", "core.quotePath=false"])
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("LC_ALL", "C")
+        .output()
+        .map_err(|error| {
+            let kind = match error.kind() {
+                std::io::ErrorKind::NotFound => RepositoryReadErrorKind::GitUnavailable,
+                std::io::ErrorKind::PermissionDenied => RepositoryReadErrorKind::PermissionDenied,
+                _ => RepositoryReadErrorKind::CommandFailed,
+            };
+            read_error(kind, format!("could not run Git: {error}"))
+        })
+}
+
+fn output_text(output: &Output, operation: &str) -> Result<String, RepositoryReadError> {
+    String::from_utf8(output.stdout.clone()).map_err(|_| {
+        read_error(
+            RepositoryReadErrorKind::InvalidOutput,
+            format!("Git returned non-UTF-8 output while {operation}"),
+        )
+    })
+}
+
+fn command_error(output: &Output, operation: &str) -> RepositoryReadError {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let normalized = stderr.to_ascii_lowercase();
+    let kind = if normalized.contains("permission denied") {
+        RepositoryReadErrorKind::PermissionDenied
+    } else if normalized.contains("not a git repository")
+        || normalized.contains("does not appear to be a git repository")
+    {
+        RepositoryReadErrorKind::NotRepository
+    } else {
+        RepositoryReadErrorKind::CommandFailed
+    };
+    let detail = stderr.trim();
+    if detail.is_empty() {
+        read_error(
+            kind,
+            format!("Git failed while {operation} with status {}", output.status),
+        )
+    } else {
+        read_error(kind, format!("Git failed while {operation}: {detail}"))
+    }
+}
+
+fn ensure_readable_repository(path: &Path) -> Result<(), RepositoryReadError> {
+    match std::fs::read_dir(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(read_error(
+                RepositoryReadErrorKind::PathMissing,
+                format!("repository path does not exist: {}", path.display()),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Err(read_error(
+                RepositoryReadErrorKind::PermissionDenied,
+                format!("repository path is not readable: {}", path.display()),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotADirectory => {
+            return Err(read_error(
+                RepositoryReadErrorKind::NotRepository,
+                format!("repository path is not a directory: {}", path.display()),
+            ));
+        }
+        Err(error) => {
+            return Err(read_error(
+                RepositoryReadErrorKind::CommandFailed,
+                format!("could not inspect repository path: {error}"),
+            ));
+        }
+    }
+
+    let output = read_git(path, &["rev-parse", "--is-bare-repository"])?;
+    if !output.status.success() {
+        return Err(command_error(&output, "checking repository type"));
+    }
+    match output_text(&output, "checking repository type")?.trim() {
+        "false" => Ok(()),
+        "true" => Err(read_error(
+            RepositoryReadErrorKind::BareRepository,
+            "bare repositories cannot be observed as project sources",
+        )),
+        _ => Err(read_error(
+            RepositoryReadErrorKind::InvalidOutput,
+            "Git returned an invalid bare-repository value",
+        )),
+    }
+}
+
+fn valid_object_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn inspect_head(path: &Path) -> Result<(HeadState, Option<String>), RepositoryReadError> {
+    let symbolic = read_git(path, &["symbolic-ref", "--short", "-q", "HEAD"])?;
+    let branch = if symbolic.status.success() {
+        let branch = output_text(&symbolic, "reading symbolic HEAD")?
+            .trim_end()
+            .to_string();
+        if branch.is_empty() {
+            return Err(read_error(
+                RepositoryReadErrorKind::InvalidOutput,
+                "Git returned an empty symbolic branch name",
+            ));
+        }
+        Some(branch)
+    } else if symbolic.status.code() == Some(1) && symbolic.stderr.is_empty() {
+        None
+    } else {
+        return Err(command_error(&symbolic, "reading symbolic HEAD"));
+    };
+
+    let verified = read_git(path, &["rev-parse", "--verify", "HEAD"])?;
+    let head_sha = if verified.status.success() {
+        let sha = output_text(&verified, "resolving HEAD")?.trim().to_string();
+        if !valid_object_id(&sha) {
+            return Err(read_error(
+                RepositoryReadErrorKind::InvalidOutput,
+                "Git returned an invalid HEAD object ID",
+            ));
+        }
+        Some(sha)
+    } else {
+        let stderr = String::from_utf8_lossy(&verified.stderr).to_ascii_lowercase();
+        let unborn = branch.is_some()
+            && (stderr.contains("needed a single revision")
+                || stderr.contains("unknown revision")
+                || stderr.contains("bad revision"));
+        if unborn {
+            None
+        } else {
+            return Err(command_error(&verified, "resolving HEAD"));
+        }
+    };
+
+    let state = match (&branch, &head_sha) {
+        (Some(branch), Some(_)) => HeadState::Attached {
+            branch: branch.clone(),
+        },
+        (None, Some(_)) => HeadState::Detached,
+        (Some(branch), None) => HeadState::Unborn {
+            branch: Some(branch.clone()),
+        },
+        (None, None) => HeadState::Unborn { branch: None },
+    };
+    Ok((state, head_sha))
+}
+
+fn last_commit(
+    path: &Path,
+    head_sha: Option<&str>,
+) -> Result<Option<CommitObservation>, RepositoryReadError> {
+    let Some(head_sha) = head_sha else {
+        return Ok(None);
+    };
+    let output = read_git(
+        path,
+        &["log", "-1", "--pretty=format:%H%x1f%h%x1f%s%x1f%cI", "HEAD"],
+    )?;
+    if !output.status.success() {
+        return Err(command_error(&output, "reading the last commit"));
+    }
+    let text = output_text(&output, "reading the last commit")?;
+    let fields = text.split('\u{1f}').collect::<Vec<_>>();
+    if fields.len() != 4 {
+        return Err(read_error(
+            RepositoryReadErrorKind::InvalidOutput,
+            "Git returned malformed last-commit fields",
+        ));
+    }
+    let sha = fields[0];
+    let short_sha = fields[1];
+    let committed_at = fields[3].trim_end();
+    if !valid_object_id(sha)
+        || sha != head_sha
+        || short_sha.is_empty()
+        || !sha.starts_with(short_sha)
+        || !short_sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || chrono::DateTime::parse_from_rfc3339(committed_at).is_err()
+    {
+        return Err(read_error(
+            RepositoryReadErrorKind::InvalidOutput,
+            "Git returned invalid last-commit metadata",
+        ));
+    }
+    Ok(Some(CommitObservation {
+        sha: sha.to_string(),
+        short_sha: short_sha.to_string(),
+        subject: fields[2].to_string(),
+        committed_at: committed_at.to_string(),
+    }))
+}
+
+struct ParsedStatus {
+    changed_files: usize,
+    staged_files: usize,
+    unstaged_files: usize,
+    untracked_files: usize,
+    canonical: String,
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    encoded
+}
+
+/// Validate the XY state table from porcelain v1. The boolean result says whether
+/// the NUL record must be followed by the second path used by rename/copy states.
+fn validate_status_pair(index: u8, worktree: u8) -> Result<bool, RepositoryReadError> {
+    if matches!((index, worktree), (b'?', b'?') | (b'!', b'!')) {
+        return Ok(false);
+    }
+    if matches!(
+        (index, worktree),
+        (b'D', b'D')
+            | (b'A', b'U')
+            | (b'U', b'D')
+            | (b'U', b'A')
+            | (b'D', b'U')
+            | (b'A', b'A')
+            | (b'U', b'U')
+    ) {
+        return Ok(false);
+    }
+
+    let ordinary = match index {
+        b' ' => matches!(worktree, b'M' | b'T' | b'A' | b'D' | b'R' | b'C'),
+        b'M' | b'T' | b'A' => matches!(worktree, b' ' | b'M' | b'T' | b'D'),
+        b'D' => worktree == b' ',
+        b'R' | b'C' => matches!(worktree, b' ' | b'M' | b'T' | b'D'),
+        _ => false,
+    };
+    if !ordinary {
+        return Err(read_error(
+            RepositoryReadErrorKind::InvalidOutput,
+            "Git returned an invalid porcelain status pair",
+        ));
+    }
+    Ok(matches!(index, b'R' | b'C') || matches!(worktree, b'R' | b'C'))
+}
+
+fn parse_status(status: &[u8]) -> Result<ParsedStatus, RepositoryReadError> {
+    let mut changed = 0;
+    let mut staged = 0;
+    let mut unstaged = 0;
+    let mut untracked = 0;
+    let mut canonical_records = Vec::new();
+    let mut cursor = 0;
+
+    while cursor < status.len() {
+        let record_end = status[cursor..]
+            .iter()
+            .position(|byte| *byte == 0)
+            .map(|offset| cursor + offset)
+            .ok_or_else(|| {
+                read_error(
+                    RepositoryReadErrorKind::InvalidOutput,
+                    "Git returned an unterminated porcelain status record",
+                )
+            })?;
+        let record = &status[cursor..record_end];
+        cursor = record_end + 1;
+        if record.len() < 4 || record[2] != b' ' {
+            return Err(read_error(
+                RepositoryReadErrorKind::InvalidOutput,
+                "Git returned a malformed porcelain status record",
+            ));
+        }
+        let (index, worktree) = (record[0], record[1]);
+        let is_rename_or_copy = validate_status_pair(index, worktree)?;
+        let path = &record[3..];
+        if path.is_empty() {
+            return Err(read_error(
+                RepositoryReadErrorKind::InvalidOutput,
+                "Git returned an empty porcelain path",
+            ));
+        }
+        let original_path = if is_rename_or_copy {
+            let original_end = status[cursor..]
+                .iter()
+                .position(|byte| *byte == 0)
+                .map(|offset| cursor + offset)
+                .ok_or_else(|| {
+                    read_error(
+                        RepositoryReadErrorKind::InvalidOutput,
+                        "Git returned an unterminated rename source path",
+                    )
+                })?;
+            let original = &status[cursor..original_end];
+            cursor = original_end + 1;
+            if original.is_empty() {
+                return Err(read_error(
+                    RepositoryReadErrorKind::InvalidOutput,
+                    "Git returned an empty rename source path",
+                ));
+            }
+            Some(original)
+        } else {
+            None
+        };
+
+        match (index, worktree) {
+            (b'?', b'?') => {
+                changed += 1;
+                untracked += 1;
+            }
+            (b'!', b'!') => {}
+            _ => {
+                changed += 1;
+                if index != b' ' {
+                    staged += 1;
+                }
+                if worktree != b' ' {
+                    unstaged += 1;
+                }
+            }
+        }
+
+        let mut canonical = format!(
+            "{index:02x}{worktree:02x}|{}:{}",
+            path.len(),
+            hex_bytes(path)
+        );
+        if let Some(original) = original_path {
+            use std::fmt::Write as _;
+            write!(canonical, "|{}:{}", original.len(), hex_bytes(original))
+                .expect("writing to String cannot fail");
+        } else {
+            canonical.push_str("|-");
+        }
+        canonical_records.push(canonical);
+    }
+
+    canonical_records.sort_unstable();
+    Ok(ParsedStatus {
+        changed_files: changed,
+        staged_files: staged,
+        unstaged_files: unstaged,
+        untracked_files: untracked,
+        canonical: canonical_records.join("\n"),
+    })
+}
+
+pub fn observe_repository(
+    path: &Path,
+    observed_at: &str,
+) -> Result<RepositoryObservation, RepositoryReadError> {
+    validate_rfc3339_input(observed_at, "observed_at")?;
+    ensure_readable_repository(path)?;
+    let (head_state, head_sha) = inspect_head(path)?;
+    let last_commit = last_commit(path, head_sha.as_deref())?;
+    let output = read_git(
+        path,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )?;
+    if !output.status.success() {
+        return Err(command_error(&output, "reading repository status"));
+    }
+    let status = parse_status(&output.stdout)?;
+
+    Ok(RepositoryObservation {
+        observed_at: observed_at.to_string(),
+        head_state,
+        head_sha,
+        last_commit,
+        changed_files: status.changed_files,
+        staged_files: status.staged_files,
+        unstaged_files: status.unstaged_files,
+        untracked_files: status.untracked_files,
+        status_digest: omniproj_core::content_hash(&status.canonical),
+    })
+}
+
+pub fn count_commits_since(path: &Path, since_rfc3339: &str) -> Result<u32, RepositoryReadError> {
+    validate_rfc3339_input(since_rfc3339, "since_rfc3339")?;
+    ensure_readable_repository(path)?;
+    let (head_state, _) = inspect_head(path)?;
+    if matches!(head_state, HeadState::Unborn { .. }) {
+        return Ok(0);
+    }
+
+    let since = format!("--since={since_rfc3339}");
+    let output = read_git(path, &["rev-list", "--count", &since, "HEAD"])?;
+    if !output.status.success() {
+        return Err(command_error(&output, "counting commits"));
+    }
+    let text = output_text(&output, "counting commits")?;
+    text.trim().parse::<u32>().map_err(|_| {
+        read_error(
+            RepositoryReadErrorKind::InvalidOutput,
+            "Git returned an invalid commit count",
+        )
+    })
+}
 
 #[derive(Debug, Clone)]
 pub struct GitInfo {
@@ -111,8 +600,10 @@ pub struct CommitEntry {
     pub hash: String,
     /// Abbreviated SHA as git prints it (`%h`).
     pub short: String,
-    /// Author date, `YYYY-MM-DD`.
+    /// Legacy committer date, `YYYY-MM-DD`.
     pub date: String,
+    /// Committer timestamp in strict RFC3339 form (`%cI`).
+    pub committed_at: String,
     pub author: String,
     pub subject: String,
 }
@@ -130,8 +621,7 @@ pub fn commit_log(path: &Path, limit: usize) -> Vec<CommitEntry> {
         &[
             "log",
             &n,
-            "--date=short",
-            "--pretty=format:%H%x1f%h%x1f%ad%x1f%an%x1f%s",
+            "--pretty=format:%H%x1f%h%x1f%cI%x1f%cs%x1f%an%x1f%s",
         ],
     )
     .unwrap_or_default();
@@ -144,6 +634,7 @@ pub fn commit_log(path: &Path, limit: usize) -> Vec<CommitEntry> {
             }
             Some(CommitEntry {
                 short: f.next()?.to_string(),
+                committed_at: f.next()?.to_string(),
                 date: f.next()?.to_string(),
                 author: f.next()?.to_string(),
                 subject: f.next().unwrap_or("").to_string(),
@@ -468,6 +959,15 @@ mod tests {
         assert!(log[0].hash.starts_with(&log[0].short));
         assert_eq!(log[0].author, "omniproj-test");
         assert_eq!(log[0].date.len(), 10, "YYYY-MM-DD");
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(&log[0].committed_at).is_ok(),
+            "committed_at must retain Git's RFC3339 timestamp"
+        );
+        assert_eq!(
+            log[0].date,
+            log[0].committed_at[..10],
+            "legacy date and RFC3339 date must describe the same day"
+        );
 
         // `limit` caps the result.
         assert_eq!(commit_log(&dir, 1).len(), 1);

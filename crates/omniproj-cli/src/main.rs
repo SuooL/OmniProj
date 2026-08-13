@@ -4,6 +4,12 @@
 //! daemon, the axum dashboard, and the distill/opinion/eval surface were removed with
 //! the pivot to the Tauri desktop app.
 
+// The CLI is the legacy compatibility surface: it still uses the deprecated
+// document/store helpers (`commit_all`, `store_txn`, `NextDoc`/`PlanDoc`) pending a
+// separate migration to the R0 project_state model. Silence the staged-migration
+// deprecation warnings here, matching `omniproj-core`'s own re-export allows.
+#![allow(deprecated)]
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -180,57 +186,74 @@ fn now_rfc3339() -> String {
 fn cmd_add(path: Option<PathBuf>) -> Result<()> {
     let (abs, name) = resolve_repo(path)?;
     omniproj_core::ensure_home()?;
-    let meta = omniproj_core::register(&abs, &name, &now_rfc3339())?;
-    omniproj_core::commit_all(&format!("register {name} ({})", meta.hash));
+    let project = match omniproj_core::register_project(omniproj_core::RegisterProjectInput {
+        location: Path::new(&abs),
+        name: &name,
+        created_at: &now_rfc3339(),
+    })? {
+        omniproj_core::RegisterOutcome::Created(project) => project,
+        omniproj_core::RegisterOutcome::Existing(id) => omniproj_core::load_project(&id)?,
+    };
+    omniproj_core::commit_all(&format!("register {name} ({})", project.id));
     eprintln!(
         "[omniproj] registered {} [{}] -> {}",
-        meta.name, meta.hash, abs
+        project.name, project.id, abs
     );
     Ok(())
 }
 
 fn cmd_list() -> Result<()> {
-    let projects = omniproj_core::list_projects();
+    let projects = omniproj_core::list_project_records()?;
     if projects.is_empty() {
         eprintln!("[omniproj] no registered projects. add one with `omniproj add <repo>`");
         return Ok(());
     }
-    println!(
-        "{:<22} {:<16} {:<20} PATH",
-        "NAME", "HASH", "LAST DISTILLED"
-    );
+    println!("{:<22} {:<36} {:<20} PATH", "NAME", "ID", "LAST DISTILLED");
     for p in projects {
+        let location = p
+            .primary_git_source()
+            .map(|source| source.location.as_str())
+            .unwrap_or("(no primary source)");
         println!(
-            "{:<22} {:<16} {:<20} {}",
+            "{:<22} {:<36} {:<20} {}",
             p.name,
-            p.hash,
-            p.last_distilled.as_deref().unwrap_or("—"),
-            p.path
+            p.id,
+            p.capture_cursor.last_distilled.as_deref().unwrap_or("—"),
+            location
         );
     }
     Ok(())
 }
 
 fn cmd_remove(path: Option<PathBuf>) -> Result<()> {
-    let (abs, name) = resolve_repo(path)?;
-    let hash = omniproj_core::project_hash(&abs);
-    if omniproj_core::load_meta(&hash).is_none() {
-        eprintln!("[omniproj] {name} [{hash}] is not registered");
-        return Ok(());
-    }
-    let kept_notes = omniproj_core::remove_project(&hash);
-    omniproj_core::commit_all(&format!("unregister {name} ({hash})"));
+    let dir = resolve_dir(path)?;
+    let project = omniproj_core::find_project_by_cwd(&dir)?
+        .ok_or_else(|| anyhow::anyhow!("no registered project for {}", dir.display()))?;
+    let source = project
+        .primary_git_source()
+        .ok_or_else(|| anyhow::anyhow!("project {} has no primary source", project.id))?;
+    let kept_notes = omniproj_core::remove_project(project.id.as_str());
+    omniproj_core::commit_all(&format!("unregister {} ({})", project.name, project.id));
     if kept_notes {
-        eprintln!("[omniproj] unregistered {name} [{hash}] — kept your notes/ at ~/.omniproj/projects/{hash}/notes/");
+        eprintln!(
+            "[omniproj] unregistered {} [{}] — kept your notes/ at ~/.omniproj/projects/{}/notes/",
+            project.name, project.id, project.id
+        );
     } else {
-        eprintln!("[omniproj] unregistered {name} [{hash}]");
+        eprintln!(
+            "[omniproj] unregistered {} [{}] from {}",
+            project.name, project.id, source.location
+        );
     }
     Ok(())
 }
 
 fn cmd_digest(path: Option<PathBuf>, no_redact: bool) -> Result<()> {
-    let dir = resolve_dir(path)?;
-    let sub = omniproj_capture::capture(&dir)?;
+    let project = resolve_project(path)?;
+    let source = project
+        .primary_git_source()
+        .ok_or_else(|| anyhow::anyhow!("project {} has no primary source", project.id))?;
+    let sub = omniproj_capture::capture_source(&project.id, source)?;
     // Show exactly what WOULD be sent to the provider: config deny-list + redaction,
     // with an optional --no-redact escape (spec §5, W1-1 "see it before it leaves").
     let opts = omniproj_capture::DigestOpts {
@@ -242,8 +265,13 @@ fn cmd_digest(path: Option<PathBuf>, no_redact: bool) -> Result<()> {
 }
 
 fn cmd_search(query: String, path: Option<PathBuf>, limit: usize) -> Result<()> {
-    let dir = resolve_dir(path)?;
-    let hits = omniproj_index::search_project(&dir, &query, limit)?;
+    let project = resolve_project(path)?;
+    let source = project
+        .primary_git_source()
+        .ok_or_else(|| anyhow::anyhow!("project {} has no primary source", project.id))?;
+    let sub = omniproj_capture::capture_source(&project.id, source)?;
+    omniproj_index::ensure_index_for(&project.id, &sub.sessions)?;
+    let hits = omniproj_index::search_for(&project.id, &query, limit)?;
     if hits.is_empty() {
         eprintln!("[omniproj] no matches for \"{query}\"");
         return Ok(());
@@ -263,20 +291,17 @@ fn cmd_search(query: String, path: Option<PathBuf>, limit: usize) -> Result<()> 
 }
 
 fn cmd_recall(path: Option<PathBuf>) -> Result<()> {
-    let dir = resolve_dir(path)?;
-    let canon = std::fs::canonicalize(&dir).unwrap_or(dir);
-    let Some(meta) = omniproj_core::find_by_cwd(&canon) else {
-        anyhow::bail!(
-            "no registered project for {} — run `omniproj add` first",
-            canon.display()
-        );
-    };
-    let auto = omniproj_core::auto_dir(&meta.hash);
+    let project = resolve_project(path)?;
+    let auto = omniproj_core::auto_dir_for(&project.id);
     let mut printed = false;
     println!(
         "# OmniProj recall — {} (last distilled: {})",
-        meta.name,
-        meta.last_distilled.as_deref().unwrap_or("never")
+        project.name,
+        project
+            .capture_cursor
+            .last_distilled
+            .as_deref()
+            .unwrap_or("never")
     );
     for kind in ["briefing", "open", "decisions"] {
         if let Ok(text) = std::fs::read_to_string(auto.join(format!("{kind}.md"))) {
@@ -288,7 +313,7 @@ fn cmd_recall(path: Option<PathBuf>) -> Result<()> {
     }
     // Surface the user's own notes/ (charter §5 原则4): read-only, clearly labeled as
     // user-authored, appended after the AI state so re-entry shows both.
-    let notes = read_notes(&meta.hash);
+    let notes = read_notes(project.id.as_str());
     if !notes.is_empty() {
         println!("\n## Your notes (notes/, user-authored — AI never edits these)");
         for (name, body) in &notes {
@@ -303,13 +328,12 @@ fn cmd_recall(path: Option<PathBuf>) -> Result<()> {
 }
 
 /// Resolve the registered project for the given dir (or cwd), erroring with a nudge.
-fn resolve_project(path: Option<PathBuf>) -> Result<omniproj_core::ProjectMeta> {
+fn resolve_project(path: Option<PathBuf>) -> Result<omniproj_core::ProjectRecord> {
     let dir = resolve_dir(path)?;
-    let canon = std::fs::canonicalize(&dir).unwrap_or(dir);
-    omniproj_core::find_by_cwd(&canon).ok_or_else(|| {
+    omniproj_core::find_project_by_cwd(&dir)?.ok_or_else(|| {
         anyhow::anyhow!(
             "no registered project for {} — run `omniproj add` first",
-            canon.display()
+            dir.display()
         )
     })
 }
@@ -318,17 +342,17 @@ fn resolve_project(path: Option<PathBuf>) -> Result<omniproj_core::ProjectMeta> 
 /// user ground truth in `notes/next.md`; the AI never touches it (charter §5 原则4).
 fn cmd_note(action: Option<NoteAction>, path: Option<PathBuf>) -> Result<()> {
     let meta = resolve_project(path)?;
-    let mut doc = omniproj_core::NextDoc::load(&meta.hash);
+    let mut doc = omniproj_core::NextDoc::load(meta.id.as_str());
     match action {
         Some(NoteAction::Add { text, unclear }) => {
             let id = doc.add(&text, unclear);
-            doc.save(&meta.hash)?;
+            doc.save(meta.id.as_str())?;
             let tag = if unclear { " (unclear)" } else { "" };
             eprintln!("[omniproj] added #{id}{tag}: {}", text.trim());
         }
         Some(NoteAction::Doing { id }) => {
             if doc.set_status(&id, omniproj_core::TaskStatus::Doing) {
-                doc.save(&meta.hash)?;
+                doc.save(meta.id.as_str())?;
                 eprintln!("[omniproj] #{id} doing");
             } else {
                 anyhow::bail!("no item with id #{id} (run `omniproj note` to list)");
@@ -336,7 +360,7 @@ fn cmd_note(action: Option<NoteAction>, path: Option<PathBuf>) -> Result<()> {
         }
         Some(NoteAction::Done { id }) => {
             if doc.set_done(&id, true) {
-                doc.save(&meta.hash)?;
+                doc.save(meta.id.as_str())?;
                 eprintln!("[omniproj] #{id} done");
             } else {
                 anyhow::bail!("no item with id #{id} (run `omniproj note` to list)");
@@ -344,7 +368,7 @@ fn cmd_note(action: Option<NoteAction>, path: Option<PathBuf>) -> Result<()> {
         }
         Some(NoteAction::Due { id, date }) => {
             if doc.set_due(&id, date.clone()) {
-                doc.save(&meta.hash)?;
+                doc.save(meta.id.as_str())?;
                 match date {
                     Some(d) => eprintln!("[omniproj] #{id} due {d}"),
                     None => eprintln!("[omniproj] #{id} due date cleared"),
@@ -357,7 +381,7 @@ fn cmd_note(action: Option<NoteAction>, path: Option<PathBuf>) -> Result<()> {
         }
         Some(NoteAction::Rm { id }) => {
             if doc.remove(&id) {
-                doc.save(&meta.hash)?;
+                doc.save(meta.id.as_str())?;
                 eprintln!("[omniproj] removed #{id}");
             } else {
                 anyhow::bail!("no item with id #{id} (run `omniproj note` to list)");
@@ -407,15 +431,15 @@ fn cmd_next() -> Result<()> {
         doc: omniproj_core::NextDoc,
         touched: Option<std::time::SystemTime>,
     }
-    let mut rows: Vec<Row> = omniproj_core::list_projects()
+    let mut rows: Vec<Row> = omniproj_core::list_project_records()?
         .into_iter()
-        .map(|m| {
-            let touched = std::fs::metadata(omniproj_core::next_path(&m.hash))
+        .map(|project| {
+            let touched = std::fs::metadata(omniproj_core::next_path(project.id.as_str()))
                 .and_then(|md| md.modified())
                 .ok();
             Row {
-                name: m.name,
-                doc: omniproj_core::NextDoc::load(&m.hash),
+                name: project.name,
+                doc: omniproj_core::NextDoc::load(project.id.as_str()),
                 touched,
             }
         })
@@ -462,8 +486,8 @@ fn cmd_next() -> Result<()> {
 
 /// `~/.omniproj/projects/<hash>/auto/clarify/<id>.md` — the AI-written discussion for one
 /// note item. Under auto/ (derivative, revertable), NOT notes/ (charter §6 guardrail).
-fn clarify_file(hash: &str, id: &str) -> PathBuf {
-    omniproj_core::auto_dir(hash)
+fn clarify_file(project_id: &str, id: &str) -> PathBuf {
+    omniproj_core::auto_dir(project_id)
         .join("clarify")
         .join(format!("{id}.md"))
 }
@@ -476,7 +500,7 @@ async fn cmd_clarify(id: String, message: Option<String>, path: Option<PathBuf>)
     let meta = resolve_project(path)?;
     // The item must exist and be the user's own text (charter §5 原则4). We read it
     // read-only; clarify never edits the note.
-    let doc = omniproj_core::NextDoc::load(&meta.hash);
+    let doc = omniproj_core::NextDoc::load(meta.id.as_str());
     let item = doc
         .items()
         .find(|t| t.id.as_deref() == Some(id.as_str()))
@@ -495,7 +519,7 @@ async fn cmd_clarify(id: String, message: Option<String>, path: Option<PathBuf>)
         );
     }
 
-    let file = clarify_file(&meta.hash, &id);
+    let file = clarify_file(meta.id.as_str(), &id);
     let prior = std::fs::read_to_string(&file).unwrap_or_default();
 
     eprintln!(
@@ -522,7 +546,7 @@ async fn cmd_clarify(id: String, message: Option<String>, path: Option<PathBuf>)
 
     println!("{}", round.trim());
     // Self-monitoring counter (charter §10): how many rounds this week, across all items.
-    let week = weekly_clarify_rounds(&meta.hash, &now);
+    let week = weekly_clarify_rounds(meta.id.as_str(), &now);
     eprintln!(
         "\n[omniproj] round recorded → {} · {week} clarify round(s) this week in {}",
         file.display(),
@@ -591,7 +615,7 @@ fn read_notes(hash: &str) -> Vec<(String, String)> {
 }
 
 fn cmd_stats() -> Result<()> {
-    let projects = omniproj_core::list_projects();
+    let projects = omniproj_core::list_project_records()?;
     if projects.is_empty() {
         eprintln!("[omniproj] no registered projects");
         return Ok(());
@@ -618,7 +642,7 @@ fn cmd_stats() -> Result<()> {
         "PROJECT", "briefing", "decisions", "open", "learned", "revs"
     );
     for p in &projects {
-        let base = format!("projects/{}", p.hash);
+        let base = format!("projects/{}", p.id);
         let fmt = |v: Option<usize>| v.map(|n| n.to_string()).unwrap_or_else(|| "—".into());
         println!(
             "{:<20} {:>9} {:>10} {:>6} {:>8} {:>6}",

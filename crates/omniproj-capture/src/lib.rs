@@ -10,7 +10,10 @@ pub mod git;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
-use omniproj_core::{project_hash, FactSheet, GitFacts, Message, PrivacyPolicy, Role, Session};
+use omniproj_core::{
+    project_hash, FactSheet, GitFacts, Message, PrivacyPolicy, ProjectId, ProjectSource, Role,
+    Session,
+};
 
 pub use git::GitInfo;
 
@@ -38,9 +41,13 @@ pub fn session_owner_cwd(path: &Path) -> Option<String> {
 }
 
 pub struct Substrate {
-    pub path: String,
+    /// Permanent identity assigned at registration. This must never be derived from
+    /// a source location: sources can move while the project and its derived state
+    /// remain the same.
+    pub project_id: ProjectId,
+    /// The source location observed during this capture.
+    pub location: String,
     pub name: String,
-    pub hash: String,
     pub git: Option<GitInfo>,
     /// All matched sessions, ascending by mtime.
     pub sessions: Vec<Session>,
@@ -84,23 +91,29 @@ impl Default for DigestOpts {
     }
 }
 
-/// Capture the substrate for a project directory (git optional).
-pub fn capture(dir: &Path) -> anyhow::Result<Substrate> {
-    let abs = std::fs::canonicalize(dir)
-        .unwrap_or_else(|_| dir.to_path_buf())
+/// Capture the substrate for one registered project source (git optional).
+pub fn capture_source(project_id: &ProjectId, source: &ProjectSource) -> anyhow::Result<Substrate> {
+    if source.project_id != *project_id {
+        anyhow::bail!(
+            "source {} belongs to project {}, not {project_id}",
+            source.id,
+            source.project_id
+        );
+    }
+    let location = std::fs::canonicalize(&source.location)
+        .unwrap_or_else(|_| Path::new(&source.location).to_path_buf())
         .to_string_lossy()
         .to_string();
-    let name = Path::new(&abs)
+    let name = Path::new(&location)
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("project")
         .to_string();
-    let hash = project_hash(&abs);
-    let git = git::collect(Path::new(&abs));
+    let git = git::collect(Path::new(&location));
 
-    let mut sessions = claude::sessions_for_cwd(&abs);
+    let mut sessions = claude::sessions_for_cwd(&location);
     let claude_n = sessions.len();
-    let codex = codex::sessions_for_cwd(&abs);
+    let codex = codex::sessions_for_cwd(&location);
     let codex_n = codex.len();
     sessions.extend(codex);
     sessions.sort_by(|a, b| {
@@ -110,14 +123,41 @@ pub fn capture(dir: &Path) -> anyhow::Result<Substrate> {
     });
 
     Ok(Substrate {
-        path: abs,
+        project_id: project_id.clone(),
+        location,
         name,
-        hash,
         git,
         sessions,
         claude_n,
         codex_n,
     })
+}
+
+/// Capture by a path-derived legacy identity.
+///
+/// New callers must resolve a registered [`ProjectSource`] and call
+/// [`capture_source`], so moving a source cannot create a second project cache.
+#[deprecated(note = "resolve a registered ProjectSource and use capture_source")]
+pub fn capture(dir: &Path) -> anyhow::Result<Substrate> {
+    let location = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let location_text = location.to_string_lossy().into_owned();
+    let project_id = ProjectId::parse(project_hash(&location_text))
+        .expect("path-derived legacy project hash must be a valid ProjectId");
+    let source = ProjectSource {
+        id: omniproj_core::ProjectSourceId::parse("legacy-source")
+            .expect("static legacy source id must be valid"),
+        project_id: project_id.clone(),
+        kind: omniproj_core::ProjectSourceKind::GitRepo,
+        location: location_text,
+        is_primary: true,
+        status: omniproj_core::ProjectSourceStatus::Available,
+        created_at: "1970-01-01T00:00:00Z".into(),
+        last_observed_at: None,
+        last_successful_refresh_at: None,
+        last_error_category: None,
+        revision: 0,
+    };
+    capture_source(&project_id, &source)
 }
 
 fn fmt_mtime(secs: f64) -> String {
@@ -265,7 +305,7 @@ pub fn older_session_texts(
 pub fn render_digest(sub: &Substrate, opts: &DigestOpts) -> String {
     let mut head = String::new();
     head.push_str(&format!("# SUBSTRATE DIGEST — {}\n", sub.name));
-    head.push_str(&format!("path: {}\n", sub.path));
+    head.push_str(&format!("path: {}\n", sub.location));
     let total = sub.sessions.len();
     let shown = opts.last_k.min(total);
     head.push_str(&format!(
@@ -347,7 +387,40 @@ pub fn render_digest(sub: &Substrate, opts: &DigestOpts) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use omniproj_core::{Message, Role, Session, Source};
+    use omniproj_core::{
+        Message, ProjectId, ProjectSource, ProjectSourceId, ProjectSourceKind, ProjectSourceStatus,
+        Role, Session, Source,
+    };
+
+    #[test]
+    fn capture_source_keeps_explicit_identity_separate_from_location() {
+        let location =
+            std::env::temp_dir().join(format!("omniproj-explicit-capture-{}", std::process::id()));
+        std::fs::create_dir_all(&location).unwrap();
+        let project_id = ProjectId::parse("deadbeefdeadbeef").unwrap();
+        let source = ProjectSource {
+            id: ProjectSourceId::parse("source-id").unwrap(),
+            project_id: project_id.clone(),
+            kind: ProjectSourceKind::GitRepo,
+            location: location.to_string_lossy().into_owned(),
+            is_primary: true,
+            status: ProjectSourceStatus::Available,
+            created_at: "2026-08-11T12:00:00Z".into(),
+            last_observed_at: None,
+            last_successful_refresh_at: None,
+            last_error_category: None,
+            revision: 0,
+        };
+
+        let captured = capture_source(&project_id, &source).unwrap();
+
+        assert_eq!(captured.project_id, project_id);
+        assert_eq!(
+            captured.location,
+            std::fs::canonicalize(&location).unwrap().to_string_lossy()
+        );
+        std::fs::remove_dir_all(location).ok();
+    }
 
     fn big_session(n: usize) -> Session {
         let messages = (0..n)
@@ -376,9 +449,9 @@ mod tests {
     fn substrate(sessions: Vec<Session>) -> Substrate {
         let claude_n = sessions.len();
         Substrate {
-            path: "/tmp/p".into(),
+            project_id: ProjectId::parse("project-capture-test").unwrap(),
+            location: "/tmp/p".into(),
             name: "p".into(),
-            hash: "deadbeef".into(),
             git: None,
             sessions,
             claude_n,
@@ -488,9 +561,9 @@ mod tests {
             file_paths: vec![],
         };
         let sub = Substrate {
-            path: "/tmp/p".into(),
+            project_id: ProjectId::parse("project-capture-git").unwrap(),
+            location: "/tmp/p".into(),
             name: "p".into(),
-            hash: "deadbeef".into(),
             git: Some(git),
             sessions: vec![],
             claude_n: 0,
