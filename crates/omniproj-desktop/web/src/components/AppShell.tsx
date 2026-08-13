@@ -34,10 +34,12 @@ import {
   projectsPath,
 } from "../domain/routes";
 import { useAppShortcuts } from "../hooks/useAppShortcuts";
+import { useIsPeekViewport } from "../hooks/useMediaQuery";
 import { queryKeys } from "../queryKeys";
 import { NotFoundPage } from "../routes/NotFoundPage";
 import { ProjectOverviewPage } from "../routes/ProjectOverviewPage";
 import { ProjectsIndexPage } from "../routes/ProjectsIndexPage";
+import { ProjectPeek } from "./projects/ProjectPeek";
 import { LiveStatus } from "./LiveStatus";
 
 // --- Announcer -------------------------------------------------------------
@@ -46,15 +48,13 @@ import { LiveStatus } from "./LiveStatus";
 export type AnnounceLevel = "polite" | "assertive";
 export type Announce = (level: AnnounceLevel, message: string) => void;
 
-const AnnouncerContext = createContext<Announce | null>(null);
+// A safe no-op default so content components can render/announce in isolation (unit tests)
+// while the real shell supplies the live regions in production.
+const AnnouncerContext = createContext<Announce>(() => {});
 
 /** Announce a polite (progress) or assertive (error) message through the shell's regions. */
 export function useAnnouncer(): Announce {
-  const announce = useContext(AnnouncerContext);
-  if (announce === null) {
-    throw new Error("useAnnouncer must be used within the AppShell");
-  }
-  return announce;
+  return useContext(AnnouncerContext);
 }
 
 // Shell-owned actions any screen can invoke without owning the modal/refresh state (e.g. the
@@ -95,8 +95,12 @@ export function AppShell() {
   const [polite, setPolite] = useState("");
   const [assertive, setAssertive] = useState("");
 
+  // A Peek only exists on a wide viewport; below 800px an Index-origin navigation is a real
+  // full-page detail (no Peek, no lingering Index in the DOM/a11y tree).
+  const isPeekViewport = useIsPeekViewport();
   const backgroundLocation =
     (location.state as BackgroundState | null)?.backgroundLocation ?? null;
+  const effectiveBackgroundLocation = isPeekViewport ? backgroundLocation : null;
 
   const announce = useCallback<Announce>((level, message) => {
     if (level === "polite") setPolite(message);
@@ -142,10 +146,10 @@ export function AppShell() {
       setAddProjectOpen(false);
       return;
     }
-    if (backgroundLocation) {
+    if (effectiveBackgroundLocation) {
       navigate(-1);
     }
-  }, [addProjectOpen, backgroundLocation, navigate]);
+  }, [addProjectOpen, effectiveBackgroundLocation, navigate]);
 
   useAppShortcuts({
     onFocusFilter: () => filterRef.current?.focus(),
@@ -181,24 +185,19 @@ export function AppShell() {
 
         {/* The main outlet renders the background (Index) while a Peek is open, so the Index
             stays mounted underneath it. */}
-        <Routes location={backgroundLocation ?? location}>
+        <Routes location={effectiveBackgroundLocation ?? location}>
           <Route path={ROUTES.root} element={<Navigate to={projectsPath()} replace />} />
           <Route path={ROUTES.projects} element={<ProjectsIndexPage />} />
           <Route path={ROUTES.projectById} element={<ProjectIdRedirect />} />
-          <Route
-            path={ROUTES.projectOverview}
-            element={<ProjectOverviewPage variant="page" />}
-          />
+          <Route path={ROUTES.projectOverview} element={<ProjectOverviewPage />} />
           <Route path={ROUTES.notFound} element={<NotFoundPage />} />
         </Routes>
 
-        {/* The Peek overlay: the same canonical Overview URL, rendered over the Index. */}
-        {backgroundLocation && (
+        {/* The Peek overlay: the same canonical Overview URL, rendered over the still-mounted
+            Index — but only on a wide viewport. */}
+        {effectiveBackgroundLocation && (
           <Routes>
-            <Route
-              path={ROUTES.projectOverview}
-              element={<ProjectOverviewPage variant="peek" />}
-            />
+            <Route path={ROUTES.projectOverview} element={<ProjectPeek />} />
           </Routes>
         )}
 

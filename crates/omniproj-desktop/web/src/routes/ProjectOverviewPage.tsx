@@ -1,47 +1,49 @@
-// The L2 project Overview. One component renders the same content whether it is shown as a
-// Peek over the Index or as a direct full page — the canonical Overview URL is identical in
-// both. Task 9 wires the routing shell and the "Open as page" affordance; the review reasons,
-// commitment actions, observed-actual list, and transition rail are Task 11.
+// The L2 full-page route. It fetches the Overview and renders the shared ProjectOverview as a
+// full page (direct access or an Index-origin Peek promoted via "Open as page"). Loading /
+// error / not-found are handled here; the content and its DOM order live in ProjectOverview.
 
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useParams } from "react-router-dom";
 
+import { api, AppError } from "../api";
+import { ProjectOverview } from "../components/projects/ProjectOverview";
 import { projectId as brandProjectId } from "../domain/project";
-import { projectOverviewPath } from "../domain/routes";
+import { queryKeys } from "../queryKeys";
 
-export interface ProjectOverviewPageProps {
-  /** "peek" renders over the still-mounted Index; "page" is the direct full-page render. */
-  variant: "peek" | "page";
-}
-
-export function ProjectOverviewPage({ variant }: ProjectOverviewPageProps) {
+export function ProjectOverviewPage() {
   const params = useParams();
-  const navigate = useNavigate();
   const id = brandProjectId(params.projectId ?? "");
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: queryKeys.projectOverview(id),
+    queryFn: () => api.getProjectOverview(id),
+  });
 
-  // "Open as page" keeps the object URL and only drops the background state, so the same
-  // canonical Overview promotes from Peek to full page without a navigation to a new URL. The
-  // URL comes from the shared route builder so it can never drift from the peek/link form.
-  function openAsPage() {
-    navigate(projectOverviewPath(id), { replace: true });
-  }
-
-  const containerTestId = variant === "peek" ? "overview-peek" : "overview-page";
+  // Land focus in the content once when it first loads (direct access or a Peek promoted to a
+  // full page), so keyboard/AT users are not stranded on the shell. Setup lets Objective win.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const didFocus = useRef(false);
+  useEffect(() => {
+    if (!data || didFocus.current) return;
+    didFocus.current = true;
+    if (data.status !== "setup") headingRef.current?.focus();
+  }, [data]);
 
   return (
-    <section
-      data-testid={containerTestId}
-      role={variant === "peek" ? "dialog" : undefined}
-      aria-labelledby="overview-heading"
-    >
-      <div data-testid="overview-content">
-        <h2 id="overview-heading">Project overview</h2>
-        <p data-testid="overview-project-id">{id}</p>
-      </div>
-      {variant === "peek" && (
-        <button type="button" onClick={openAsPage}>
-          Open as page
-        </button>
+    <main data-testid="overview-page" aria-labelledby="overview-heading">
+      {isLoading && (
+        <p role="status" data-testid="overview-loading">
+          Loading project…
+        </p>
       )}
-    </section>
+      {isError && (
+        <div role="alert" data-testid="overview-error">
+          {error instanceof AppError ? error.message : "Couldn't load this project."}
+        </div>
+      )}
+      {data && (
+        <ProjectOverview overview={data} now={new Date()} variant="page" headingRef={headingRef} />
+      )}
+    </main>
   );
 }
