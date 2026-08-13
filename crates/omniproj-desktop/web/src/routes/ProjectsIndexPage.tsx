@@ -19,7 +19,11 @@ export function ProjectsIndexPage() {
   const now = new Date();
 
   return (
-    <main data-testid="projects-index" aria-labelledby="projects-index-heading">
+    <main
+      className="op-index-page"
+      data-testid="projects-index"
+      aria-labelledby="projects-index-heading"
+    >
       <header className="op-page-heading">
         <div>
           <p className="op-page-heading__eyebrow">Workspace</p>
