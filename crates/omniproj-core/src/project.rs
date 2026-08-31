@@ -16,8 +16,8 @@ use crate::paths::{omniproj_home, project_dir, project_dir_for};
 use crate::project_state::ProjectStateDoc;
 use crate::store::{
     atomic_write_store, audit_target_snapshot, begin_pending_audit, ensure_home,
-    finish_pending_audit, mark_pending_audit_applied, validate_store_directory_target,
-    validate_store_missing_target, with_store_txn, StoreError,
+    ensure_home_then_write, finish_pending_audit, mark_pending_audit_applied,
+    validate_store_directory_target, validate_store_missing_target, with_store_txn, StoreError,
 };
 
 #[cfg(test)]
@@ -418,12 +418,7 @@ pub fn register_project(
     validate_nonempty("name", input.name)?;
     ProjectStateDoc::new_setup(input.created_at)
         .map_err(|error| ProjectStoreError::InvalidInput(error.to_string()))?;
-    ensure_home()?;
-    if let Some(existing) = canonical_owner_for_location(&canonical)? {
-        return Ok(RegisterOutcome::Existing(existing));
-    }
-
-    with_store_txn(|| {
+    ensure_home_then_write(|| {
         if let Some(existing) = canonical_owner_for_location(&canonical)? {
             return Ok(RegisterOutcome::Existing(existing));
         }
@@ -513,8 +508,7 @@ pub fn relink_primary_git_source(
     input: RelinkSourceInput<'_>,
 ) -> Result<ProjectRecord, ProjectStoreError> {
     let canonical = canonical_location(input.new_location)?;
-    ensure_home()?;
-    with_store_txn(|| {
+    ensure_home_then_write(|| {
         if let Some(existing_project_id) = canonical_owner_for_location(&canonical)? {
             if existing_project_id != *input.project_id {
                 return Err(ProjectStoreError::DuplicateSource {
@@ -547,8 +541,7 @@ pub fn relink_primary_git_source(
 pub fn record_source_observation(
     input: RecordSourceObservationInput<'_>,
 ) -> Result<ProjectRecord, ProjectStoreError> {
-    ensure_home()?;
-    with_store_txn(|| {
+    ensure_home_then_write(|| {
         let mut project = load_project(input.project_id)?;
         let source = project
             .sources
@@ -989,6 +982,92 @@ fn best_prefix_match(cwd: &str, metas: Vec<ProjectMeta>) -> Option<ProjectMeta> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: a multi-project refresh fans out one IPC per project, so several
+    /// `record_source_observation` writes hit the store at once on the async runtime.
+    /// They must all commit — the in-process write gate serializes them instead of
+    /// letting the non-blocking store lock fail the losers with a spurious
+    /// `source_failed`. Without the gate the synchronized threads collide on
+    /// `try_lock_exclusive` and several return `StoreError::Io` (`WouldBlock`).
+    #[test]
+    fn concurrent_source_observations_across_projects_all_commit() {
+        let _guard = crate::env_guard();
+        let home = std::env::temp_dir().join(format!(
+            "omniproj-concurrent-observe-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::env::set_var("OMNIPROJ_HOME", &home);
+        ensure_home().unwrap();
+
+        const PROJECTS: usize = 8;
+        let mut targets = Vec::new();
+        for index in 0..PROJECTS {
+            let source = std::env::temp_dir().join(format!(
+                "omniproj-concurrent-observe-source-{index}-{}",
+                uuid::Uuid::now_v7()
+            ));
+            std::fs::create_dir_all(&source).unwrap();
+            let record = match register_project(RegisterProjectInput {
+                location: &source,
+                name: &format!("Concurrent project {index}"),
+                created_at: "2026-08-31T00:00:00Z",
+            })
+            .unwrap()
+            {
+                RegisterOutcome::Created(record) => record,
+                RegisterOutcome::Existing(id) => panic!("unexpected existing project {id}"),
+            };
+            let primary = record.primary_git_source().unwrap();
+            targets.push((
+                record.id.clone(),
+                primary.id.clone(),
+                primary.location.clone(),
+                source,
+            ));
+        }
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(PROJECTS));
+        let mut handles = Vec::new();
+        for (project_id, source_id, location, _source) in &targets {
+            let project_id = project_id.clone();
+            let source_id = source_id.clone();
+            let location = location.clone();
+            let barrier = barrier.clone();
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                record_source_observation(RecordSourceObservationInput {
+                    project_id: &project_id,
+                    source_id: &source_id,
+                    expected_source_revision: 0,
+                    expected_location: &location,
+                    attempted_at: "2026-08-31T00:00:01Z",
+                    outcome: SourceObservationOutcome::Success {
+                        successful_refresh_at: "2026-08-31T00:00:01Z",
+                    },
+                })
+                .map(|_| ())
+            }));
+        }
+
+        let failures: Vec<String> = handles
+            .into_iter()
+            .filter_map(|handle| match handle.join().unwrap() {
+                Ok(()) => None,
+                Err(error) => Some(format!("{error:?}")),
+            })
+            .collect();
+        assert!(
+            failures.is_empty(),
+            "every concurrent observation must commit; {} of {PROJECTS} failed: {failures:?}",
+            failures.len()
+        );
+
+        std::env::remove_var("OMNIPROJ_HOME");
+        std::fs::remove_dir_all(&home).unwrap();
+        for (_, _, _, source) in targets {
+            let _ = std::fs::remove_dir_all(source);
+        }
+    }
 
     #[test]
     fn startup_cleanup_cannot_delete_an_active_registration_skeleton() {

@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::ids::{CommitmentTransitionId, ProjectId, WorkItemId};
 use crate::paths::{notes_dir_for, omniproj_home};
 use crate::store::{
-    atomic_write_store, audit_target_snapshot, begin_pending_audit, ensure_home,
-    finish_pending_audit, mark_pending_audit_applied, with_store_txn, StoreError,
+    atomic_write_store, audit_target_snapshot, begin_pending_audit, ensure_home_then_write,
+    finish_pending_audit, mark_pending_audit_applied, StoreError,
 };
 
 const DOCUMENT_SCHEMA_VERSION: u32 = 1;
@@ -594,8 +594,7 @@ pub fn apply_project_command(
     occurred_at: &str,
 ) -> Result<ProjectMutation, ProjectStateError> {
     validate_command_timestamp("occurred_at", occurred_at)?;
-    ensure_home()?;
-    with_store_txn(|| {
+    ensure_home_then_write(|| {
         let home = omniproj_home();
         let path = state_path(project_id);
         let prior_state = ProjectStateDoc::load(project_id)?;
