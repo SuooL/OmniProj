@@ -8,6 +8,7 @@ import { BrowserRouter } from "react-router-dom";
 
 import { AppShell } from "./components/AppShell";
 import { restoreCanonicalRouteOnRoot } from "./domain/navigationSession";
+import { I18nProvider } from "./i18n/I18nProvider";
 
 export function App() {
   // Run the pre-mount restore exactly once, synchronously, before BrowserRouter renders. The
@@ -18,8 +19,10 @@ export function App() {
   });
 
   return (
-    <BrowserRouter>
-      <AppShell />
-    </BrowserRouter>
+    <I18nProvider>
+      <BrowserRouter>
+        <AppShell />
+      </BrowserRouter>
+    </I18nProvider>
   );
 }

@@ -11,6 +11,7 @@ import { api } from "../../api";
 import type { ProjectOverview } from "../../domain/project";
 import { useOverviewMutation, type MutationOutcome } from "../../hooks/useOverviewMutation";
 import { CommitmentStateTag } from "../semantic/CommitmentStateTag";
+import { localizeError, useI18n } from "../../i18n/I18nProvider";
 
 type ActionId = "set" | "confirm" | "complete" | "replace" | "clear" | "undo";
 
@@ -23,6 +24,7 @@ export interface CurrentCommitmentProps {
 }
 
 export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
+  const { locale, t } = useI18n();
   const mutation = useOverviewMutation();
   const commitment = overview.current_commitment;
   const [setText, setSetText] = useState("");
@@ -53,18 +55,18 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
   const doSet = () =>
     run(
       "set",
-      () => mutation.run(pid, () => api.setCommitment({ project_id: pid, expected_revision: rev, text: setText.trim() }), "Commitment set."),
+      () => mutation.run(pid, () => api.setCommitment({ project_id: pid, expected_revision: rev, text: setText.trim() }), t("commitment.setSuccess")),
       () => setSetText(""),
     );
 
   const doConfirm = () =>
     run("confirm", () =>
-      mutation.run(pid, () => api.confirmCommitment({ project_id: pid, expected_revision: rev, work_item_id: commitment!.work_item_id }), "Commitment confirmed."),
+      mutation.run(pid, () => api.confirmCommitment({ project_id: pid, expected_revision: rev, work_item_id: commitment!.work_item_id }), t("commitment.confirmSuccess")),
     );
 
   const doComplete = () =>
     run("complete", () =>
-      mutation.run(pid, () => api.completeCommitment({ project_id: pid, expected_revision: rev, work_item_id: commitment!.work_item_id }), "Commitment completed."),
+      mutation.run(pid, () => api.completeCommitment({ project_id: pid, expected_revision: rev, work_item_id: commitment!.work_item_id }), t("commitment.completeSuccess")),
     );
 
   const doReplace = () =>
@@ -81,7 +83,7 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
               text: replaceText.trim(),
               reason: replaceReason.trim(),
             }),
-          "Commitment replaced.",
+          t("commitment.replaceSuccess"),
         ),
       () => {
         setReplacing(false);
@@ -92,7 +94,7 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
 
   const doClear = () =>
     run("clear", () =>
-      mutation.run(pid, () => api.clearCommitment({ project_id: pid, expected_revision: rev, work_item_id: commitment!.work_item_id }), "Commitment cleared."),
+      mutation.run(pid, () => api.clearCommitment({ project_id: pid, expected_revision: rev, work_item_id: commitment!.work_item_id }), t("commitment.clearSuccess")),
     );
 
   const doUndo = () =>
@@ -100,7 +102,7 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
       mutation.run(
         pid,
         () => api.undoCommitmentTransition({ project_id: pid, expected_revision: rev, transition_id: overview.undoable_transition_id! }),
-        "Last change undone.",
+        t("commitment.undoSuccess"),
       ),
     );
 
@@ -111,8 +113,8 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
     <section className="op-section op-section--commitment" aria-labelledby="commitment-heading" data-testid="current-commitment">
       <div className="op-section__header">
         <div>
-          <p className="op-section__kicker">Human commitment</p>
-          <h3 id="commitment-heading">Current commitment</h3>
+          <p className="op-section__kicker">{t("commitment.kicker")}</p>
+          <h3 id="commitment-heading">{t("commitment.title")}</h3>
         </div>
         {commitment && <CommitmentStateTag status={commitment.status} />}
       </div>
@@ -123,29 +125,29 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
           <div className="op-commitment-actions">
             {commitment.confirmed_at === null && (
               <button className="op-button op-button--secondary" type="button" disabled={interactionBusy} onClick={doConfirm}>
-                Confirm
+                {t("commitment.confirm")}
               </button>
             )}
             <button className="op-button op-button--primary" type="button" disabled={interactionBusy} onClick={doComplete}>
-              Complete
+              {t("commitment.complete")}
             </button>
             <button className="op-button op-button--secondary" type="button" disabled={interactionBusy} onClick={() => setReplacing(true)}>
-              Replace
+              {t("commitment.replace")}
             </button>
             <button className="op-button op-button--ghost" type="button" disabled={interactionBusy} onClick={doClear}>
-              Clear
+              {t("commitment.clear")}
             </button>
           </div>
 
           {replacing && (
             <div className="op-replace-form" data-testid="replace-form">
               <label className="op-field">
-                <span>New commitment</span>
-                <input aria-label="New commitment" value={replaceText} disabled={interactionBusy} onChange={(e) => setReplaceText(e.target.value)} />
+                <span>{t("commitment.new")}</span>
+                <input aria-label={t("commitment.new")} value={replaceText} disabled={interactionBusy} onChange={(e) => setReplaceText(e.target.value)} />
               </label>
               <label className="op-field">
-                <span>Reason <small>Required</small></span>
-                <input aria-label="Replace reason" value={replaceReason} disabled={interactionBusy} onChange={(e) => setReplaceReason(e.target.value)} />
+                <span>{t("commitment.reason")} <small>{t("common.required")}</small></span>
+                <input aria-label={t("commitment.replaceReason")} value={replaceReason} disabled={interactionBusy} onChange={(e) => setReplaceReason(e.target.value)} />
               </label>
               <button
                 className="op-button op-button--primary"
@@ -153,10 +155,10 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
                 disabled={interactionBusy || replaceText.trim() === "" || replaceReason.trim() === ""}
                 onClick={doReplace}
               >
-                Save replacement
+                {t("commitment.saveReplacement")}
               </button>
               <button className="op-button op-button--ghost" type="button" disabled={interactionBusy} onClick={() => setReplacing(false)}>
-                Cancel
+                {t("common.cancel")}
               </button>
             </div>
           )}
@@ -164,42 +166,41 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
       ) : (
         <div className="op-set-form" data-testid="set-form">
           <label className="op-field">
-            <span>New commitment</span>
-            <input aria-label="New commitment" value={setText} disabled={interactionBusy} onChange={(e) => setSetText(e.target.value)} />
+            <span>{t("commitment.new")}</span>
+            <input aria-label={t("commitment.new")} value={setText} disabled={interactionBusy} onChange={(e) => setSetText(e.target.value)} />
           </label>
           <button className="op-button op-button--primary" type="button" disabled={interactionBusy || setText.trim() === ""} onClick={doSet}>
-            Save commitment
+            {t("commitment.save")}
           </button>
         </div>
       )}
 
       {overview.undoable_transition_id && (
         <button className="op-button op-button--ghost op-undo-button" type="button" disabled={interactionBusy} onClick={doUndo} data-testid="undo-button">
-          Undo last change
+          {t("commitment.undo")}
         </button>
       )}
 
       {outcome && outcome.status === "durable_audit_failed" && (
         <p role="status" className="op-mutation-note" data-testid="audit-failed-note">
-          State saved; the audit commit failed. Your change is durable — no need to resend.
+          {t("commitment.auditFailed")}
         </p>
       )}
       {outcome && outcome.status === "conflict" && (
         <p role="alert" className="op-mutation-error" data-testid="conflict-note">
-          This project changed since you started. The latest state is loaded; review it and
-          resubmit — your text is kept.
+          {t("commitment.conflict")}
         </p>
       )}
       {outcome && outcome.status === "error" && (
         <div role="alert" className="op-mutation-error" data-testid="write-error">
-          <p>{outcome.error.message}</p>
+          <p>{localizeError(outcome.error, locale)}</p>
           {outcome.error.recovery === "retry" && (
             <div className="op-mutation-error__actions">
               <button className="op-button op-button--secondary" type="button" disabled={interactionBusy} onClick={() => lastAction?.()}>
-                Retry
+                {t("common.retry")}
               </button>
               <button className="op-button op-button--ghost" type="button" onClick={() => copyText(draft)}>
-                Copy text
+                {t("common.copyText")}
               </button>
             </div>
           )}

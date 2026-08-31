@@ -49,6 +49,7 @@ beforeEach(() => {
   mockIpc();
   window.sessionStorage.clear();
   window.localStorage.clear();
+  window.localStorage.setItem("omniproj.locale", "en");
   window.history.replaceState(null, "", "/");
 });
 
@@ -57,6 +58,20 @@ afterEach(() => {
 });
 
 describe("canonical routes", () => {
+  it("opens in Chinese by default and can switch to English", async () => {
+    window.localStorage.removeItem("omniproj.locale");
+    const user = userEvent.setup();
+    renderAppAt("/projects");
+
+    expect(await screen.findByRole("heading", { name: "项目" })).toBeInTheDocument();
+    const language = screen.getByRole("combobox", { name: "界面语言" });
+    expect(language).toHaveValue("zh-CN");
+
+    await user.selectOptions(language, "en");
+    expect(screen.getByRole("heading", { name: "Projects" })).toBeInTheDocument();
+    expect(window.localStorage.getItem("omniproj.locale")).toBe("en");
+  });
+
   it("redirects / to /projects", async () => {
     renderAppAt("/");
     expect(await screen.findByTestId("projects-index")).toBeInTheDocument();

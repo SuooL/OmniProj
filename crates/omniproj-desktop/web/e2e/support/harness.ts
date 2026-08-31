@@ -35,6 +35,11 @@ export const SEED: Seed[] = [
  */
 export async function installMockTauri(page: Page): Promise<void> {
   await page.addInitScript((seed: Seed[]) => {
+    // Legacy interaction assertions run in the optional English locale; localization-specific
+    // tests switch this setting and verify that the application persists it across reloads.
+    if (window.localStorage.getItem("omniproj.locale") === null) {
+      window.localStorage.setItem("omniproj.locale", "en");
+    }
     const REVIEW_POLICY = { commitment_review_days: 7, rule_version: "r0-v1" };
     const REASON_LABEL: Record<string, string> = {
       source_unavailable: "Source unavailable",

@@ -10,8 +10,10 @@ import { api, AppError } from "../api";
 import { ProjectOverview } from "../components/projects/ProjectOverview";
 import { projectId as brandProjectId } from "../domain/project";
 import { queryKeys } from "../queryKeys";
+import { localizeError, useI18n } from "../i18n/I18nProvider";
 
 export function ProjectOverviewPage() {
+  const { locale, t } = useI18n();
   const params = useParams();
   const id = brandProjectId(params.projectId ?? "");
   const { data, isLoading, isError, error } = useQuery({
@@ -33,12 +35,12 @@ export function ProjectOverviewPage() {
     <main className="op-overview-page" data-testid="overview-page" aria-labelledby="overview-heading">
       {isLoading && (
         <p className="op-state-panel" role="status" data-testid="overview-loading">
-          Loading project…
+          {t("overview.loading")}
         </p>
       )}
       {isError && (
         <div className="op-state-panel op-state-panel--error" role="alert" data-testid="overview-error">
-          {error instanceof AppError ? error.message : "Couldn't load this project."}
+          {error instanceof AppError ? localizeError(error, locale) : t("overview.loadFailed")}
         </div>
       )}
       {data && (

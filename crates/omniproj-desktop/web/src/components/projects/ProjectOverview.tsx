@@ -14,6 +14,7 @@ import { ProjectFramingForm } from "./ProjectFramingForm";
 import { ProjectLifecycleControl } from "./ProjectLifecycleControl";
 import { ReviewReasons } from "./ReviewReasons";
 import { SourceRecovery } from "./SourceRecovery";
+import { useI18n } from "../../i18n/I18nProvider";
 
 export interface ProjectOverviewProps {
   overview: ProjectOverviewDto;
@@ -26,6 +27,7 @@ export function ProjectOverview({
   now,
   headingRef,
 }: ProjectOverviewProps) {
+  const { t } = useI18n();
   const isSetup = overview.status === "setup";
 
   return (
@@ -33,7 +35,7 @@ export function ProjectOverview({
       {/* 1. Identity + lifecycle */}
       <header className="op-overview__hero" data-testid="overview-identity">
         <div className="op-overview__hero-main">
-          <p className="op-overview__eyebrow">Project overview</p>
+          <p className="op-overview__eyebrow">{t("overview.title")}</p>
           <div className="op-overview__title-row">
             <h2 ref={headingRef} tabIndex={-1} data-testid="overview-heading" className="op-overview__name">
               {overview.name}

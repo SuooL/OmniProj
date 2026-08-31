@@ -8,15 +8,16 @@ import type {
   ProjectSource,
 } from "../../domain/project";
 import { formatRelativeTime } from "../../domain/projectPresentation";
+import { useI18n, type Translate } from "../../i18n/I18nProvider";
 
-function headText(head: HeadState): string {
+function headText(head: HeadState, t: Translate): string {
   switch (head.kind) {
     case "attached":
-      return `On ${head.branch}`;
+      return t("head.onBranch", { branch: head.branch });
     case "detached":
-      return "Detached HEAD";
+      return t("head.detached");
     case "unborn":
-      return head.branch ? `${head.branch} (unborn, no commits yet)` : "Unborn (no commits yet)";
+      return head.branch ? t("head.branchUnborn", { branch: head.branch }) : t("head.unborn");
   }
 }
 
@@ -33,6 +34,7 @@ export interface ObservedActualProps {
 }
 
 export function ObservedActual({ observed, source, now }: ObservedActualProps) {
+  const { locale, t } = useI18n();
   const sourceFailed = source !== null && SOURCE_FAILED.has(source.status);
 
   if (!observed) {
@@ -40,68 +42,69 @@ export function ObservedActual({ observed, source, now }: ObservedActualProps) {
       <section className="op-section op-section--facts" aria-labelledby="observed-heading" data-testid="observed-actual">
         <div className="op-section__header">
           <div>
-            <p className="op-section__kicker">Repository facts</p>
-            <h3 id="observed-heading">Observed actual</h3>
+            <p className="op-section__kicker">{t("observed.kicker")}</p>
+            <h3 id="observed-heading">{t("observed.title")}</h3>
           </div>
         </div>
         <p className="op-muted">
           {sourceFailed
-            ? "The source could not be read; there is no earlier observation to show."
-            : "Not yet observed."}
+            ? t("observed.sourceNoHistory")
+            : t("observed.notYet")}
         </p>
       </section>
     );
   }
 
-  const observedTime = formatRelativeTime(observed.observed_at, now);
+  const observedTime = formatRelativeTime(observed.observed_at, now, locale);
 
   return (
     <section className="op-section op-section--facts" aria-labelledby="observed-heading" data-testid="observed-actual">
       <div className="op-section__header">
         <div>
-          <p className="op-section__kicker">Repository facts</p>
-          <h3 id="observed-heading">Observed actual</h3>
+          <p className="op-section__kicker">{t("observed.kicker")}</p>
+          <h3 id="observed-heading">{t("observed.title")}</h3>
         </div>
         {observedTime && <span className="op-section__meta">{observedTime.text}</span>}
       </div>
       {sourceFailed && (
         <p className="op-observed-stale" data-testid="observed-stale">
-          Source currently unavailable — showing the last successful observation
-          {observedTime ? ` from ${observedTime.text}` : ""}.
+          {t("observed.stale", { time: observedTime ? t("observed.fromTime", { time: observedTime.text }) : "" })}
         </p>
       )}
       <dl className="op-dl">
-        <dt>Head</dt>
-        <dd>{headText(observed.head)}</dd>
+        <dt>{t("observed.head")}</dt>
+        <dd>{headText(observed.head, t)}</dd>
 
-        <dt>Last commit</dt>
+        <dt>{t("observed.lastCommit")}</dt>
         <dd>
           {observed.last_commit ? (
             <span title={observed.last_commit.sha}>
               {observed.last_commit.short_sha} {observed.last_commit.subject}
             </span>
           ) : (
-            "No commits yet"
+            t("row.noCommits")
           )}
         </dd>
 
-        <dt>Working tree</dt>
+        <dt>{t("observed.workingTree")}</dt>
         <dd>
-          {observed.changed_files} changed, {observed.staged_files} staged,{" "}
-          {observed.untracked_files} untracked
+          {t("observed.workingTreeValue", {
+            changed: observed.changed_files,
+            staged: observed.staged_files,
+            untracked: observed.untracked_files,
+          })}
         </dd>
 
         {observed.commits_since_commitment !== null && (
           <>
-            <dt>Since this commitment</dt>
+            <dt>{t("observed.sinceCommitment")}</dt>
             <dd>
-              {observed.commits_since_commitment} repository commit
-              {observed.commits_since_commitment === 1 ? "" : "s"} observed since it was set
+              {t("observed.commitsSince", { count: observed.commits_since_commitment })}
             </dd>
           </>
         )}
 
-        <dt>Observed</dt>
+        <dt>{t("observed.observedAt")}</dt>
         <dd title={observed.observed_at}>{observedTime ? observedTime.text : observed.observed_at}</dd>
       </dl>
     </section>

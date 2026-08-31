@@ -5,6 +5,7 @@
 
 import type { ReviewReasonCode } from "../../domain/project";
 import { toneStyle, type StatusTone } from "./tone";
+import { reviewReasonLabel, useI18n } from "../../i18n/I18nProvider";
 
 const REASON_TONE: Record<ReviewReasonCode, StatusTone> = {
   source_unavailable: "danger",
@@ -17,21 +18,22 @@ const REASON_TONE: Record<ReviewReasonCode, StatusTone> = {
 export interface ReviewSignalBadgeProps {
   reason: { code: ReviewReasonCode; label: string };
   /** The lower-priority reasons folded into `+N`, most-urgent first. */
-  hidden?: ReadonlyArray<{ label: string }>;
+  hidden?: ReadonlyArray<{ code?: ReviewReasonCode; label: string }>;
 }
 
 export function ReviewSignalBadge({ reason, hidden = [] }: ReviewSignalBadgeProps) {
+  const { locale, t } = useI18n();
   const count = hidden.length;
-  const noun = count === 1 ? "review reason" : "review reasons";
+  const labels = hidden.map((h) => h.code ? reviewReasonLabel(h.code, locale) : h.label).join(", ");
   const accessibleName =
     count > 0
-      ? `${count} more ${noun}: ${hidden.map((h) => h.label).join(", ")}`
+      ? t(count === 1 ? "review.moreOne" : "review.moreMany", { count, labels })
       : undefined;
 
   return (
     <span className="op-review-signal" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
       <span className="op-badge" style={toneStyle(REASON_TONE[reason.code])} data-reason={reason.code}>
-        {reason.label}
+        {reviewReasonLabel(reason.code, locale)}
       </span>
       {count > 0 && (
         <span className="op-plusn" aria-label={accessibleName}>

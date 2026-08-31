@@ -9,12 +9,14 @@ import { useState } from "react";
 import { api } from "../../api";
 import type { ProjectOverview } from "../../domain/project";
 import { useOverviewMutation } from "../../hooks/useOverviewMutation";
+import { localizeError, useI18n } from "../../i18n/I18nProvider";
 
 export interface ProjectFramingFormProps {
   overview: ProjectOverview;
 }
 
 export function ProjectFramingForm({ overview }: ProjectFramingFormProps) {
+  const { locale, t } = useI18n();
   const mutation = useOverviewMutation();
   const isSetup = overview.status === "setup";
   const [objective, setObjective] = useState(overview.objective ?? "");
@@ -41,7 +43,7 @@ export function ProjectFramingForm({ overview }: ProjectFramingFormProps) {
               phase: phaseValue,
               first_commitment: firstCommitment.trim(),
             }),
-          "Setup complete.",
+          t("framing.setupSuccess"),
         )
       : await mutation.run(
           pid,
@@ -53,7 +55,7 @@ export function ProjectFramingForm({ overview }: ProjectFramingFormProps) {
               desired_outcome: desiredOutcome.trim(),
               phase: phaseValue,
             }),
-          "Framing saved.",
+          t("framing.saveSuccess"),
         );
     if (result.status !== "success") setFailed(true);
   }
@@ -72,46 +74,45 @@ export function ProjectFramingForm({ overview }: ProjectFramingFormProps) {
     >
       <div className="op-section__header">
         <div>
-          <p className="op-section__kicker">Human-authored intent</p>
-          <h3 id="framing-heading">{isSetup ? "Complete setup" : "Project framing"}</h3>
+          <p className="op-section__kicker">{t("framing.kicker")}</p>
+          <h3 id="framing-heading">{isSetup ? t("framing.setupTitle") : t("framing.title")}</h3>
         </div>
       </div>
       {isSetup && (
         <p className="op-section__intro">
-          Define the outcome and first concrete commitment before moving this project into
-          active work.
+          {t("framing.setupIntro")}
         </p>
       )}
       <div className="op-form-grid">
         <label className="op-field op-field--wide">
-          <span>Objective</span>
+          <span>{t("framing.objective")}</span>
           {/* Setup focuses the objective first (spec 9.4 order). */}
           <input
-            aria-label="Objective"
+            aria-label={t("framing.objective")}
             autoFocus={isSetup}
             value={objective}
             onChange={(e) => setObjective(e.target.value)}
           />
         </label>
         <label className="op-field op-field--wide">
-          <span>Desired outcome</span>
+          <span>{t("framing.desiredOutcome")}</span>
           <input
-            aria-label="Desired outcome"
+            aria-label={t("framing.desiredOutcome")}
             value={desiredOutcome}
             onChange={(e) => setDesiredOutcome(e.target.value)}
           />
         </label>
         <label className="op-field">
           <span>
-            Phase <small>Optional</small>
+            {t("framing.phase")} <small>{t("framing.optional")}</small>
           </span>
-          <input aria-label="Phase" value={phase} onChange={(e) => setPhase(e.target.value)} />
+          <input aria-label={t("framing.phase")} value={phase} onChange={(e) => setPhase(e.target.value)} />
         </label>
         {isSetup && (
           <label className="op-field op-field--wide">
-            <span>First commitment</span>
+            <span>{t("framing.firstCommitment")}</span>
             <input
-              aria-label="First commitment"
+              aria-label={t("framing.firstCommitment")}
               value={firstCommitment}
               onChange={(e) => setFirstCommitment(e.target.value)}
             />
@@ -125,14 +126,14 @@ export function ProjectFramingForm({ overview }: ProjectFramingFormProps) {
           disabled={!canSubmit}
           onClick={save}
         >
-          {isSetup ? "Complete setup" : "Save framing"}
+          {isSetup ? t("framing.setupTitle") : t("framing.save")}
         </button>
       </div>
       {failed && mutation.error && (
         <p role="alert" className="op-mutation-error" data-testid="framing-error">
           {mutation.error.recovery === "refetch"
-            ? "This project changed since you started. The latest state is loaded; review and resubmit — your text is kept."
-            : mutation.error.message}
+            ? t("framing.conflict")
+            : localizeError(mutation.error, locale)}
         </p>
       )}
     </section>

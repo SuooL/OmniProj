@@ -93,14 +93,23 @@ const DAY = 24 * HOUR;
  * Format an RFC3339 instant as relative-to-`now` text with an exact `title`. Returns null
  * for an unparseable timestamp (the caller shows nothing rather than a wrong time).
  */
-export function formatRelativeTime(iso: string, now: Date): RelativeTime | null {
+export function formatRelativeTime(iso: string, now: Date, locale: "zh-CN" | "en" = "en"): RelativeTime | null {
   const then = Date.parse(iso);
   if (Number.isNaN(then)) return null;
   const seconds = Math.max(0, Math.round((now.getTime() - then) / 1000));
-  return { text: relativeText(seconds), title: iso };
+  return { text: relativeText(seconds, locale), title: iso };
 }
 
-function relativeText(seconds: number): string {
+function relativeText(seconds: number, locale: "zh-CN" | "en"): string {
+  if (locale === "zh-CN") {
+    if (seconds < 45) return "刚刚";
+    if (seconds < 90) return "1 分钟前";
+    if (seconds < HOUR) return `${Math.round(seconds / MINUTE)} 分钟前`;
+    if (seconds < 90 * MINUTE) return "1 小时前";
+    if (seconds < DAY) return `${Math.round(seconds / HOUR)} 小时前`;
+    if (seconds < 2 * DAY) return "昨天";
+    return `${Math.round(seconds / DAY)} 天前`;
+  }
   if (seconds < 45) return "just now";
   if (seconds < 90) return "1 minute ago";
   if (seconds < HOUR) return `${Math.round(seconds / MINUTE)} minutes ago`;

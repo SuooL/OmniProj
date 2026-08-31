@@ -18,54 +18,59 @@ import { FactLabel } from "../semantic/FactLabel";
 import { ChevronRightIcon, FolderIcon } from "../Icons";
 import { ProjectStateTag } from "../semantic/ProjectStateTag";
 import { ReviewSignalBadge } from "../semantic/ReviewSignalBadge";
+import {
+  projectStatusLabel,
+  reviewReasonLabel,
+  useI18n,
+  type Locale,
+  type Translate,
+} from "../../i18n/I18nProvider";
 
-function headText(head: HeadState): string {
+function headText(head: HeadState, locale: Locale): string {
   switch (head.kind) {
     case "attached":
       return head.branch;
     case "detached":
-      return "detached HEAD";
+      return locale === "zh-CN" ? "游离 HEAD" : "detached HEAD";
     case "unborn":
-      return head.branch ? `${head.branch} (unborn)` : "unborn";
+      return head.branch
+        ? `${head.branch} (${locale === "zh-CN" ? "尚无提交" : "unborn"})`
+        : locale === "zh-CN" ? "尚无提交" : "unborn";
   }
 }
-
-const STATE_WORD: Partial<Record<ProjectIndexItem["status"], string>> = {
-  setup: "Setup",
-  waiting: "Waiting",
-  parked: "Parked",
-  archived: "Archived",
-};
 
 /**
  * The row is a single link, so its accessible name must convey the whole row — otherwise an
  * assistive-tech user hears only the project name. This composes the four fields into one
  * spoken summary; the visible cells and their field labels remain for sighted users.
  */
-function rowAccessibleName(item: ProjectIndexItem): string {
+function rowAccessibleName(item: ProjectIndexItem, locale: Locale, t: Translate): string {
   const parts = [item.name];
-  const state = STATE_WORD[item.status];
+  const state = item.status === "active" ? null : projectStatusLabel(item.status, locale);
   if (state) parts.push(state);
   parts.push(
     item.current_commitment
-      ? `Commitment: ${item.current_commitment.text}`
-      : "No current commitment",
+      ? t("row.commitment", { text: item.current_commitment.text })
+      : t("row.noCommitment"),
   );
-  parts.push(item.observed_actual ? `Observed ${headText(item.observed_actual.head)}` : "Not yet observed");
+  parts.push(item.observed_actual ? t("row.observed", { head: headText(item.observed_actual.head, locale) }) : t("row.notObserved"));
   const primary = item.review_reasons[0];
   if (primary) {
     const more = item.review_reasons.length - 1;
-    parts.push(`Review: ${primary.label}${more > 0 ? `, +${more} more` : ""}`);
+    parts.push(t("row.review", {
+      label: reviewReasonLabel(primary.code, locale),
+      more: more > 0 ? t("row.more", { count: more }) : "",
+    }));
   }
   return `${parts.join(". ")}.`;
 }
 
 /** A short natural-language note about working-tree changes; empty when the tree is clean. */
-function changeNote(item: ProjectIndexItem): string | null {
+function changeNote(item: ProjectIndexItem, t: Translate): string | null {
   const o = item.observed_actual;
   if (!o) return null;
   const dirty = o.changed_files + o.untracked_files;
-  return dirty > 0 ? `${dirty} changed` : "clean";
+  return dirty > 0 ? t("row.changed", { count: dirty }) : t("row.clean");
 }
 
 export interface ProjectRowProps {
@@ -74,20 +79,21 @@ export interface ProjectRowProps {
 }
 
 export function ProjectRow({ item, now }: ProjectRowProps) {
+  const { locale, t } = useI18n();
   const observed = item.observed_actual;
   const commitment = item.current_commitment;
   const primary = primaryReason(item);
   const hidden = hiddenReasons(item);
-  const observedTime = observed ? formatRelativeTime(observed.observed_at, now) : null;
+  const observedTime = observed ? formatRelativeTime(observed.observed_at, now, locale) : null;
   const sinceCommitment = observed?.commits_since_commitment ?? null;
 
-  const reviewText = primary ? primary.label : "No review needed";
+  const reviewText = primary ? reviewReasonLabel(primary.code, locale) : t("row.noReview");
 
   return (
     <li className="op-row">
       <Link
         className="op-row__link"
-        aria-label={rowAccessibleName(item)}
+        aria-label={rowAccessibleName(item, locale, t)}
         to={projectOverviewPath(item.project_id)}
         data-focus-id={item.project_id}
         onClick={() =>
@@ -106,29 +112,31 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
             <ProjectStateTag status={item.status} />
           </span>
           <span className="op-row__commitment op-row__commitment--none">
-            {commitment ? commitment.text : "No current commitment"}
+            {commitment ? commitment.text : t("row.noCommitment")}
           </span>
           <span className="op-row__metadata">
             {observed ? (
               <>
-                <FactLabel value={headText(observed.head)} />
+                <FactLabel value={headText(observed.head, locale)} />
                 {observed.last_commit ? (
                   <FactLabel
                     value={`${observed.last_commit.short_sha} ${observed.last_commit.subject}`}
                     title={observed.last_commit.sha}
                   />
                 ) : (
-                  <span>no commits</span>
+                  <span>{t("row.noCommits")}</span>
                 )}
               </>
             ) : (
-              <span>Not yet observed</span>
+              <span>{t("row.notObserved")}</span>
             )}
             {observedTime && <FactLabel value={observedTime.text} title={observedTime.title} />}
             {sinceCommitment !== null && sinceCommitment > 0 && (
-              <span>{sinceCommitment} commit{sinceCommitment === 1 ? "" : "s"} since</span>
+              <span>{locale === "en"
+                ? `${sinceCommitment} commit${sinceCommitment === 1 ? "" : "s"} since`
+                : t("row.commitsSince", { count: sinceCommitment })}</span>
             )}
-            {observed && <span>{changeNote(item)}</span>}
+            {observed && <span>{changeNote(item, t)}</span>}
           </span>
         </span>
         <span className="op-row__review-text">

@@ -17,28 +17,30 @@ import { projectOverviewPath } from "../domain/routes";
 import { basename, chooseProjectDirectory } from "../platform/dialog";
 import { applyOverviewToCaches } from "../queryClient";
 import { useAnnouncer } from "./AppShell";
+import { localizeError, useI18n, type Translate } from "../i18n/I18nProvider";
 
 export interface AddProjectDialogProps {
   onClose: () => void;
 }
 
 /** A human-readable, recoverable message per non-registerable validation state. */
-function invalidMessage(v: Exclude<SourceValidation, { state: "ok" | "duplicate" }>): string {
+function invalidMessage(v: Exclude<SourceValidation, { state: "ok" | "duplicate" }>, t: Translate): string {
   switch (v.state) {
     case "missing":
-      return "That folder no longer exists.";
+      return t("add.missing");
     case "unreadable":
-      return "That folder can't be read. Check permissions and try again.";
+      return t("add.unreadable");
     case "not_git_repository":
-      return "That folder isn't a Git repository.";
+      return t("add.notGit");
     case "bare_repository":
-      return "Bare Git repositories aren't supported.";
+      return t("add.bare");
     case "observation_failed":
-      return `Couldn't read the repository: ${v.message}`;
+      return t("add.observationFailed", { message: v.message });
   }
 }
 
 export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
+  const { locale, t } = useI18n();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const navigate = useNavigate();
@@ -74,7 +76,7 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
       setValidation(result);
       if (result.state === "ok") setName(basename(target));
     } catch (e) {
-      setError(e instanceof AppError ? e.message : "Couldn't validate that folder.");
+      setError(e instanceof AppError ? localizeError(e, locale) : t("add.validateFailed"));
     } finally {
       setBusy(false);
     }
@@ -96,10 +98,10 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
       const overview = await api.registerProject({ location: path, name: name.trim() });
       applyOverviewToCaches(queryClient, overview);
       onClose();
-      announce("polite", "Project registered.");
+      announce("polite", t("add.registered"));
       navigate(projectOverviewPath(overview.project_id));
     } catch (e) {
-      setError(e instanceof AppError ? e.message : "Couldn't register that project.");
+      setError(e instanceof AppError ? localizeError(e, locale) : t("add.registerFailed"));
     } finally {
       setBusy(false);
     }
@@ -114,7 +116,7 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
     <dialog
       className="op-dialog"
       ref={dialogRef}
-      aria-label="Add Project"
+      aria-label={t("add.title")}
       data-testid="add-project-dialog"
       onCancel={(e) => {
         e.preventDefault();
@@ -124,18 +126,18 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
       <div className="op-dialog__header">
         <div className="op-dialog__icon" aria-hidden="true">+</div>
         <div>
-          <p className="op-section__kicker">Local Git repository</p>
-          <h2>Add Project</h2>
-          <p>Register a repository without changing anything inside it.</p>
+          <p className="op-section__kicker">{t("add.kicker")}</p>
+          <h2>{t("add.title")}</h2>
+          <p>{t("add.description")}</p>
         </div>
-        <button className="op-window-button" type="button" onClick={onClose} aria-label="Close Add Project">
+        <button className="op-window-button" type="button" onClick={onClose} aria-label={t("add.close")}>
           <span aria-hidden="true">×</span>
         </button>
       </div>
 
       <div className="op-dialog__body">
         <button
-          aria-label={path ? "Choose directory again" : "Choose directory"}
+          aria-label={path ? t("add.chooseAgain") : t("add.choose")}
           className="op-picker"
           type="button"
           onClick={choose}
@@ -143,41 +145,41 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
         >
           <span className="op-picker__mark" aria-hidden="true">↗</span>
           <span>
-            <strong>{path ? "Choose a different directory" : "Choose project directory"}</strong>
-            <small>OmniProj reads Git facts and keeps the repository itself read-only.</small>
+            <strong>{path ? t("add.chooseDifferent") : t("add.chooseProject")}</strong>
+            <small>{t("add.readonly")}</small>
           </span>
         </button>
         {path && <p className="op-path-box" data-testid="chosen-path">{path}</p>}
 
         {validation?.state === "ok" && (
           <div className="op-validation-card op-validation-card--success" data-testid="valid-preview">
-            <p className="op-validation-card__title">Repository ready</p>
+            <p className="op-validation-card__title">{t("add.ready")}</p>
             <p className="op-validation-card__facts">
-              <span>{validation.head.kind === "attached" || validation.head.kind === "unborn" ? validation.head.branch : "Detached HEAD"}</span>
-              <span>{validation.last_commit ? `${validation.last_commit.short_sha} ${validation.last_commit.subject}` : "No commits yet"}</span>
+              <span>{validation.head.kind === "attached" || validation.head.kind === "unborn" ? validation.head.branch : t("head.detached")}</span>
+              <span>{validation.last_commit ? `${validation.last_commit.short_sha} ${validation.last_commit.subject}` : t("add.noCommits")}</span>
             </p>
             <label className="op-field">
-              <span>Project name</span>
-              <input aria-label="Project name" value={name} onChange={(e) => setName(e.target.value)} />
+              <span>{t("add.projectName")}</span>
+              <input aria-label={t("add.projectName")} value={name} onChange={(e) => setName(e.target.value)} />
             </label>
           </div>
         )}
 
         {validation?.state === "duplicate" && (
           <div className="op-validation-card op-validation-card--warning" data-testid="duplicate-notice" role="alert">
-            <p>Already registered as “{validation.existing_name}”.</p>
+            <p>{t("add.duplicate", { name: validation.existing_name })}</p>
             <button className="op-button op-button--secondary" type="button" onClick={() => openExisting(validation.existing_project_id)}>
-              Open existing project
+              {t("add.openExisting")}
             </button>
           </div>
         )}
 
         {validation && validation.state !== "ok" && validation.state !== "duplicate" && (
           <div className="op-validation-card op-validation-card--danger" data-testid="invalid-notice" role="alert">
-            <p>{invalidMessage(validation)}</p>
+            <p>{invalidMessage(validation, t)}</p>
             {validation.state === "observation_failed" && (
               <button className="op-button op-button--secondary" type="button" onClick={() => path && validatePath(path)} disabled={busy}>
-                Try again
+                {t("common.tryAgain")}
               </button>
             )}
           </div>
@@ -197,10 +199,10 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
           onClick={register}
           disabled={busy || validation?.state !== "ok" || name.trim() === ""}
         >
-          Register
+          {t("add.register")}
         </button>
         <button className="op-button op-button--ghost" type="button" onClick={onClose}>
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
     </dialog>

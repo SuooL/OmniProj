@@ -3,19 +3,10 @@
 
 import type {
   CommitmentTransition,
-  CommitmentTransitionKind,
 } from "../../domain/project";
 import { formatRelativeTime } from "../../domain/projectPresentation";
 import { ActivityStamp } from "../semantic/ActivityStamp";
-
-const VERB: Record<CommitmentTransitionKind, string> = {
-  set: "Set",
-  confirmed: "Confirmed",
-  completed: "Completed",
-  replaced: "Replaced",
-  cleared: "Cleared",
-  correction: "Correction",
-};
+import { transitionLabel, useI18n } from "../../i18n/I18nProvider";
 
 export interface CommitmentHistoryProps {
   transitions: CommitmentTransition[];
@@ -23,23 +14,24 @@ export interface CommitmentHistoryProps {
 }
 
 export function CommitmentHistory({ transitions, now }: CommitmentHistoryProps) {
+  const { locale, t } = useI18n();
   if (transitions.length === 0) return null;
 
   return (
     <section className="op-section op-section--history" aria-labelledby="history-heading" data-testid="commitment-history">
       <div className="op-section__header">
         <div>
-          <p className="op-section__kicker">Audit trail</p>
-          <h3 id="history-heading">Recent commitment history</h3>
+          <p className="op-section__kicker">{t("history.kicker")}</p>
+          <h3 id="history-heading">{t("history.title")}</h3>
         </div>
       </div>
       <ol className="op-history-rail">
         {transitions.map((t) => {
-          const time = formatRelativeTime(t.occurred_at, now);
+          const time = formatRelativeTime(t.occurred_at, now, locale);
           return (
             <li key={t.id}>
               <ActivityStamp
-                verb={VERB[t.type]}
+                verb={transitionLabel(t.type, locale)}
                 text={time ? time.text : t.occurred_at}
                 title={t.occurred_at}
               />

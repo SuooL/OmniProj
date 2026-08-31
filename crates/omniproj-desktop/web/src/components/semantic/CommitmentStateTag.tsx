@@ -3,20 +3,17 @@
 
 import type { WorkItemStatus } from "../../domain/project";
 import { toneStyle, type StatusTone } from "./tone";
+import { useI18n, workItemStatusLabel } from "../../i18n/I18nProvider";
 
-const COMMIT_TAG: Record<WorkItemStatus, { label: string; tone: StatusTone }> = {
-  planned: { label: "Planned", tone: "neutral" },
-  doing: { label: "Doing", tone: "info" },
-  blocked: { label: "Blocked", tone: "warning" },
-  done: { label: "Done", tone: "success" },
-  abandoned: { label: "Abandoned", tone: "neutral" },
+const COMMIT_TONE: Record<WorkItemStatus, StatusTone> = {
+  planned: "neutral", doing: "info", blocked: "warning", done: "success", abandoned: "neutral",
 };
 
 export function CommitmentStateTag({ status }: { status: WorkItemStatus }) {
-  const tag = COMMIT_TAG[status];
+  const { locale } = useI18n();
   return (
-    <span className="op-tag" style={toneStyle(tag.tone)} data-commit-status={status}>
-      {tag.label}
+    <span className="op-tag" style={toneStyle(COMMIT_TONE[status])} data-commit-status={status}>
+      {workItemStatusLabel(status, locale)}
     </span>
   );
 }

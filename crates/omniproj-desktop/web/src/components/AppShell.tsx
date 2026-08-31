@@ -32,6 +32,7 @@ import {
   projectsPath,
 } from "../domain/routes";
 import { useAppShortcuts } from "../hooks/useAppShortcuts";
+import { useI18n } from "../i18n/I18nProvider";
 import { queryKeys } from "../queryKeys";
 import { NotFoundPage } from "../routes/NotFoundPage";
 import { ProjectOverviewPage } from "../routes/ProjectOverviewPage";
@@ -86,6 +87,7 @@ function ProjectIdRedirect() {
 }
 
 export function AppShell() {
+  const { locale, setLocale, t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -149,11 +151,11 @@ export function AppShell() {
       : [];
     if (ids.length === 0) {
       refreshInFlight.current = false;
-      if (!silentEmpty) announce("polite", "Projects are up to date.");
+      if (!silentEmpty) announce("polite", t("shell.upToDate"));
       return;
     }
     setRefreshProgress({ completed: 0, total: ids.length });
-    announce("polite", "Refreshing projects…");
+    announce("polite", t("shell.refreshStarted"));
     let failed = 0;
     await Promise.all(
       ids.map(async (id) => {
@@ -174,16 +176,16 @@ export function AppShell() {
       if (failed > 0) {
         announce(
           "assertive",
-          `${failed} project${failed === 1 ? "" : "s"} could not be refreshed. Last known facts were preserved.`,
+          t("shell.refreshFailed", { count: failed }),
         );
       } else {
-        announce("polite", "Projects refreshed.");
+        announce("polite", t("shell.refreshed"));
       }
     } finally {
       refreshInFlight.current = false;
       setRefreshProgress(null);
     }
-  }, [announce, foldRefreshResults, queryClient]);
+  }, [announce, foldRefreshResults, queryClient, t]);
 
   // The persisted cache makes startup instant; this background pass then reconciles it with
   // the current repositories once per application mount.
@@ -273,7 +275,7 @@ export function AppShell() {
             <button
               className="op-chrome-button"
               type="button"
-              aria-label="Hide sidebar"
+              aria-label={t("shell.hideSidebar")}
               onClick={() => setSidebarOpen(false)}
             >
               <SidebarIcon />
@@ -281,7 +283,7 @@ export function AppShell() {
             <button
               className="op-chrome-button"
               type="button"
-              aria-label="Back to projects"
+              aria-label={t("shell.backProjects")}
               onClick={() => navigate(projectsPath())}
               disabled={!showBack}
             >
@@ -296,17 +298,17 @@ export function AppShell() {
               <input
                 ref={filterRef}
                 type="search"
-                aria-label="Filter projects"
-                placeholder="Search projects"
+                aria-label={t("shell.filterProjects")}
+                placeholder={t("shell.searchProjects")}
                 value={filterValue}
                 onChange={onFilterChange}
               />
               <kbd aria-hidden="true">⌘F</kbd>
             </div>
-            <nav aria-label="Primary" className="app-shell__nav">
+            <nav aria-label={t("shell.primaryNav")} className="app-shell__nav">
               <div className="app-shell__nav-section-title">
-                <span>Projects</span>
-                <button type="button" onClick={openAddProject} aria-label="Add Project"><PlusIcon /></button>
+                <span>{t("shell.projects")}</span>
+                <button type="button" onClick={openAddProject} aria-label={t("shell.addProject")}><PlusIcon /></button>
               </div>
               <div className="app-shell__project-tree">
                 {renderProjectNodes(activeSidebarProjects)}
@@ -314,7 +316,7 @@ export function AppShell() {
               {archivedSidebarProjects.length > 0 && (
                 <>
                   <div className="app-shell__nav-section-title app-shell__nav-section-title--archived">
-                    <span>Archived</span>
+                    <span>{t("shell.archived")}</span>
                   </div>
                   <div className="app-shell__project-tree">
                     {renderProjectNodes(archivedSidebarProjects)}
@@ -323,8 +325,21 @@ export function AppShell() {
               )}
             </nav>
             <div className="app-shell__sidebar-footer">
-              <span className="app-shell__local-dot" aria-hidden="true" />
-              <span>Local · read-only sources</span>
+              <label className="app-shell__language">
+                <span>{t("language.label")}</span>
+                <select
+                  aria-label={t("language.label")}
+                  value={locale}
+                  onChange={(event) => setLocale(event.target.value as "zh-CN" | "en")}
+                >
+                  <option value="zh-CN">{t("language.zh")}</option>
+                  <option value="en">{t("language.en")}</option>
+                </select>
+              </label>
+              <span className="app-shell__source-note">
+                <span className="app-shell__local-dot" aria-hidden="true" />
+                <span>{t("shell.localReadonly")}</span>
+              </span>
             </div>
           </div>
         </aside>
@@ -339,13 +354,13 @@ export function AppShell() {
               <button
                 className="app-shell__sidebar-toggle"
                 type="button"
-                aria-label="Show sidebar"
+                aria-label={t("shell.showSidebar")}
                 onClick={() => setSidebarOpen(true)}
               >
                 <SidebarIcon />
               </button>
               <FolderIcon />
-              <strong>{currentProject?.name ?? "Projects"}</strong>
+              <strong>{currentProject?.name ?? t("shell.projects")}</strong>
             </div>
             <div className="app-shell__actions">
               {refreshProgress && (
@@ -356,11 +371,11 @@ export function AppShell() {
               <button
                 type="button"
                 onClick={() => void onRefresh()}
-                aria-label={refreshProgress ? "Refreshing projects" : "Refresh"}
+                aria-label={refreshProgress ? t("shell.refreshing") : t("shell.refresh")}
                 disabled={refreshProgress !== null}
                 data-refreshing={refreshProgress !== null}
               ><RefreshIcon /></button>
-              <button type="button" onClick={openAddProject} aria-label="New project"><PlusIcon /></button>
+              <button type="button" onClick={openAddProject} aria-label={t("shell.newProject")}><PlusIcon /></button>
             </div>
           </header>
           <div className="app-shell__content">
@@ -378,7 +393,7 @@ export function AppShell() {
           <button
             type="button"
             className="app-shell__sidebar-backdrop"
-            aria-label="Close sidebar"
+            aria-label={t("shell.closeSidebar")}
             onClick={() => setSidebarOpen(false)}
           />
         )}

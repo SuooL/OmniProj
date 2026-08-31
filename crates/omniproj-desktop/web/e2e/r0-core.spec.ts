@@ -11,6 +11,20 @@ test("smoke: the dense Index renders the 12-project fixture", async ({ page }) =
   await expect(page.getByRole("list", { name: "Projects" }).getByRole("listitem")).toHaveCount(12);
 });
 
+test("language switch updates the whole shell and persists across reloads", async ({ page }) => {
+  await page.goto("/projects");
+  const language = page.getByRole("combobox", { name: "Interface language" });
+  await expect(language).toHaveValue("en");
+
+  await language.selectOption("zh-CN");
+  await expect(page.getByRole("heading", { name: "项目" })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "界面语言" })).toHaveValue("zh-CN");
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "项目" })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "界面语言" })).toHaveValue("zh-CN");
+});
+
 test("core loop: filter, open the project page, replace with explicit Save, Undo, and return", async ({ page }) => {
   await page.goto("/projects");
   await page.getByLabel(/filter projects/i).fill("billing");

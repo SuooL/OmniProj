@@ -5,23 +5,25 @@
 
 import type { ReviewReason } from "../../domain/project";
 import { ReviewSignalBadge } from "../semantic/ReviewSignalBadge";
+import { localizeEvidence, useI18n } from "../../i18n/I18nProvider";
 
 export interface ReviewReasonsProps {
   reasons: ReviewReason[];
 }
 
 export function ReviewReasons({ reasons }: ReviewReasonsProps) {
+  const { locale, t } = useI18n();
   if (reasons.length === 0) {
     return (
       <section className="op-section op-section--quiet" aria-labelledby="review-reasons-heading" data-testid="review-reasons">
         <div className="op-section__header">
           <div>
-            <p className="op-section__kicker">Review state</p>
-            <h3 id="review-reasons-heading">No review needed</h3>
+            <p className="op-section__kicker">{t("review.noneKicker")}</p>
+            <h3 id="review-reasons-heading">{t("review.noneTitle")}</h3>
           </div>
           <span className="op-section__indicator op-section__indicator--clear" aria-hidden="true" />
         </div>
-        <p className="op-muted">This project has no deterministic review signal right now.</p>
+        <p className="op-muted">{t("review.noneBody")}</p>
       </section>
     );
   }
@@ -30,8 +32,8 @@ export function ReviewReasons({ reasons }: ReviewReasonsProps) {
     <section className="op-section op-section--review" aria-labelledby="review-reasons-heading" data-testid="review-reasons">
       <div className="op-section__header">
         <div>
-          <p className="op-section__kicker">Needs attention</p>
-          <h3 id="review-reasons-heading">Review reasons</h3>
+          <p className="op-section__kicker">{t("review.kicker")}</p>
+          <h3 id="review-reasons-heading">{t("review.title")}</h3>
         </div>
         <span className="op-section__count">{reasons.length}</span>
       </div>
@@ -42,7 +44,7 @@ export function ReviewReasons({ reasons }: ReviewReasonsProps) {
             {reason.evidence.length > 0 && (
               <ul className="op-review-reason__evidence">
                 {reason.evidence.map((line, i) => (
-                  <li key={i}>{line}</li>
+                  <li key={i}>{localizeEvidence(line, locale)}</li>
                 ))}
               </ul>
             )}
