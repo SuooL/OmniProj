@@ -172,6 +172,10 @@ export interface TimelineCommit {
   attributed_task_ids: string[];
 }
 
+export type PlanStatus = "planned" | "doing" | "done" | "abandoned";
+export interface PlanEntry { id: string | null; date: string; title: string; status: PlanStatus; commit: string | null; body: string; }
+export interface ReminderSettings { enabled: boolean; cadence: "daily" | "off"; silent_days_threshold: number; }
+
 // --- Source validation ------------------------------------------------------
 // `validate_project_source` returns a typed state for BOTH the valid preview (`ok`) and
 // the recoverable rejections (missing / unreadable / non-Git / bare / observation failed /

@@ -19,9 +19,9 @@ Projects Index  →  re-enter one project  →  see the current commitment and t
 ```
 
 The desktop now includes a human task list (`notes/next.md`), a read-only Git commit timeline
-with task attribution, an explicit Advance proposal/adoption flow, and a startup attention
-summary in the tray. Full branch graph, append-only decision log, configurable reminder cadence,
-and activity sparkline remain follow-up work.
+with task attribution, an explicit Advance proposal/adoption flow, an append-only decision log
+(`plan.md`), and configurable reminders (daily/off, silence threshold, test notification). The
+source repository remains read-only throughout.
 
 ---
 

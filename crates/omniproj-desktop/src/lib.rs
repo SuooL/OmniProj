@@ -8,17 +8,17 @@
 pub mod commands;
 pub mod dto;
 pub mod error;
+pub mod mvp;
 pub mod repository_cache;
 pub mod service;
 pub mod state;
-pub mod mvp;
 
 // NOTE: `legacy.rs` is deliberately not a module. It is a read-only source archive.
 
 use tauri::ipc::Invoke;
 use tauri::Runtime;
 
-use crate::service::{DesktopService, R0Service, SystemClock};
+use crate::service::{DesktopService, SystemClock};
 
 /// The exact R0 command allowlist, as a reusable invoke handler. Both `run()` and the
 /// behavior-level IPC tests install this same handler, so the shipped boundary is what
@@ -50,6 +50,12 @@ pub fn r0_invoke_handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sy
         commands::get_commit_timeline,
         commands::advance_task,
         commands::adopt_subtasks,
+        commands::get_plan,
+        commands::add_plan_entry,
+        commands::set_plan_status,
+        commands::get_reminder_settings,
+        commands::set_reminder_settings,
+        commands::test_reminder,
     ]
 }
 
@@ -82,16 +88,34 @@ pub fn run() {
                     return Ok(());
                 }
             };
-            let attention_count = service.list_project_index().map(|r| r.projects.iter().filter(|p| !p.review_reasons.is_empty()).count()).unwrap_or(0);
+            let reminder_settings = crate::mvp::load_reminder_settings();
+            let attention_count = crate::mvp::attention_count_with_threshold(reminder_settings.silent_days_threshold);
             app.manage(service);
             let show = MenuItemBuilder::with_id("show", "打开 OmniProj").build(app)?;
             let attention = MenuItemBuilder::with_id("attention", format!("待关注项目：{attention_count}")).enabled(false).build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&show, &attention, &quit]).build()?;
-            if attention_count > 0 {
+            if reminder_settings.enabled && reminder_settings.cadence == "daily" && attention_count > 0 {
                 use tauri_plugin_notification::NotificationExt;
                 let _ = app.notification().builder().title("OmniProj 待关注提醒").body(format!("有 {attention_count} 个项目需要关注。打开 OmniProj 查看下一步。")) .show();
             }
+            let notification_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use std::time::Duration;
+                use tauri_plugin_notification::NotificationExt;
+                loop {
+                    tokio::time::sleep(Duration::from_secs(86_400)).await;
+                    let settings = crate::mvp::load_reminder_settings();
+                    if !settings.enabled || settings.cadence != "daily" { continue; }
+                    let count = crate::mvp::attention_count_with_threshold(settings.silent_days_threshold);
+                    if count > 0 {
+                        let _ = notification_handle.notification().builder()
+                            .title("OmniProj 每日待关注提醒")
+                            .body("打开 OmniProj 查看需要推进的项目。")
+                            .show();
+                    }
+                }
+            });
             let tray = TrayIconBuilder::with_id("main")
                 .icon(
                     app.default_window_icon()

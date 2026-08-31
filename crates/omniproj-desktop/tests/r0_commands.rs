@@ -922,13 +922,8 @@ fn handler_rejects_deferred_commands_and_accepts_the_r0_surface() {
         .map(|response| response.deserialize::<Value>().unwrap())
     };
 
-    // Commands not yet implemented are rejected as unregistered.
-    for deferred in [
-        "get_graph",
-        "get_plan",
-        "get_attention",
-        "test_reminder",
-    ] {
+    // Commands outside the reviewed surface remain rejected as unregistered.
+    for deferred in ["get_graph", "get_attention"] {
         let error = invoke(deferred, json!({})).expect_err("deferred command must be rejected");
         assert!(
             error

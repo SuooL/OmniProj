@@ -25,6 +25,8 @@ import type {
   UndoCommitmentTransitionInput,
   Task,
   TimelineCommit,
+  PlanEntry,
+  ReminderSettings,
 } from "./domain/project";
 
 /** Invoke one command, wrapping args in the single `input` key and typing the rejection. */
@@ -86,6 +88,12 @@ export const api = {
   unattributeCommit: (input: { project_id: ProjectId; id: string; sha: string }) => call<Task[]>("unattribute_commit", input),
   advanceTask: (input: { project_id: ProjectId; id: string }) => call<string[]>("advance_task", input),
   adoptSubtasks: (input: { project_id: ProjectId; texts: string[] }) => call<Task[]>("adopt_subtasks", input),
+  getPlan: (project_id: ProjectId) => call<PlanEntry[]>("get_plan", { project_id }),
+  addPlanEntry: (input: { project_id: ProjectId; title: string; body: string }) => call<PlanEntry[]>("add_plan_entry", input),
+  setPlanStatus: (input: { project_id: ProjectId; id: string; status: string }) => call<PlanEntry[]>("set_plan_status", input),
+  getReminderSettings: () => call<ReminderSettings>("get_reminder_settings"),
+  setReminderSettings: (settings: ReminderSettings) => call<ReminderSettings>("set_reminder_settings", { settings }),
+  testReminder: () => call<void>("test_reminder"),
 } as const;
 
 export { AppError };

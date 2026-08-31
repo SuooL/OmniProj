@@ -1,10 +1,10 @@
-//! The R0 Tauri command surface — exactly the 15 approved commands, each taking a single
+//! The R0 Tauri command surface — each command takes a single
 //! top-level `input` argument with snake-case JSON fields. Every command is a thin
 //! adapter over `DesktopService`: it deserializes its request DTO, maps it to a service
 //! call, and returns a DTO or a `CommandError`. No domain logic lives here.
 
 use serde::Deserialize;
-use tauri::State;
+use tauri::{AppHandle, Runtime, State};
 
 use omniproj_core::ids::{CommitmentTransitionId, ProjectId, WorkItemId};
 use omniproj_core::project_state::ProjectStatus;
@@ -15,8 +15,8 @@ use crate::dto::{
     SourceValidationDto,
 };
 use crate::error::CommandResult;
-use crate::service::{DesktopService, R0Service, SystemClock};
 use crate::mvp::{TaskDto, TimelineCommitDto};
+use crate::service::{DesktopService, R0Service, SystemClock};
 
 /// The concrete production service type managed by Tauri.
 pub type Service = DesktopService<SystemClock>;
@@ -295,52 +295,189 @@ pub fn undo_commitment_transition(
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
-pub struct ProjectTaskInput { pub project_id: ProjectId }
+pub struct ProjectTaskInput {
+    pub project_id: ProjectId,
+}
 
 #[tauri::command]
-pub fn get_tasks(input: ProjectTaskInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::get_tasks(input.project_id) }
+pub fn get_tasks(input: ProjectTaskInput) -> CommandResult<Vec<TaskDto>> {
+    crate::mvp::get_tasks(input.project_id)
+}
 
 #[tauri::command]
-pub fn get_attention_summary(service: State<'_, Service>) -> CommandResult<crate::mvp::AttentionSummaryDto> {
+pub fn get_attention_summary(
+    service: State<'_, Service>,
+) -> CommandResult<crate::mvp::AttentionSummaryDto> {
     let response = service.list_project_index()?;
-    let project_ids = response.projects.into_iter().filter(|p| !p.review_reasons.is_empty()).map(|p| p.project_id).collect::<Vec<_>>();
-    Ok(crate::mvp::AttentionSummaryDto { count: project_ids.len(), project_ids })
+    let project_ids = response
+        .projects
+        .into_iter()
+        .filter(|p| !p.review_reasons.is_empty())
+        .map(|p| p.project_id)
+        .collect::<Vec<_>>();
+    Ok(crate::mvp::AttentionSummaryDto {
+        count: project_ids.len(),
+        project_ids,
+    })
 }
 
 #[derive(Debug, Deserialize)]
-pub struct AddTaskInput { pub project_id: ProjectId, pub text: String, #[serde(default)] pub unclear: bool }
+pub struct AddTaskInput {
+    pub project_id: ProjectId,
+    pub text: String,
+    #[serde(default)]
+    pub unclear: bool,
+}
 #[tauri::command]
-pub fn add_task(input: AddTaskInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::add_task(input.project_id, input.text, input.unclear) }
+pub fn add_task(input: AddTaskInput) -> CommandResult<Vec<TaskDto>> {
+    crate::mvp::add_task(input.project_id, input.text, input.unclear)
+}
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateTaskInput { pub project_id: ProjectId, pub id: String, pub status: String, pub due: Option<String>, pub note: Option<String> }
+pub struct UpdateTaskInput {
+    pub project_id: ProjectId,
+    pub id: String,
+    pub status: String,
+    pub due: Option<String>,
+    pub note: Option<String>,
+}
 #[tauri::command]
-pub fn update_task(input: UpdateTaskInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::update_task(input.project_id, input.id, input.status, input.due, input.note) }
+pub fn update_task(input: UpdateTaskInput) -> CommandResult<Vec<TaskDto>> {
+    crate::mvp::update_task(
+        input.project_id,
+        input.id,
+        input.status,
+        input.due,
+        input.note,
+    )
+}
 
 #[derive(Debug, Deserialize)]
-pub struct TaskIdInput { pub project_id: ProjectId, pub id: String }
+pub struct TaskIdInput {
+    pub project_id: ProjectId,
+    pub id: String,
+}
 #[tauri::command]
-pub fn remove_task(input: TaskIdInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::remove_task(input.project_id, input.id) }
+pub fn remove_task(input: TaskIdInput) -> CommandResult<Vec<TaskDto>> {
+    crate::mvp::remove_task(input.project_id, input.id)
+}
 
 #[derive(Debug, Deserialize)]
-pub struct AttributeCommitInput { pub project_id: ProjectId, pub id: String, pub sha: String }
+pub struct AttributeCommitInput {
+    pub project_id: ProjectId,
+    pub id: String,
+    pub sha: String,
+}
 #[tauri::command]
-pub fn attribute_commit(input: AttributeCommitInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::attribute_commit(input.project_id, input.id, input.sha) }
+pub fn attribute_commit(input: AttributeCommitInput) -> CommandResult<Vec<TaskDto>> {
+    crate::mvp::attribute_commit(input.project_id, input.id, input.sha)
+}
 #[tauri::command]
-pub fn unattribute_commit(input: AttributeCommitInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::unattribute_commit(input.project_id, input.id, input.sha) }
+pub fn unattribute_commit(input: AttributeCommitInput) -> CommandResult<Vec<TaskDto>> {
+    crate::mvp::unattribute_commit(input.project_id, input.id, input.sha)
+}
 
 #[derive(Debug, Deserialize)]
-pub struct TimelineInput { pub project_id: ProjectId, #[serde(default = "default_timeline_limit")] pub limit: usize }
-fn default_timeline_limit() -> usize { 50 }
+pub struct TimelineInput {
+    pub project_id: ProjectId,
+    #[serde(default = "default_timeline_limit")]
+    pub limit: usize,
+}
+fn default_timeline_limit() -> usize {
+    50
+}
 #[tauri::command]
-pub fn get_commit_timeline(input: TimelineInput) -> CommandResult<Vec<TimelineCommitDto>> { crate::mvp::get_timeline(input.project_id, input.limit) }
+pub fn get_commit_timeline(input: TimelineInput) -> CommandResult<Vec<TimelineCommitDto>> {
+    crate::mvp::get_timeline(input.project_id, input.limit)
+}
 
 #[derive(Debug, Deserialize)]
-pub struct AdvanceInput { pub project_id: ProjectId, pub id: String }
+pub struct AdvanceInput {
+    pub project_id: ProjectId,
+    pub id: String,
+}
 #[tauri::command]
-pub async fn advance_task(input: AdvanceInput) -> CommandResult<Vec<String>> { crate::mvp::advance_task(input.project_id, input.id).await }
+pub async fn advance_task(input: AdvanceInput) -> CommandResult<Vec<String>> {
+    crate::mvp::advance_task(input.project_id, input.id).await
+}
 
 #[derive(Debug, Deserialize)]
-pub struct AdoptInput { pub project_id: ProjectId, pub texts: Vec<String> }
+pub struct AdoptInput {
+    pub project_id: ProjectId,
+    pub texts: Vec<String>,
+}
 #[tauri::command]
-pub fn adopt_subtasks(input: AdoptInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::adopt_subtasks(input.project_id, input.texts) }
+pub fn adopt_subtasks(input: AdoptInput) -> CommandResult<Vec<TaskDto>> {
+    crate::mvp::adopt_subtasks(input.project_id, input.texts)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PlanInput {
+    pub project_id: ProjectId,
+}
+
+#[tauri::command]
+pub fn get_plan(input: PlanInput) -> CommandResult<Vec<crate::mvp::PlanEntryDto>> {
+    crate::mvp::get_plan(input.project_id)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddPlanEntryInput {
+    pub project_id: ProjectId,
+    pub title: String,
+    #[serde(default)]
+    pub body: String,
+}
+
+#[tauri::command]
+pub fn add_plan_entry(input: AddPlanEntryInput) -> CommandResult<Vec<crate::mvp::PlanEntryDto>> {
+    crate::mvp::add_plan_entry(input.project_id, input.title, input.body)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetPlanStatusInput {
+    pub project_id: ProjectId,
+    pub id: String,
+    pub status: String,
+}
+
+#[tauri::command]
+pub fn set_plan_status(input: SetPlanStatusInput) -> CommandResult<Vec<crate::mvp::PlanEntryDto>> {
+    crate::mvp::set_plan_status(input.project_id, input.id, input.status)
+}
+
+#[tauri::command]
+pub fn get_reminder_settings() -> crate::error::CommandResult<crate::mvp::ReminderSettingsDto> {
+    Ok(crate::mvp::load_reminder_settings())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetReminderSettingsInput {
+    pub settings: crate::mvp::ReminderSettingsDto,
+}
+
+#[tauri::command]
+pub fn set_reminder_settings(
+    input: SetReminderSettingsInput,
+) -> crate::error::CommandResult<crate::mvp::ReminderSettingsDto> {
+    crate::mvp::save_reminder_settings(input.settings)
+}
+
+#[tauri::command]
+pub fn test_reminder<R: Runtime>(app: AppHandle<R>) -> CommandResult<()> {
+    use tauri_plugin_notification::NotificationExt;
+    let settings = crate::mvp::load_reminder_settings();
+    let count = crate::mvp::attention_count_with_threshold(settings.silent_days_threshold);
+    app.notification()
+        .builder()
+        .title("OmniProj 待关注提醒")
+        .body(format!("有 {} 个项目需要关注。", count))
+        .show()
+        .map_err(|e| {
+            crate::error::CommandError::new(
+                crate::error::ErrorCode::StoreWriteFailed,
+                e.to_string(),
+            )
+            .retryable()
+        })
+}
