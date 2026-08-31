@@ -8,12 +8,14 @@
 // the mount effect enters modal state and restores focus to the trigger on unmount.
 
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
 import { api, AppError } from "../api";
 import type { ProjectId, SourceValidation } from "../domain/project";
 import { projectOverviewPath } from "../domain/routes";
 import { basename, chooseProjectDirectory } from "../platform/dialog";
+import { applyOverviewToCaches } from "../queryClient";
 import { useAnnouncer } from "./AppShell";
 
 export interface AddProjectDialogProps {
@@ -40,6 +42,7 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const announce = useAnnouncer();
 
   const [path, setPath] = useState<string | null>(null);
@@ -91,6 +94,7 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
     setError(null);
     try {
       const overview = await api.registerProject({ location: path, name: name.trim() });
+      applyOverviewToCaches(queryClient, overview);
       onClose();
       announce("polite", "Project registered.");
       navigate(projectOverviewPath(overview.project_id));
@@ -148,6 +152,10 @@ export function AddProjectDialog({ onClose }: AddProjectDialogProps) {
         {validation?.state === "ok" && (
           <div className="op-validation-card op-validation-card--success" data-testid="valid-preview">
             <p className="op-validation-card__title">Repository ready</p>
+            <p className="op-validation-card__facts">
+              <span>{validation.head.kind === "attached" || validation.head.kind === "unborn" ? validation.head.branch : "Detached HEAD"}</span>
+              <span>{validation.last_commit ? `${validation.last_commit.short_sha} ${validation.last_commit.subject}` : "No commits yet"}</span>
+            </p>
             <label className="op-field">
               <span>Project name</span>
               <input aria-label="Project name" value={name} onChange={(e) => setName(e.target.value)} />

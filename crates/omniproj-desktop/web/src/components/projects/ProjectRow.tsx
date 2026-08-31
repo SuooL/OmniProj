@@ -92,7 +92,9 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
         data-focus-id={item.project_id}
         onClick={() =>
           saveIndexViewState({
-            scrollY: typeof window !== "undefined" ? window.scrollY : 0,
+            scrollY: typeof document !== "undefined"
+              ? document.querySelector<HTMLElement>(".app-shell__content")?.scrollTop ?? 0
+              : 0,
             focusId: item.project_id,
           })
         }

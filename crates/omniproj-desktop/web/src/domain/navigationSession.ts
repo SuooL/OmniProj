@@ -6,7 +6,7 @@
 //
 // Filters and sort are canonical, so they live in the URL search params, not here. Nothing
 // in this module stores project data. Every access is guarded so a disabled/again-full
-// sessionStorage degrades to "no saved state" rather than throwing.
+// browser storage degrades to "no saved state" rather than throwing.
 
 const CANONICAL_KEY = "omniproj.nav.canonical";
 const INDEX_VIEW_KEY = "omniproj.nav.indexView";
@@ -17,7 +17,15 @@ export interface IndexViewState {
   focusId: string | null;
 }
 
-function storage(): Storage | null {
+function canonicalStorage(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function viewStorage(): Storage | null {
   try {
     return typeof window === "undefined" ? null : window.sessionStorage;
   } catch {
@@ -25,17 +33,17 @@ function storage(): Storage | null {
   }
 }
 
-function read(key: string): string | null {
+function read(storage: Storage | null, key: string): string | null {
   try {
-    return storage()?.getItem(key) ?? null;
+    return storage?.getItem(key) ?? null;
   } catch {
     return null;
   }
 }
 
-function write(key: string, value: string): void {
+function write(storage: Storage | null, key: string, value: string): void {
   try {
-    storage()?.setItem(key, value);
+    storage?.setItem(key, value);
   } catch {
     // A full or unavailable store just means we cannot remember this; never throw.
   }
@@ -44,23 +52,23 @@ function write(key: string, value: string): void {
 /** Save the last canonical location as `pathname + search`. "/" is never saved as a target. */
 export function saveCanonicalLocation(pathnameAndSearch: string): void {
   if (pathnameAndSearch === "/" || pathnameAndSearch === "") return;
-  write(CANONICAL_KEY, pathnameAndSearch);
+  write(canonicalStorage(), CANONICAL_KEY, pathnameAndSearch);
 }
 
 /** The last canonical `pathname + search`, or null if none was saved. */
 export function loadCanonicalLocation(): string | null {
-  const value = read(CANONICAL_KEY);
+  const value = read(canonicalStorage(), CANONICAL_KEY);
   return value && value !== "/" ? value : null;
 }
 
 /** Persist the Index scroll offset and the row id to refocus. */
 export function saveIndexViewState(state: IndexViewState): void {
-  write(INDEX_VIEW_KEY, JSON.stringify(state));
+  write(viewStorage(), INDEX_VIEW_KEY, JSON.stringify(state));
 }
 
 /** The saved Index view state, or null when absent or unparseable. */
 export function loadIndexViewState(): IndexViewState | null {
-  const raw = read(INDEX_VIEW_KEY);
+  const raw = read(viewStorage(), INDEX_VIEW_KEY);
   if (raw === null) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<IndexViewState>;

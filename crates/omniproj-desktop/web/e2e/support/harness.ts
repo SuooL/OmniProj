@@ -136,8 +136,12 @@ export async function installMockTauri(page: Page): Promise<void> {
           const code = checkFail(); if (code) return fail(code);
           return bump(input.project_id, (ov) => { ov.source.status = "available"; ov.source.location = input.new_location; ov.source.revision += 1; });
         }
-        case "refresh_projects":
-          return Promise.resolve(index.map((r) => ({ project_id: r.project_id, outcome: w.__mock.refreshFail.includes(r.project_id) ? "source_failed" : "refreshed", item: r, error_category: w.__mock.refreshFail.includes(r.project_id) ? "source_missing" : undefined })));
+        case "refresh_projects": {
+          const targets = input.project_ids ?? index.map((row) => row.project_id);
+          return Promise.resolve(index
+            .filter((row) => targets.includes(row.project_id))
+            .map((row) => ({ project_id: row.project_id, outcome: w.__mock.refreshFail.includes(row.project_id) ? "source_failed" : "refreshed", item: row, error_category: w.__mock.refreshFail.includes(row.project_id) ? "source_missing" : undefined })));
+        }
         case "set_commitment": {
           const code = checkFail(); if (code) return fail(code);
           return bump(input.project_id, (ov) => { ov.__prev = ov.current_commitment; const t = `t${txCounter++}`; ov.current_commitment = { work_item_id: `${input.project_id}-w${txCounter}`, text: input.text, status: "doing", set_at: "2026-08-12T10:00:00Z", confirmed_at: null }; ov.undoable_transition_id = t; });

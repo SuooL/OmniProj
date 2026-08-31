@@ -105,6 +105,7 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
     );
 
   const draft = replacing ? replaceText : setText;
+  const interactionBusy = busy !== null;
 
   return (
     <section className="op-section op-section--commitment" aria-labelledby="commitment-heading" data-testid="current-commitment">
@@ -121,17 +122,17 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
           <p className="op-commitment-text">{commitment.text}</p>
           <div className="op-commitment-actions">
             {commitment.confirmed_at === null && (
-              <button className="op-button op-button--secondary" type="button" disabled={busy === "confirm"} onClick={doConfirm}>
+              <button className="op-button op-button--secondary" type="button" disabled={interactionBusy} onClick={doConfirm}>
                 Confirm
               </button>
             )}
-            <button className="op-button op-button--primary" type="button" disabled={busy === "complete"} onClick={doComplete}>
+            <button className="op-button op-button--primary" type="button" disabled={interactionBusy} onClick={doComplete}>
               Complete
             </button>
-            <button className="op-button op-button--secondary" type="button" disabled={busy === "replace"} onClick={() => setReplacing(true)}>
+            <button className="op-button op-button--secondary" type="button" disabled={interactionBusy} onClick={() => setReplacing(true)}>
               Replace
             </button>
-            <button className="op-button op-button--ghost" type="button" disabled={busy === "clear"} onClick={doClear}>
+            <button className="op-button op-button--ghost" type="button" disabled={interactionBusy} onClick={doClear}>
               Clear
             </button>
           </div>
@@ -140,21 +141,21 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
             <div className="op-replace-form" data-testid="replace-form">
               <label className="op-field">
                 <span>New commitment</span>
-                <input aria-label="New commitment" value={replaceText} onChange={(e) => setReplaceText(e.target.value)} />
+                <input aria-label="New commitment" value={replaceText} disabled={interactionBusy} onChange={(e) => setReplaceText(e.target.value)} />
               </label>
               <label className="op-field">
                 <span>Reason <small>Required</small></span>
-                <input aria-label="Replace reason" value={replaceReason} onChange={(e) => setReplaceReason(e.target.value)} />
+                <input aria-label="Replace reason" value={replaceReason} disabled={interactionBusy} onChange={(e) => setReplaceReason(e.target.value)} />
               </label>
               <button
                 className="op-button op-button--primary"
                 type="button"
-                disabled={busy === "replace" || replaceText.trim() === "" || replaceReason.trim() === ""}
+                disabled={interactionBusy || replaceText.trim() === "" || replaceReason.trim() === ""}
                 onClick={doReplace}
               >
                 Save replacement
               </button>
-              <button className="op-button op-button--ghost" type="button" onClick={() => setReplacing(false)}>
+              <button className="op-button op-button--ghost" type="button" disabled={interactionBusy} onClick={() => setReplacing(false)}>
                 Cancel
               </button>
             </div>
@@ -164,16 +165,16 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
         <div className="op-set-form" data-testid="set-form">
           <label className="op-field">
             <span>New commitment</span>
-            <input aria-label="New commitment" value={setText} onChange={(e) => setSetText(e.target.value)} />
+            <input aria-label="New commitment" value={setText} disabled={interactionBusy} onChange={(e) => setSetText(e.target.value)} />
           </label>
-          <button className="op-button op-button--primary" type="button" disabled={busy === "set" || setText.trim() === ""} onClick={doSet}>
+          <button className="op-button op-button--primary" type="button" disabled={interactionBusy || setText.trim() === ""} onClick={doSet}>
             Save commitment
           </button>
         </div>
       )}
 
       {overview.undoable_transition_id && (
-        <button className="op-button op-button--ghost op-undo-button" type="button" disabled={busy === "undo"} onClick={doUndo} data-testid="undo-button">
+        <button className="op-button op-button--ghost op-undo-button" type="button" disabled={interactionBusy} onClick={doUndo} data-testid="undo-button">
           Undo last change
         </button>
       )}
@@ -194,7 +195,7 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
           <p>{outcome.error.message}</p>
           {outcome.error.recovery === "retry" && (
             <div className="op-mutation-error__actions">
-              <button className="op-button op-button--secondary" type="button" onClick={() => lastAction?.()}>
+              <button className="op-button op-button--secondary" type="button" disabled={interactionBusy} onClick={() => lastAction?.()}>
                 Retry
               </button>
               <button className="op-button op-button--ghost" type="button" onClick={() => copyText(draft)}>

@@ -7,6 +7,23 @@ import { afterEach } from "vitest";
 
 export const mediaState = { matches: true };
 
+// Node may expose an unavailable experimental localStorage that shadows jsdom's storage.
+// Install a deterministic per-worker implementation so restart-restoration tests exercise the
+// same Web Storage contract as the desktop webview.
+const localValues = new Map<string, string>();
+const testLocalStorage: Storage = {
+  get length() { return localValues.size; },
+  clear: () => localValues.clear(),
+  getItem: (key) => localValues.get(key) ?? null,
+  key: (index) => Array.from(localValues.keys())[index] ?? null,
+  removeItem: (key) => { localValues.delete(key); },
+  setItem: (key, value) => { localValues.set(key, String(value)); },
+};
+Object.defineProperty(window, "localStorage", {
+  configurable: true,
+  value: testLocalStorage,
+});
+
 Object.defineProperty(window, "matchMedia", {
   writable: true,
   configurable: true,

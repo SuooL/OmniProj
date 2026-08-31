@@ -1,6 +1,6 @@
 // Index-level contract: visible column headers, the review-order label and DTO-sourced review
 // interval, deterministic order preservation (NEVER re-ranked), transparent opt-in sort, the
-// text/review filters, the empty-state recovery action, and archived exclusion.
+// text/review filters, the empty-state recovery action, and archived recovery view.
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -131,11 +131,14 @@ describe("empty and archived", () => {
     expect(onAddProject).toHaveBeenCalledTimes(1);
   });
 
-  it("excludes archived projects defensively", () => {
+  it("keeps archived projects out of the operating view but exposes an Archived filter", async () => {
+    const user = userEvent.setup();
     renderIndex([
       indexItem({ project_id: projectId("live"), name: "Live", status: "active" }),
       indexItem({ project_id: projectId("gone"), name: "Gone", status: "archived" }),
     ]);
     expect(linkOrder()).toEqual(["Live"]);
+    await user.click(screen.getByRole("button", { name: "Archived" }));
+    expect(linkOrder()).toEqual(["Gone"]);
   });
 });

@@ -2,14 +2,17 @@
 // content to the dense <ProjectsIndex>. The outer container keeps a stable testid across every
 // state. Filter and sort are canonical search params, read inside ProjectsIndex.
 
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { api, AppError } from "../api";
 import { ProjectsIndex } from "../components/projects/ProjectsIndex";
 import { useAppActions } from "../components/AppShell";
+import { loadIndexViewState } from "../domain/navigationSession";
 import { queryKeys } from "../queryKeys";
 
 export function ProjectsIndexPage() {
+  const restoredView = useRef(false);
   const { openAddProject } = useAppActions();
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: queryKeys.projectIndex,
@@ -17,6 +20,20 @@ export function ProjectsIndexPage() {
   });
 
   const now = new Date();
+
+  useEffect(() => {
+    if (!data || restoredView.current) return;
+    restoredView.current = true;
+    const saved = loadIndexViewState();
+    if (!saved) return;
+    const scroller = document.querySelector<HTMLElement>(".app-shell__content");
+    if (scroller) scroller.scrollTop = saved.scrollY;
+    if (saved.focusId) {
+      const row = Array.from(document.querySelectorAll<HTMLElement>("[data-focus-id]"))
+        .find((element) => element.dataset.focusId === saved.focusId);
+      row?.focus();
+    }
+  }, [data]);
 
   return (
     <main
