@@ -30,18 +30,33 @@ import type {
   PlanList,
   ReminderSettings,
   DogfoodSummary,
+  AgentSettings,
 } from "./domain/project";
 
 /** Invoke one command, wrapping args in the single `input` key and typing the rejection. */
 async function call<T>(command: string, input?: object): Promise<T> {
   try {
-    return input === undefined
+    const result = input === undefined
       ? await invoke<T>(command)
       : await invoke<T>(command, { input });
+    if (ATTENTION_MUTATIONS.has(command)) {
+      // The domain mutation already succeeded. Indicator refresh is derived UI state
+      // and must never turn a durable success into a displayed write failure.
+      try { await invoke("refresh_attention_indicator"); } catch { /* next hourly/startup sync repairs it */ }
+    }
+    return result;
   } catch (raw) {
     throw classifyError(raw);
   }
 }
+
+const ATTENTION_MUTATIONS = new Set([
+  "register_project", "relink_project_source", "refresh_projects",
+  "complete_project_setup", "set_project_status", "set_commitment",
+  "confirm_commitment", "complete_commitment", "replace_commitment",
+  "clear_commitment", "undo_commitment_transition", "add_task",
+  "update_task", "remove_task", "set_reminder_settings",
+]);
 
 export const api = {
   // --- Reads ---------------------------------------------------------------
@@ -102,6 +117,9 @@ export const api = {
   testReminder: () => call<void>("test_reminder"),
   getDogfoodSummary: () => call<DogfoodSummary>("get_dogfood_summary"),
   recordReentryEvent: (input: { project_id: ProjectId; duration_seconds: number }) => call<DogfoodSummary>("record_reentry_event", input),
+  getAgentSettings: () => call<AgentSettings>("get_agent_settings"),
+  setAgentSettings: (input: { default_model: string; api_key: string | null; remote_consent: boolean }) => call<AgentSettings>("set_agent_settings", input),
+  testAgentProvider: () => call<void>("test_agent_provider"),
 } as const;
 
 export { AppError };

@@ -62,6 +62,8 @@ export function observedActual(
     untracked_files: 0,
     status_digest: "0123456789abcdef",
     commits_since_commitment: null,
+    commit_activity_weeks: [0, 0, 1, 0, 2, 0, 0, 1, 0, 0, 3, 0, 1, 0, 0, 2],
+    silent_days: 11,
     ...overrides,
   };
 }

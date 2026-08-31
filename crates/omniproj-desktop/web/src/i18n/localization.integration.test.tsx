@@ -18,8 +18,8 @@ const NOW = new Date("2026-08-12T12:00:00Z");
 const POLICY: ReviewPolicy = { commitment_review_days: 7, rule_version: "r0-v1" };
 
 // A long, unique, always-rendered string, so the assertion can't collide with a badge.
-const REVIEW_ORDER_ZH = "审视顺序（确定性规则，不代表优先级或健康度）";
-const REVIEW_ORDER_EN = "Review order (deterministic, not priority or health)";
+const REVIEW_ORDER_ZH = "关注顺序（按静默事实，不代表优先级或健康度）";
+const REVIEW_ORDER_EN = "Attention order (factual silence, not priority or health)";
 
 function renderLocalizedIndex(locale: Locale) {
   return render(

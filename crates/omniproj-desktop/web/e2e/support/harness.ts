@@ -64,6 +64,7 @@ export async function installMockTauri(page: Page): Promise<void> {
         head: { kind: "attached", branch: "main" },
         last_commit: { sha: seedId.repeat(8).slice(0, 40).padEnd(40, "0"), short_sha: seedId + "abcd", subject: "latest work", committed_at: "2026-08-11T00:00:00Z" },
         changed_files: 0, staged_files: 0, unstaged_files: 0, untracked_files: 0, status_digest: "abc", commits_since_commitment: 2,
+        commit_activity_weeks: [0, 0, 1, 0, 2, 0, 0, 1, 0, 0, 3, 0, 1, 0, 0, 2], silent_days: 1,
       };
     }
     function commitmentOf(s: Seed) {
@@ -94,6 +95,15 @@ export async function installMockTauri(page: Page): Promise<void> {
     const tasksByProject: Record<string, any[]> = {};
     const taskRevision: Record<string, number> = {};
     for (const s of seed) { tasksByProject[s.id] = []; taskRevision[s.id] = 1; }
+    let agentSettings = {
+      default_model: "anthropic/claude-sonnet-4-6", selected_provider: "anthropic", selected_model: "claude-sonnet-4-6",
+      remote_consent: false, ready: false,
+      providers: [
+        { name: "anthropic", kind: "anthropic", local: false, key_required: true, key_present: false },
+        { name: "deepseek", kind: "openai", local: false, key_required: true, key_present: true },
+        { name: "ollama", kind: "openai", local: true, key_required: false, key_present: true },
+      ],
+    };
 
     function fail(code: string) {
       const stateApplied = w.__mock.failStateApplied;
@@ -133,6 +143,14 @@ export async function installMockTauri(page: Page): Promise<void> {
           taskRevision[input.project_id] = (taskRevision[input.project_id] ?? 1) + 1;
           return Promise.resolve({ revision: `task-${taskRevision[input.project_id]}`, tasks: list });
         }
+        case "advance_task":
+          return Promise.resolve({ proposal_id: `${input.id}-proposal`, candidates: ["Inspect the failing path", "Write a regression test", "Implement the smallest fix"] });
+        case "adopt_subtasks": {
+          const list = tasksByProject[input.project_id] ?? (tasksByProject[input.project_id] = []);
+          for (const text of input.texts) list.push({ id: `task-${list.length + 1}`, text, status: "open", unclear: false, due: null, note: null, commits: [], adopted_from_proposal_id: input.proposal_id, linked_work_item_id: null, is_current_commitment: false });
+          taskRevision[input.project_id] = (taskRevision[input.project_id] ?? 1) + 1;
+          return Promise.resolve({ revision: `task-${taskRevision[input.project_id]}`, tasks: list });
+        }
         case "get_commit_timeline":
         case "get_git_graph":
           return Promise.resolve([]);
@@ -140,6 +158,17 @@ export async function installMockTauri(page: Page): Promise<void> {
           return Promise.resolve({ revision: "plan-1", entries: [] });
         case "get_reminder_settings":
           return Promise.resolve({ enabled: true, cadence: "daily", silent_days_threshold: 7, revision: "settings-1" });
+        case "get_agent_settings":
+          return Promise.resolve(agentSettings);
+        case "set_agent_settings": {
+          const [provider, model] = input.default_model.split(/\/(.+)/);
+          agentSettings = { ...agentSettings, default_model: input.default_model, selected_provider: provider, selected_model: model, remote_consent: input.remote_consent, ready: provider === "ollama" || Boolean(input.remote_consent) };
+          return Promise.resolve(agentSettings);
+        }
+        case "test_agent_provider":
+          return agentSettings.ready ? Promise.resolve(null) : Promise.reject({ code: "invalid_input", message: "not ready", retryable: false, state_applied: false });
+        case "refresh_attention_indicator":
+          return Promise.resolve({ count: 0, project_ids: [] });
         case "get_dogfood_summary":
           return Promise.resolve({ event_count: 0, project_count: 0, median_duration_seconds: null, meets_event_threshold: false, meets_project_threshold: false });
         case "validate_project_source": {

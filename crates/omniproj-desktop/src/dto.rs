@@ -82,18 +82,6 @@ fn review_reason_dtos(reasons: &[ReviewReason]) -> Vec<ReviewReasonDto> {
         .collect()
 }
 
-/// Fixed priority for a review code by its wire name (inverse of `review_reason_code_name`).
-fn review_reason_priority_by_name(code: &str) -> u8 {
-    match code {
-        "source_unavailable" => 0,
-        "complete_setup" => 1,
-        "needs_commitment" => 2,
-        "review_action" => 3,
-        "scheduled_review" => 4,
-        _ => u8::MAX,
-    }
-}
-
 /// HEAD position at the last successful observation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -126,6 +114,11 @@ pub struct ObservedActualDto {
     pub untracked_files: u32,
     pub status_digest: String,
     pub commits_since_commitment: Option<u32>,
+    /// Sixteen UTC calendar-week commit counts, oldest to newest.
+    pub commit_activity_weeks: Vec<u32>,
+    /// Whole days since the last commit at response time. `None` means the
+    /// repository has no commit or activity could not be observed.
+    pub silent_days: Option<u32>,
 }
 
 /// The Human's current explicit commitment (the one action).
@@ -496,17 +489,29 @@ pub fn assemble_overview(
     }
 }
 
-/// Deterministic Index order: most-urgent review priority first, then name, then id.
-/// This is a stable review order, not a health or importance ranking. Priority is read
-/// from the row's own (already priority-sorted) review reasons.
-pub fn index_sort_key(item: &ProjectIndexItemDto) -> (u8, String, String) {
-    let priority = item
-        .review_reasons
-        .first()
-        .map(|reason| review_reason_priority_by_name(&reason.code))
-        .unwrap_or(u8::MAX);
+/// Deterministic factual-attention order. Active/setup projects with observable
+/// activity are ordered by silent days (most silent first); an empty repository is
+/// treated as maximally silent. Unobservable sources follow rather than receiving a
+/// fabricated inactivity value. Non-operating lifecycle states remain last.
+pub fn index_sort_key(item: &ProjectIndexItemDto) -> (u8, u32, String, String) {
+    let operating = matches!(item.status, ProjectStatus::Setup | ProjectStatus::Active);
+    let observable =
+        item.source_status == ProjectSourceStatus::Available && item.observed_actual.is_some();
+    let bucket = if operating && observable {
+        0
+    } else if operating {
+        1
+    } else {
+        2
+    };
+    let silent = item
+        .observed_actual
+        .as_ref()
+        .map(|actual| actual.silent_days.unwrap_or(u32::MAX))
+        .unwrap_or(0);
     (
-        priority,
+        bucket,
+        u32::MAX - silent,
         item.name.clone(),
         item.project_id.as_str().to_owned(),
     )

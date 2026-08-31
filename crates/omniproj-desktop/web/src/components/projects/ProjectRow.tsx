@@ -2,7 +2,7 @@
 // budget (<=1 ProjectStateTag, <=1 ReviewSignalBadge, <=3 FactLabels, and NO CommitmentStateTag
 // — that tag is history-only, so the row stays within <=2 enclosed badges). It renders no
 // full path, sparkline, health/priority, Git graph, Agent control, full task list, or any
-// activity-derived ranking.
+// health/priority score. The activity strip is a neutral repository fact.
 
 import { Link } from "react-router-dom";
 
@@ -18,6 +18,7 @@ import { FactLabel } from "../semantic/FactLabel";
 import { ChevronRightIcon, FolderIcon } from "../Icons";
 import { ProjectStateTag } from "../semantic/ProjectStateTag";
 import { ReviewSignalBadge } from "../semantic/ReviewSignalBadge";
+import { ActivitySparkline } from "./ActivitySparkline";
 import {
   projectStatusLabel,
   reviewReasonLabel,
@@ -67,14 +68,6 @@ function rowAccessibleName(item: ProjectIndexItem, locale: Locale, t: Translate,
   return `${parts.join(". ")}.`;
 }
 
-/** A short natural-language note about working-tree changes; empty when the tree is clean. */
-function changeNote(item: ProjectIndexItem, t: Translate): string | null {
-  const o = item.observed_actual;
-  if (!o) return null;
-  const dirty = o.changed_files + o.untracked_files;
-  return dirty > 0 ? t("row.changed", { count: dirty }) : t("row.clean");
-}
-
 function activityNote(item: ProjectIndexItem, now: Date, locale: Locale, t: Translate): string | null {
   const committed = item.observed_actual?.last_commit?.committed_at;
   if (!committed) return null;
@@ -87,16 +80,15 @@ function activityNote(item: ProjectIndexItem, now: Date, locale: Locale, t: Tran
 export interface ProjectRowProps {
   item: ProjectIndexItem;
   now: Date;
+  silentDaysThreshold?: number;
 }
 
-export function ProjectRow({ item, now }: ProjectRowProps) {
+export function ProjectRow({ item, now, silentDaysThreshold = 7 }: ProjectRowProps) {
   const { locale, t } = useI18n();
   const observed = item.observed_actual;
   const commitment = item.current_commitment;
   const primary = primaryReason(item);
   const hidden = hiddenReasons(item);
-  const observedTime = observed ? formatRelativeTime(observed.observed_at, now, locale) : null;
-  const sinceCommitment = observed?.commits_since_commitment ?? null;
 
   const reviewText = primary ? reviewReasonLabel(primary.code, locale) : t("row.noReview");
 
@@ -125,7 +117,7 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
           <span className="op-row__commitment op-row__commitment--none">
             {commitment ? commitment.text : t("row.noCommitment")}
           </span>
-          <span className="op-row__metadata">
+          <span className="op-row__metadata" title={observed?.observed_at}>
             {observed ? (
               <>
                 <FactLabel value={headText(observed.head, locale)} />
@@ -141,14 +133,10 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
             ) : (
               <span>{t("row.notObserved")}</span>
             )}
-            {observedTime && <FactLabel value={observedTime.text} title={observedTime.title} />}
-            {sinceCommitment !== null && sinceCommitment > 0 && (
-              <span>{locale === "en"
-                ? `${sinceCommitment} commit${sinceCommitment === 1 ? "" : "s"} since`
-                : t("row.commitsSince", { count: sinceCommitment })}</span>
-            )}
-            {observed && <span>{changeNote(item, t)}</span>}
-            {observed && <span>{activityNote(item, now, locale, t)}</span>}
+            {observed && <ActivitySparkline weeks={observed.commit_activity_weeks} />}
+            {observed && <span>{observed.silent_days === null
+              ? t("activity.unknown")
+              : t("activity.silenceWithThreshold", { days: observed.silent_days, threshold: silentDaysThreshold })}</span>}
           </span>
         </span>
         <span className="op-row__review-text">

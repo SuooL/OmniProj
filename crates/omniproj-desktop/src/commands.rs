@@ -312,6 +312,13 @@ pub fn get_attention_summary() -> CommandResult<crate::mvp::AttentionSummaryDto>
     ))
 }
 
+#[tauri::command]
+pub fn refresh_attention_indicator(
+    ui: State<'_, crate::AttentionTrayUi>,
+) -> CommandResult<crate::mvp::AttentionSummaryDto> {
+    Ok(crate::sync_attention_ui(&ui))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AddTaskInput {
     pub project_id: ProjectId,
@@ -580,4 +587,21 @@ pub fn record_reentry_event(
     input: RecordReentryEventInput,
 ) -> CommandResult<crate::mvp::DogfoodSummaryDto> {
     crate::mvp::record_reentry_event(input.project_id, input.duration_seconds)
+}
+
+#[tauri::command]
+pub fn get_agent_settings() -> CommandResult<crate::agent_settings::AgentSettingsDto> {
+    crate::agent_settings::get_agent_settings()
+}
+
+#[tauri::command]
+pub fn set_agent_settings(
+    input: crate::agent_settings::SaveAgentSettingsInput,
+) -> CommandResult<crate::agent_settings::AgentSettingsDto> {
+    crate::agent_settings::save_agent_settings(input)
+}
+
+#[tauri::command]
+pub async fn test_agent_provider() -> CommandResult<()> {
+    crate::agent_settings::test_agent_provider().await
 }

@@ -769,21 +769,38 @@ pub async fn advance_task(project_id: ProjectId, id: String) -> CommandResult<Ad
         .find(|t| t.id.as_deref() == Some(id.as_str()))
         .cloned()
         .ok_or_else(|| CommandError::invalid_input("task not found"))?;
-    let resolved = omniproj_distill::resolve(None).map_err(|e| {
-        CommandError::new(
-            crate::error::ErrorCode::InvalidInput,
-            format!("no LLM provider configured: {e}"),
+    let resolved = crate::agent_settings::resolve_provider()?;
+    let mut steps =
+        omniproj_distill::breakdown(&item.text, item.note.as_deref(), &resolved.provider)
+            .await
+            .map_err(|e| {
+                CommandError::new(
+                    crate::error::ErrorCode::SourceObservationFailed,
+                    e.to_string(),
+                )
+                .retryable()
+            })?;
+    if !valid_advance_candidates(&steps) {
+        steps = omniproj_distill::breakdown(&item.text, item.note.as_deref(), &resolved.provider)
+            .await
+            .map_err(|e| {
+                CommandError::new(
+                    crate::error::ErrorCode::SourceObservationFailed,
+                    e.to_string(),
+                )
+                .retryable()
+            })?;
+    }
+    if !valid_advance_candidates(&steps) {
+        return Err(CommandError::new(
+            crate::error::ErrorCode::SourceObservationFailed,
+            format!(
+                "Agent returned {} usable candidates; expected 3–6. Nothing was saved.",
+                steps.len()
+            ),
         )
-    })?;
-    let steps = omniproj_distill::breakdown(&item.text, item.note.as_deref(), &resolved.provider)
-        .await
-        .map_err(|e| {
-            CommandError::new(
-                crate::error::ErrorCode::SourceObservationFailed,
-                e.to_string(),
-            )
-            .retryable()
-        })?;
+        .retryable());
+    }
     let proposal_id = format!("{}-{}", id, Utc::now().timestamp_millis());
     let body = format!(
         "# Advance proposal {proposal_id} — #{id}: {}\n\n{}\n",
@@ -812,6 +829,10 @@ pub async fn advance_task(project_id: ProjectId, id: String) -> CommandResult<Ad
         proposal_id,
         candidates: steps,
     })
+}
+
+fn valid_advance_candidates(steps: &[String]) -> bool {
+    (3..=6).contains(&steps.len()) && steps.iter().all(|step| !step.trim().is_empty())
 }
 
 pub fn adopt_subtasks(
@@ -900,5 +921,21 @@ mod tests {
         assert!(!claim_daily_reminder(&settings, &summary).unwrap());
         std::env::remove_var("OMNIPROJ_HOME");
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn advance_requires_three_to_six_non_empty_candidates() {
+        assert!(!valid_advance_candidates(&["one".into(), "two".into()]));
+        assert!(valid_advance_candidates(&[
+            "one".into(),
+            "two".into(),
+            "three".into(),
+        ]));
+        assert!(!valid_advance_candidates(&[
+            "one".into(),
+            "two".into(),
+            " ".into(),
+        ]));
+        assert!(!valid_advance_candidates(&vec!["step".into(); 7]));
     }
 }

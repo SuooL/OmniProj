@@ -136,7 +136,7 @@ impl<C: Clock> DesktopService<C> {
         };
         let observed_actual = source
             .and_then(repository_cache::load)
-            .map(|cache| cache.to_observed_actual(state.current_next_action_id.as_ref()));
+            .map(|cache| cache.to_observed_actual(state.current_next_action_id.as_ref(), now));
         (source, reasons, observed_actual)
     }
 

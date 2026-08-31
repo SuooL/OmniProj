@@ -5,6 +5,7 @@
 //! archived verbatim in `legacy.rs`; only the reviewed MVP subset is compiled into the
 //! shipped binary.
 
+pub mod agent_settings;
 pub mod commands;
 pub mod dto;
 pub mod error;
@@ -42,6 +43,7 @@ pub fn r0_invoke_handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sy
         commands::undo_commitment_transition,
         commands::get_tasks,
         commands::get_attention_summary,
+        commands::refresh_attention_indicator,
         commands::add_task,
         commands::update_task,
         commands::remove_task,
@@ -61,7 +63,37 @@ pub fn r0_invoke_handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sy
         commands::test_reminder,
         commands::get_dogfood_summary,
         commands::record_reentry_event,
+        commands::get_agent_settings,
+        commands::set_agent_settings,
+        commands::test_agent_provider,
     ]
+}
+
+/// Menu-bar state shared by explicit command-triggered refreshes and the hourly
+/// background check. The count is shown as native title text beside the icon on macOS.
+pub struct AttentionTrayUi {
+    update: std::sync::Arc<dyn Fn(usize) + Send + Sync>,
+}
+
+impl Clone for AttentionTrayUi {
+    fn clone(&self) -> Self {
+        Self {
+            update: self.update.clone(),
+        }
+    }
+}
+
+impl AttentionTrayUi {
+    pub fn apply(&self, count: usize) {
+        (self.update)(count);
+    }
+}
+
+pub fn sync_attention_ui(ui: &AttentionTrayUi) -> crate::mvp::AttentionSummaryDto {
+    let settings = crate::mvp::load_reminder_settings();
+    let summary = crate::mvp::attention_summary_with_threshold(settings.silent_days_threshold);
+    ui.apply(summary.count);
+    summary
 }
 
 /// Run the OmniProj desktop application.
@@ -106,23 +138,6 @@ pub fn run() {
                 let _ = app.notification().builder().title("OmniProj 待关注提醒").body(format!("有 {attention_count} 个项目需要关注。打开 OmniProj 查看下一步。")) .show();
             }
             let notification_handle = app.handle().clone();
-            let attention_menu = attention.clone();
-            tauri::async_runtime::spawn(async move {
-                use std::time::Duration;
-                use tauri_plugin_notification::NotificationExt;
-                loop {
-                    tokio::time::sleep(Duration::from_secs(3_600)).await;
-                    let settings = crate::mvp::load_reminder_settings();
-                    let summary = crate::mvp::attention_summary_with_threshold(settings.silent_days_threshold);
-                    let _ = attention_menu.set_text(format!("待关注项目：{}", summary.count));
-                    if crate::mvp::claim_daily_reminder(&settings, &summary).unwrap_or(false) {
-                        let _ = notification_handle.notification().builder()
-                            .title("OmniProj 每日待关注提醒")
-                            .body(format!("有 {} 个项目需要关注。打开 OmniProj 查看下一步。", summary.count))
-                            .show();
-                    }
-                }
-            });
             let tray = TrayIconBuilder::with_id("main")
                 .icon(
                     app.default_window_icon()
@@ -142,7 +157,35 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+            let tray_for_update = tray.clone();
+            let attention_for_update = attention.clone();
+            let attention_ui = AttentionTrayUi {
+                update: std::sync::Arc::new(move |count| {
+                    let title = (count > 0).then(|| count.to_string());
+                    let _ = tray_for_update.set_title(title.as_deref());
+                    let _ = tray_for_update.set_tooltip(Some(format!("OmniProj · 待关注项目：{count}")));
+                    let _ = attention_for_update.set_text(format!("待关注项目：{count}"));
+                }),
+            };
+            app.manage(attention_ui.clone());
+            let background_attention_ui = attention_ui.clone();
+            tauri::async_runtime::spawn(async move {
+                use std::time::Duration;
+                use tauri_plugin_notification::NotificationExt;
+                loop {
+                    tokio::time::sleep(Duration::from_secs(3_600)).await;
+                    let settings = crate::mvp::load_reminder_settings();
+                    let summary = sync_attention_ui(&background_attention_ui);
+                    if crate::mvp::claim_daily_reminder(&settings, &summary).unwrap_or(false) {
+                        let _ = notification_handle.notification().builder()
+                            .title("OmniProj 每日待关注提醒")
+                            .body(format!("有 {} 个项目需要关注。打开 OmniProj 查看下一步。", summary.count))
+                            .show();
+                    }
+                }
+            });
             app.manage(tray); // keep the tray alive for the app's lifetime
+            sync_attention_ui(&attention_ui);
             if let Some(window) = app.get_webview_window("main") {
                 window.show()?;
             }

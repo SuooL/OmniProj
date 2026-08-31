@@ -81,6 +81,8 @@ export interface ObservedActual {
   untracked_files: number;
   status_digest: string;
   commits_since_commitment: number | null;
+  commit_activity_weeks: number[];
+  silent_days: number | null;
 }
 
 export interface CurrentCommitment {
@@ -183,6 +185,8 @@ export interface PlanEntry { id: string | null; date: string; title: string; sta
 export interface PlanList { revision: string; entries: PlanEntry[]; }
 export interface ReminderSettings { enabled: boolean; cadence: "daily" | "off"; silent_days_threshold: number; revision: string; }
 export interface DogfoodSummary { event_count: number; project_count: number; median_duration_seconds: number | null; meets_event_threshold: boolean; meets_project_threshold: boolean; }
+export interface AgentProvider { name: string; kind: string; local: boolean; key_required: boolean; key_present: boolean; }
+export interface AgentSettings { default_model: string; selected_provider: string; selected_model: string; remote_consent: boolean; ready: boolean; providers: AgentProvider[]; }
 
 // --- Source validation ------------------------------------------------------
 // `validate_project_source` returns a typed state for BOTH the valid preview (`ok`) and

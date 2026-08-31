@@ -22,7 +22,10 @@ The current development desktop includes a Human planning task list (`notes/next
 can be explicitly promoted to the single project-level Current Commitment, a read-only Git commit
 timeline with task attribution, selective Advance proposal adoption with retained provenance, an
 append-only decision log (`plan.md`), deduplicated configurable reminders, and a local re-entry
-timer for the dogfood gate. The source repository remains read-only throughout.
+timer for the dogfood gate. The Index shows a neutral sixteen-week commit activity strip and is
+ordered by factual silence; the menu-bar icon carries the current non-zero attention count. Advance
+has an in-app provider/model setup, explicit remote-transmission consent, and stores API keys only
+in the operating-system credential store. The source repository remains read-only throughout.
 
 ---
 
@@ -31,7 +34,9 @@ timer for the dogfood gate. The source repository remains read-only throughout.
 - **Platform:** the Tauri desktop app targets **macOS** as the R0 acceptance platform (Linux is
   used for CI). Rust + React inside a native webview.
 - **Local by default:** all persistent state lives under `~/.omniproj` (override with the
-  `OMNIPROJ_HOME` environment variable). Nothing about your projects leaves the machine in R0.
+  `OMNIPROJ_HOME` environment variable). Advance sends only the selected task text and problem
+  note, and only after explicit consent when a remote provider is selected. API keys stay in the
+  operating-system credential store and are never written to `~/.omniproj`.
 - **Source repositories are read-only.** OmniProj runs read-only Git commands against your repos
   and writes only to its own store. A move/rename never corrupts a project — you relink it.
 
@@ -97,12 +102,17 @@ On restart, OmniProj returns you to the last canonical URL; an explicit deep lin
 | `Esc` | close the Add Project modal, or close the sidebar drawer on a narrow window |
 | `Tab` / `Shift+Tab` | standard control navigation |
 
-### The Index and the seven-day review rule
+### The Index, activity, and the seven-day review rule
 
-The Index is ordered in a **deterministic review order** — source unavailable, setup incomplete,
-needs commitment, review action, scheduled review — explicitly **not** a priority or health
-ranking. A transparent, opt-in sort (name, recent commit) is available; the default is always
-the review order.
+The default Index order is a factual **attention order**: operating projects with readable Git
+observations are ordered by whole silent days, most silent first. A repository with no commits is
+shown explicitly; an unavailable source is marked unknown rather than assigned fabricated
+inactivity. Waiting/parked/archived projects remain available through filters. This is explicitly
+not a priority or health ranking, and transparent opt-in sorts (name, recent commit) remain.
+
+Every observed row carries exactly sixteen UTC calendar-week commit counts, oldest to newest,
+rendered as a compact activity strip with an accessible text summary. The silence text states the
+current reminder threshold beside the observed fact.
 
 The default operating view omits archived projects, but the **Archived** filter and sidebar
 section keep them discoverable so they can be opened and restored. OmniProj renders the persisted

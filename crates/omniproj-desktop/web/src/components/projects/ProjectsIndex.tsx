@@ -52,6 +52,7 @@ export interface ProjectsIndexProps {
   reviewPolicy: ReviewPolicy;
   now: Date;
   onAddProject: () => void;
+  silentDaysThreshold?: number;
 }
 
 export function ProjectsIndex({
@@ -59,6 +60,7 @@ export function ProjectsIndex({
   reviewPolicy,
   now,
   onAddProject,
+  silentDaysThreshold = 7,
 }: ProjectsIndexProps) {
   const { t } = useI18n();
   const reviewFilters: Array<{ value: ReviewFilter; label: string }> = [
@@ -143,7 +145,7 @@ export function ProjectsIndex({
         ) : (
           <ul className="op-index__list" aria-label={t("shell.projects")}>
             {visible.map((item) => (
-              <ProjectRow key={item.project_id} item={item} now={now} />
+              <ProjectRow key={item.project_id} item={item} now={now} silentDaysThreshold={silentDaysThreshold} />
             ))}
           </ul>
         )}

@@ -130,25 +130,18 @@ describe("commitment states", () => {
     expect(screen.getByText("No current commitment")).toBeInTheDocument();
   });
 
-  it("shows the natural-language commits-since delta without claiming progress", () => {
-    renderRow(
-      indexItem({
-        observed_actual: observedActual({ commits_since_commitment: 3 }),
-      }),
-    );
-    expect(screen.getByText("3 commits since")).toBeInTheDocument();
-  });
 });
 
-describe("no forbidden content", () => {
-  it("never renders the source path, a sparkline, or a ranking control", () => {
+describe("neutral activity facts", () => {
+  it("renders the 16-week activity strip without source paths or health ranking", () => {
     const { container } = renderRow(
       indexItem({ name: "Atlas" }),
     );
     // The Index DTO carries no source location; assert none leaked into the row.
     const row = within(container.querySelector("li") as HTMLElement);
     expect(row.queryByText(/\/Users\//)).not.toBeInTheDocument();
-    expect(container.querySelector("[data-testid='sparkline']")).toBeNull();
+    expect(container.querySelector("[data-testid='activity-sparkline']")).not.toBeNull();
+    expect(screen.getByRole("img", { name: /commits in the last 16 weeks/i })).toBeInTheDocument();
     expect(container.querySelector("[data-testid='health']")).toBeNull();
     expect(container.querySelector("[data-testid='git-graph']")).toBeNull();
   });

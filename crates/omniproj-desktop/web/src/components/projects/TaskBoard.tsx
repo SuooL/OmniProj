@@ -61,15 +61,25 @@ export function TaskBoard({ projectId, projectRevision, hasCurrentCommitment }: 
   }
 
   async function advance(task: Task) {
-    const next = await api.advanceTask({ project_id: projectId, id: task.id });
-    setProposal({ ...next, selected: next.candidates.map(() => true) });
+    setMessage(t("task.advancing"));
+    try {
+      const next = await api.advanceTask({ project_id: projectId, id: task.id });
+      setProposal({ ...next, selected: next.candidates.map(() => true) });
+      setMessage("");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t("task.advanceFailed"));
+    }
   }
 
   async function adopt() {
     if (!data || !proposal) return;
     const texts = proposal.candidates.filter((_, index) => proposal.selected[index]);
-    accept(await api.adoptSubtasks({ project_id: projectId, expected_revision: data.revision, proposal_id: proposal.proposal_id, texts }));
-    setProposal(null);
+    try {
+      accept(await api.adoptSubtasks({ project_id: projectId, expected_revision: data.revision, proposal_id: proposal.proposal_id, texts }));
+      setProposal(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t("task.conflict"));
+    }
   }
 
   async function promote(task: Task) {

@@ -46,11 +46,11 @@ describe("headers and policy", () => {
     expect(container.querySelector(".op-index__head")).not.toBeInTheDocument();
   });
 
-  it("labels the order as review order and never as priority", () => {
+  it("labels the order as factual attention order and never as priority", () => {
     renderIndex();
     expect(screen.getByText(REVIEW_ORDER_LABEL)).toBeInTheDocument();
     expect(
-      screen.getByRole("combobox", { name: /review order/i }),
+      screen.getByRole("combobox", { name: /attention order/i }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("combobox", { name: /priority/i }),
@@ -70,7 +70,7 @@ describe("deterministic order and transparent sort", () => {
     indexItem({ project_id: projectId("b"), name: "Bravo" }),
   ];
 
-  it("preserves the backend review order by default (no re-ranking)", () => {
+  it("preserves the backend attention order by default (no re-ranking)", () => {
     renderIndex(projects);
     expect(linkOrder()).toEqual(["Charlie", "Alpha", "Bravo"]);
   });
