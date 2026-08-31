@@ -10,7 +10,7 @@ tools.
 > audibly, with the human keeping judgment.* OmniProj never writes to your source repositories; it
 > only reads them, and it records its own state in a local store you control.
 
-The first proven loop (this is R0):
+The current desktop loop (MVP foundation):
 
 ```text
 Projects Index  →  re-enter one project  →  see the current commitment and the observed actual
@@ -18,9 +18,10 @@ Projects Index  →  re-enter one project  →  see the current commitment and t
                 →  observed activity flows back on the next refresh
 ```
 
-R0 deliberately ships **only** the Projects surface. There is no Agent chat, notifications,
-Attention inbox, Git graph, decisions log, settings screen, or activity sparkline in R0 — those
-are deferred until the re-entry loop is proven in daily use (see [Dogfood gate](#dogfood-gate)).
+The desktop now includes a human task list (`notes/next.md`), a read-only Git commit timeline
+with task attribution, an explicit Advance proposal/adoption flow, and a startup attention
+summary in the tray. Full branch graph, append-only decision log, configurable reminder cadence,
+and activity sparkline remain follow-up work.
 
 ---
 

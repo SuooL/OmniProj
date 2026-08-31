@@ -1,10 +1,9 @@
 //! OmniProj desktop backend (R0).
 //!
 //! This library is the application boundary: typed DTOs, a fixed serialized error
-//! contract, and exactly the 15 approved R0 IPC commands. The pre-R0 command surface is
-//! archived verbatim in `legacy.rs`, which is intentionally NOT declared as a module —
-//! so none of the deferred commands (Agent actions, Attention, reminders, full Work,
-//! Decisions, Git graph, notifications, …) compile into the shipped binary.
+//! contract, plus the focused MVP Record/Advance commands. The pre-R0 command surface is
+//! archived verbatim in `legacy.rs`; only the reviewed MVP subset is compiled into the
+//! shipped binary.
 
 pub mod commands;
 pub mod dto;
@@ -12,13 +11,14 @@ pub mod error;
 pub mod repository_cache;
 pub mod service;
 pub mod state;
+pub mod mvp;
 
 // NOTE: `legacy.rs` is deliberately not a module. It is a read-only source archive.
 
 use tauri::ipc::Invoke;
 use tauri::Runtime;
 
-use crate::service::{DesktopService, SystemClock};
+use crate::service::{DesktopService, R0Service, SystemClock};
 
 /// The exact R0 command allowlist, as a reusable invoke handler. Both `run()` and the
 /// behavior-level IPC tests install this same handler, so the shipped boundary is what
@@ -40,6 +40,16 @@ pub fn r0_invoke_handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sy
         commands::replace_commitment,
         commands::clear_commitment,
         commands::undo_commitment_transition,
+        commands::get_tasks,
+        commands::get_attention_summary,
+        commands::add_task,
+        commands::update_task,
+        commands::remove_task,
+        commands::attribute_commit,
+        commands::unattribute_commit,
+        commands::get_commit_timeline,
+        commands::advance_task,
+        commands::adopt_subtasks,
     ]
 }
 
@@ -47,6 +57,7 @@ pub fn r0_invoke_handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sy
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             use tauri::menu::{MenuBuilder, MenuItemBuilder};
             use tauri::tray::TrayIconBuilder;
@@ -71,13 +82,16 @@ pub fn run() {
                     return Ok(());
                 }
             };
+            let attention_count = service.list_project_index().map(|r| r.projects.iter().filter(|p| !p.review_reasons.is_empty()).count()).unwrap_or(0);
             app.manage(service);
-
-            // Neutral menu-bar presence: Open / Quit only. No attention count, no
-            // reminder cadence, no notifications (all deferred out of R0).
             let show = MenuItemBuilder::with_id("show", "打开 OmniProj").build(app)?;
+            let attention = MenuItemBuilder::with_id("attention", format!("待关注项目：{attention_count}")).enabled(false).build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
-            let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
+            let menu = MenuBuilder::new(app).items(&[&show, &attention, &quit]).build()?;
+            if attention_count > 0 {
+                use tauri_plugin_notification::NotificationExt;
+                let _ = app.notification().builder().title("OmniProj 待关注提醒").body(format!("有 {attention_count} 个项目需要关注。打开 OmniProj 查看下一步。")) .show();
+            }
             let tray = TrayIconBuilder::with_id("main")
                 .icon(
                     app.default_window_icon()

@@ -153,6 +153,25 @@ export interface ProjectOverview {
   revision: number;
 }
 
+export interface Task {
+  id: string;
+  text: string;
+  status: "open" | "doing" | "done";
+  unclear: boolean;
+  due: string | null;
+  note: string | null;
+  commits: string[];
+}
+
+export interface TimelineCommit {
+  sha: string;
+  short_sha: string;
+  committed_at: string;
+  author: string;
+  subject: string;
+  attributed_task_ids: string[];
+}
+
 // --- Source validation ------------------------------------------------------
 // `validate_project_source` returns a typed state for BOTH the valid preview (`ok`) and
 // the recoverable rejections (missing / unreadable / non-Git / bare / observation failed /

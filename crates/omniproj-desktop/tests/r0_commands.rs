@@ -922,9 +922,8 @@ fn handler_rejects_deferred_commands_and_accepts_the_r0_surface() {
         .map(|response| response.deserialize::<Value>().unwrap())
     };
 
-    // Deferred commands are rejected as unregistered.
+    // Commands not yet implemented are rejected as unregistered.
     for deferred in [
-        "advance_task",
         "get_graph",
         "get_plan",
         "get_attention",
@@ -939,7 +938,7 @@ fn handler_rejects_deferred_commands_and_accepts_the_r0_surface() {
         );
     }
 
-    // Every R0 command is accepted by the handler boundary (it may still error on args,
+    // Every shipped command is accepted by the handler boundary (it may still error on args,
     // but never with the unregistered-command sentinel).
     let r0_commands = [
         "list_project_index",
@@ -957,6 +956,15 @@ fn handler_rejects_deferred_commands_and_accepts_the_r0_surface() {
         "replace_commitment",
         "clear_commitment",
         "undo_commitment_transition",
+        "get_tasks",
+        "add_task",
+        "update_task",
+        "remove_task",
+        "attribute_commit",
+        "unattribute_commit",
+        "get_commit_timeline",
+        "advance_task",
+        "adopt_subtasks",
     ];
     for command in r0_commands {
         let response = invoke(command, json!({}));

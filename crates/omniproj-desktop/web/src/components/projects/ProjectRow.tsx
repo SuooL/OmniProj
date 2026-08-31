@@ -44,7 +44,7 @@ function headText(head: HeadState, locale: Locale): string {
  * assistive-tech user hears only the project name. This composes the four fields into one
  * spoken summary; the visible cells and their field labels remain for sighted users.
  */
-function rowAccessibleName(item: ProjectIndexItem, locale: Locale, t: Translate): string {
+function rowAccessibleName(item: ProjectIndexItem, locale: Locale, t: Translate, now: Date): string {
   const parts = [item.name];
   const state = item.status === "active" ? null : projectStatusLabel(item.status, locale);
   if (state) parts.push(state);
@@ -54,6 +54,8 @@ function rowAccessibleName(item: ProjectIndexItem, locale: Locale, t: Translate)
       : t("row.noCommitment"),
   );
   parts.push(item.observed_actual ? t("row.observed", { head: headText(item.observed_actual.head, locale) }) : t("row.notObserved"));
+  const activity = activityNote(item, now, locale, t);
+  if (activity) parts.push(activity);
   const primary = item.review_reasons[0];
   if (primary) {
     const more = item.review_reasons.length - 1;
@@ -71,6 +73,15 @@ function changeNote(item: ProjectIndexItem, t: Translate): string | null {
   if (!o) return null;
   const dirty = o.changed_files + o.untracked_files;
   return dirty > 0 ? t("row.changed", { count: dirty }) : t("row.clean");
+}
+
+function activityNote(item: ProjectIndexItem, now: Date, locale: Locale, t: Translate): string | null {
+  const committed = item.observed_actual?.last_commit?.committed_at;
+  if (!committed) return null;
+  const time = formatRelativeTime(committed, now, locale);
+  if (!time) return null;
+  const days = Math.max(0, Math.floor((now.getTime() - Date.parse(committed)) / 86_400_000));
+  return days > 0 ? t("row.silentDays", { days }) : t("row.lastActivity", { time: time.text });
 }
 
 export interface ProjectRowProps {
@@ -93,7 +104,7 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
     <li className="op-row">
       <Link
         className="op-row__link"
-        aria-label={rowAccessibleName(item, locale, t)}
+        aria-label={rowAccessibleName(item, locale, t, now)}
         to={projectOverviewPath(item.project_id)}
         data-focus-id={item.project_id}
         onClick={() =>
@@ -137,6 +148,7 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
                 : t("row.commitsSince", { count: sinceCommitment })}</span>
             )}
             {observed && <span>{changeNote(item, t)}</span>}
+            {observed && <span>{activityNote(item, now, locale, t)}</span>}
           </span>
         </span>
         <span className="op-row__review-text">

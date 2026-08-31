@@ -16,6 +16,7 @@ use crate::dto::{
 };
 use crate::error::CommandResult;
 use crate::service::{DesktopService, R0Service, SystemClock};
+use crate::mvp::{TaskDto, TimelineCommitDto};
 
 /// The concrete production service type managed by Tauri.
 pub type Service = DesktopService<SystemClock>;
@@ -288,3 +289,58 @@ pub fn undo_commitment_transition(
         },
     })
 }
+
+// ---------------------------------------------------------------------------
+// MVP Record / Advance
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ProjectTaskInput { pub project_id: ProjectId }
+
+#[tauri::command]
+pub fn get_tasks(input: ProjectTaskInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::get_tasks(input.project_id) }
+
+#[tauri::command]
+pub fn get_attention_summary(service: State<'_, Service>) -> CommandResult<crate::mvp::AttentionSummaryDto> {
+    let response = service.list_project_index()?;
+    let project_ids = response.projects.into_iter().filter(|p| !p.review_reasons.is_empty()).map(|p| p.project_id).collect::<Vec<_>>();
+    Ok(crate::mvp::AttentionSummaryDto { count: project_ids.len(), project_ids })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddTaskInput { pub project_id: ProjectId, pub text: String, #[serde(default)] pub unclear: bool }
+#[tauri::command]
+pub fn add_task(input: AddTaskInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::add_task(input.project_id, input.text, input.unclear) }
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateTaskInput { pub project_id: ProjectId, pub id: String, pub status: String, pub due: Option<String>, pub note: Option<String> }
+#[tauri::command]
+pub fn update_task(input: UpdateTaskInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::update_task(input.project_id, input.id, input.status, input.due, input.note) }
+
+#[derive(Debug, Deserialize)]
+pub struct TaskIdInput { pub project_id: ProjectId, pub id: String }
+#[tauri::command]
+pub fn remove_task(input: TaskIdInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::remove_task(input.project_id, input.id) }
+
+#[derive(Debug, Deserialize)]
+pub struct AttributeCommitInput { pub project_id: ProjectId, pub id: String, pub sha: String }
+#[tauri::command]
+pub fn attribute_commit(input: AttributeCommitInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::attribute_commit(input.project_id, input.id, input.sha) }
+#[tauri::command]
+pub fn unattribute_commit(input: AttributeCommitInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::unattribute_commit(input.project_id, input.id, input.sha) }
+
+#[derive(Debug, Deserialize)]
+pub struct TimelineInput { pub project_id: ProjectId, #[serde(default = "default_timeline_limit")] pub limit: usize }
+fn default_timeline_limit() -> usize { 50 }
+#[tauri::command]
+pub fn get_commit_timeline(input: TimelineInput) -> CommandResult<Vec<TimelineCommitDto>> { crate::mvp::get_timeline(input.project_id, input.limit) }
+
+#[derive(Debug, Deserialize)]
+pub struct AdvanceInput { pub project_id: ProjectId, pub id: String }
+#[tauri::command]
+pub async fn advance_task(input: AdvanceInput) -> CommandResult<Vec<String>> { crate::mvp::advance_task(input.project_id, input.id).await }
+
+#[derive(Debug, Deserialize)]
+pub struct AdoptInput { pub project_id: ProjectId, pub texts: Vec<String> }
+#[tauri::command]
+pub fn adopt_subtasks(input: AdoptInput) -> CommandResult<Vec<TaskDto>> { crate::mvp::adopt_subtasks(input.project_id, input.texts) }

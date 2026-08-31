@@ -23,6 +23,8 @@ import type {
   SetProjectStatusInput,
   SourceValidation,
   UndoCommitmentTransitionInput,
+  Task,
+  TimelineCommit,
 } from "./domain/project";
 
 /** Invoke one command, wrapping args in the single `input` key and typing the rejection. */
@@ -73,6 +75,17 @@ export const api = {
     call<ProjectOverview>("clear_commitment", input),
   undoCommitmentTransition: (input: UndoCommitmentTransitionInput) =>
     call<ProjectOverview>("undo_commitment_transition", input),
+
+  getTasks: (project_id: ProjectId) => call<Task[]>("get_tasks", { project_id }),
+  getAttentionSummary: () => call<{ count: number; project_ids: ProjectId[] }>("get_attention_summary"),
+  addTask: (input: { project_id: ProjectId; text: string; unclear: boolean }) => call<Task[]>("add_task", input),
+  updateTask: (input: { project_id: ProjectId; id: string; status: string; due: string | null; note: string | null }) => call<Task[]>("update_task", input),
+  removeTask: (input: { project_id: ProjectId; id: string }) => call<Task[]>("remove_task", input),
+  getCommitTimeline: (project_id: ProjectId, limit = 50) => call<TimelineCommit[]>("get_commit_timeline", { project_id, limit }),
+  attributeCommit: (input: { project_id: ProjectId; id: string; sha: string }) => call<Task[]>("attribute_commit", input),
+  unattributeCommit: (input: { project_id: ProjectId; id: string; sha: string }) => call<Task[]>("unattribute_commit", input),
+  advanceTask: (input: { project_id: ProjectId; id: string }) => call<string[]>("advance_task", input),
+  adoptSubtasks: (input: { project_id: ProjectId; texts: string[] }) => call<Task[]>("adopt_subtasks", input),
 } as const;
 
 export { AppError };

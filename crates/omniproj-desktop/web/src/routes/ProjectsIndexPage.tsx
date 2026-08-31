@@ -20,6 +20,7 @@ export function ProjectsIndexPage() {
     queryKey: queryKeys.projectIndex,
     queryFn: api.listProjectIndex,
   });
+  const { data: attention } = useQuery({ queryKey: ["attention-summary"], queryFn: api.getAttentionSummary });
 
   const now = new Date();
 
@@ -57,6 +58,7 @@ export function ProjectsIndexPage() {
             <span>{t("index.projectCount", { count: data.projects.length })}</span>
           </p>
         )}
+        {attention && attention.count > 0 && <p className="op-page-heading__attention" role="status">{t("attention.count", { count: attention.count })}</p>}
       </header>
 
       {isLoading && (
