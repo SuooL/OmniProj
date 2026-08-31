@@ -10,6 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use futures::future::join_all;
 
 use omniproj_capture::git::{count_commits_since, observe_repository, RepositoryObservation};
 use omniproj_core::ensure_home;
@@ -20,9 +21,7 @@ use omniproj_core::project::{
     RecordSourceObservationInput, RegisterOutcome,
     RegisterProjectInput as CoreRegisterProjectInput, RelinkSourceInput, SourceObservationOutcome,
 };
-use omniproj_core::project_state::{
-    apply_project_command, ProjectCommand, ProjectStateDoc, ProjectStatus,
-};
+use omniproj_core::project_state::{apply_project_command, ProjectCommand, ProjectStateDoc};
 use omniproj_core::review::{derive_review_reasons, ReviewReason, DEFAULT_COMMITMENT_REVIEW_DAYS};
 
 use crate::dto::{
@@ -264,6 +263,53 @@ impl<C: Clock> DesktopService<C> {
             .ok()
     }
 
+    /// Persist a repository observation that was already collected while validating a
+    /// newly registered or relinked source. Reusing that observation avoids a second Git
+    /// walk and ensures the first Overview never falls back to "not yet observed".
+    async fn persist_observation(
+        &self,
+        project_id: &ProjectId,
+        observation: &RepositoryObservation,
+        now: &str,
+    ) -> CommandResult<()> {
+        let record = load_project(project_id)?;
+        let state = ProjectStateDoc::load(project_id)?;
+        let source = record.primary_git_source().ok_or_else(|| {
+            CommandError::new(ErrorCode::SourceMissing, "primary Git source is missing")
+                .with_project_id(project_id.as_str())
+        })?;
+        let location = PathBuf::from(&source.location);
+        let current_commitment = state.current_next_action_id.clone();
+        let commitment_set_at = current_commitment
+            .as_ref()
+            .and_then(|id| state.work_items.iter().find(|item| &item.id == id))
+            .map(|item| item.created_at.clone());
+        let commits_since = match commitment_set_at {
+            Some(set_at) => self.count_since(location, set_at).await,
+            None => None,
+        };
+
+        record_source_observation(RecordSourceObservationInput {
+            project_id,
+            source_id: &source.id,
+            expected_source_revision: source.revision,
+            expected_location: &source.location,
+            attempted_at: now,
+            outcome: SourceObservationOutcome::Success {
+                successful_refresh_at: now,
+            },
+        })?;
+        repository_cache::store(&CachedObservation::from_observation(
+            project_id.clone(),
+            source.id.clone(),
+            source.location.clone(),
+            observation,
+            current_commitment,
+            commits_since,
+        ))?;
+        Ok(())
+    }
+
     /// One project's refresh. Never rejects the batch: every path returns a result.
     async fn refresh_one(&self, project_id: ProjectId, now: String) -> RefreshResultDto {
         let Some(_guard) = self.state.begin_refresh(&project_id).await else {
@@ -423,10 +469,6 @@ impl<C: Clock> R0Service for DesktopService<C> {
         let mut projects = Vec::with_capacity(records.len());
         for record in &records {
             let state = ProjectStateDoc::load(&record.id)?;
-            // Archived projects are absent from the default Index (still addressable).
-            if state.status == ProjectStatus::Archived {
-                continue;
-            }
             projects.push(self.index_item(record, &state, now));
         }
         projects.sort_by_key(index_sort_key);
@@ -483,7 +525,8 @@ impl<C: Clock> R0Service for DesktopService<C> {
         }
         let now = self.clock.now_rfc3339();
         // Validate the source before creating any identity.
-        self.observe(PathBuf::from(&input.location), now.clone())
+        let observation = self
+            .observe(PathBuf::from(&input.location), now.clone())
             .await?;
 
         let created_at = now;
@@ -503,6 +546,8 @@ impl<C: Clock> R0Service for DesktopService<C> {
                 return Err(error);
             }
         };
+        self.persist_observation(&project_id, &observation, &created_at)
+            .await?;
         self.load_overview(&project_id)
     }
 
@@ -512,7 +557,8 @@ impl<C: Clock> R0Service for DesktopService<C> {
     ) -> CommandResult<ProjectOverviewDto> {
         let now = self.clock.now_rfc3339();
         // Validate the new source before mutating the envelope.
-        self.observe(PathBuf::from(&input.new_location), now)
+        let observation = self
+            .observe(PathBuf::from(&input.new_location), now.clone())
             .await?;
 
         relink_primary_git_source(RelinkSourceInput {
@@ -521,6 +567,8 @@ impl<C: Clock> R0Service for DesktopService<C> {
             expected_location: &input.expected_location,
             new_location: Path::new(&input.new_location),
         })?;
+        self.persist_observation(&input.project_id, &observation, &now)
+            .await?;
         self.load_overview(&input.project_id)
     }
 
@@ -536,11 +584,12 @@ impl<C: Clock> R0Service for DesktopService<C> {
                 .map(|record| record.id)
                 .collect(),
         };
-        let mut results = Vec::with_capacity(targets.len());
-        for project_id in targets {
-            results.push(self.refresh_one(project_id, now.clone()).await);
-        }
-        Ok(results)
+        Ok(join_all(
+            targets
+                .into_iter()
+                .map(|project_id| self.refresh_one(project_id, now.clone())),
+        )
+        .await)
     }
 
     fn apply_project_mutation(

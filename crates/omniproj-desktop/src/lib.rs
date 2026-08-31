@@ -45,16 +45,33 @@ pub fn r0_invoke_handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sy
 
 /// Run the OmniProj desktop application.
 pub fn run() {
-    let service = DesktopService::initialize(SystemClock)
-        .expect("could not initialize or migrate the OmniProj store");
-
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(service)
         .setup(|app| {
             use tauri::menu::{MenuBuilder, MenuItemBuilder};
             use tauri::tray::TrayIconBuilder;
             use tauri::Manager;
+            use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+            let service = match DesktopService::initialize(SystemClock) {
+                Ok(service) => service,
+                Err(error) => {
+                    eprintln!("OmniProj could not open its local store: {error}");
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.hide();
+                    }
+                    let handle = app.handle().clone();
+                    app.dialog()
+                        .message(format!(
+                            "The local OmniProj store could not be opened or migrated.\n\n{error}\n\nYour project repositories were not changed."
+                        ))
+                        .title("OmniProj couldn't start")
+                        .kind(MessageDialogKind::Error)
+                        .show(move |_| handle.exit(1));
+                    return Ok(());
+                }
+            };
+            app.manage(service);
 
             // Neutral menu-bar presence: Open / Quit only. No attention count, no
             // reminder cadence, no notifications (all deferred out of R0).
@@ -81,6 +98,9 @@ pub fn run() {
                 })
                 .build(app)?;
             app.manage(tray); // keep the tray alive for the app's lifetime
+            if let Some(window) = app.get_webview_window("main") {
+                window.show()?;
+            }
             Ok(())
         })
         .invoke_handler(r0_invoke_handler())

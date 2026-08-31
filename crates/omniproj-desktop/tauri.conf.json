@@ -18,12 +18,13 @@
         "height": 760,
         "minWidth": 640,
         "minHeight": 520,
+        "visible": false,
         "hiddenTitle": true,
         "titleBarStyle": "Overlay"
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self'"
     }
   },
   "bundle": {

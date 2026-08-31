@@ -1014,7 +1014,7 @@ fn lifecycle_parked_requires_reason_and_allows_no_review_date() {
 }
 
 #[test]
-fn lifecycle_archived_status_is_persisted_for_later_index_exclusion() {
+fn lifecycle_archived_status_is_persisted_for_later_recovery() {
     let store = TestStore::new("archived");
     complete_setup(&store);
 
