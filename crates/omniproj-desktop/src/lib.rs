@@ -48,6 +48,7 @@ pub fn r0_invoke_handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sy
         commands::attribute_commit,
         commands::unattribute_commit,
         commands::get_commit_timeline,
+        commands::get_git_graph,
         commands::advance_task,
         commands::adopt_subtasks,
         commands::get_plan,

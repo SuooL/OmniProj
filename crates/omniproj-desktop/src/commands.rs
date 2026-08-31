@@ -391,6 +391,11 @@ pub fn get_commit_timeline(input: TimelineInput) -> CommandResult<Vec<TimelineCo
     crate::mvp::get_timeline(input.project_id, input.limit)
 }
 
+#[tauri::command]
+pub fn get_git_graph(input: TimelineInput) -> CommandResult<Vec<crate::mvp::GraphCommitDto>> {
+    crate::mvp::get_graph(input.project_id, input.limit)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AdvanceInput {
     pub project_id: ProjectId,

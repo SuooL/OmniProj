@@ -25,6 +25,7 @@ import type {
   UndoCommitmentTransitionInput,
   Task,
   TimelineCommit,
+  GraphCommit,
   PlanEntry,
   ReminderSettings,
 } from "./domain/project";
@@ -84,6 +85,7 @@ export const api = {
   updateTask: (input: { project_id: ProjectId; id: string; status: string; due: string | null; note: string | null }) => call<Task[]>("update_task", input),
   removeTask: (input: { project_id: ProjectId; id: string }) => call<Task[]>("remove_task", input),
   getCommitTimeline: (project_id: ProjectId, limit = 50) => call<TimelineCommit[]>("get_commit_timeline", { project_id, limit }),
+  getGitGraph: (project_id: ProjectId, limit = 40) => call<GraphCommit[]>("get_git_graph", { project_id, limit }),
   attributeCommit: (input: { project_id: ProjectId; id: string; sha: string }) => call<Task[]>("attribute_commit", input),
   unattributeCommit: (input: { project_id: ProjectId; id: string; sha: string }) => call<Task[]>("unattribute_commit", input),
   advanceTask: (input: { project_id: ProjectId; id: string }) => call<string[]>("advance_task", input),

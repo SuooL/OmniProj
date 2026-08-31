@@ -35,6 +35,17 @@ pub struct TimelineCommitDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphCommitDto {
+    pub sha: String,
+    pub short_sha: String,
+    pub parents: Vec<String>,
+    pub refs: Vec<String>,
+    pub committed_at: String,
+    pub author: String,
+    pub subject: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttentionSummaryDto {
     pub count: usize,
     pub project_ids: Vec<ProjectId>,
@@ -319,6 +330,27 @@ pub fn get_timeline(project_id: ProjectId, limit: usize) -> CommandResult<Vec<Ti
             subject: commit.subject,
         })
         .collect())
+}
+
+pub fn get_graph(project_id: ProjectId, limit: usize) -> CommandResult<Vec<GraphCommitDto>> {
+    let record = load_project(&project_id)?;
+    let source = record.primary_git_source().ok_or_else(|| {
+        CommandError::new(crate::error::ErrorCode::SourceMissing, "no Git source")
+    })?;
+    Ok(
+        omniproj_capture::git::commit_graph(Path::new(&source.location), limit.min(200))
+            .into_iter()
+            .map(|c| GraphCommitDto {
+                sha: c.hash,
+                short_sha: c.short,
+                parents: c.parents,
+                refs: c.refs,
+                committed_at: c.date,
+                author: c.author,
+                subject: c.subject,
+            })
+            .collect(),
+    )
 }
 
 pub async fn advance_task(project_id: ProjectId, id: String) -> CommandResult<Vec<String>> {

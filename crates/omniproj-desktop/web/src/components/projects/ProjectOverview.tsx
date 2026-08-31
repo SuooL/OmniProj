@@ -19,6 +19,7 @@ import { TaskBoard } from "./TaskBoard";
 import { CommitTimeline } from "./CommitTimeline";
 import { PlanLog } from "./PlanLog";
 import { ReminderSettings } from "../ReminderSettings";
+import { GitFlowGraph } from "./GitFlowGraph";
 
 export interface ProjectOverviewProps {
   overview: ProjectOverviewDto;
@@ -67,7 +68,7 @@ export function ProjectOverview({
       </div>
 
       <div className="op-overview__secondary">
-        {!isSetup && <><TaskBoard projectId={overview.project_id} /><CommitTimeline projectId={overview.project_id} /><PlanLog projectId={overview.project_id} /><ReminderSettings /></>}
+        {!isSetup && <><TaskBoard projectId={overview.project_id} /><CommitTimeline projectId={overview.project_id} /><GitFlowGraph projectId={overview.project_id} /><PlanLog projectId={overview.project_id} /><ReminderSettings /></>}
         {/* 4. Observed actual + source recovery */}
         <ObservedActual observed={overview.observed_actual} source={overview.source} now={now} />
         <SourceRecovery overview={overview} />

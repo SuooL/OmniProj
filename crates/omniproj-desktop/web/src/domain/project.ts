@@ -171,6 +171,7 @@ export interface TimelineCommit {
   subject: string;
   attributed_task_ids: string[];
 }
+export interface GraphCommit { sha: string; short_sha: string; parents: string[]; refs: string[]; committed_at: string; author: string; subject: string; }
 
 export type PlanStatus = "planned" | "doing" | "done" | "abandoned";
 export interface PlanEntry { id: string | null; date: string; title: string; status: PlanStatus; commit: string | null; body: string; }

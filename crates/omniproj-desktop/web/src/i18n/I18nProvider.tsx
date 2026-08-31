@@ -206,6 +206,7 @@ const zh = {
   "attention.count": "待关注项目：{count}",
   "plan.kicker": "人工决策", "plan.title": "计划与决策日志", "plan.newTitle": "新增决策标题", "plan.body": "决策依据（可选）", "plan.add": "记录决策", "plan.loading": "正在加载决策…", "plan.empty": "还没有决策记录。", "plan.status": "决策状态", "plan.planned": "已计划", "plan.doing": "进行中", "plan.done": "已完成", "plan.abandoned": "已放弃",
   "settings.kicker": "提醒设置", "settings.title": "提醒", "settings.enabled": "启用提醒", "settings.cadence": "提醒频率", "settings.daily": "每天", "settings.off": "关闭", "settings.threshold": "静默阈值（天）", "settings.save": "保存设置", "settings.test": "发送测试提醒", "settings.saved": "提醒设置已保存。", "settings.tested": "测试提醒已发送。",
+  "graph.kicker": "Git 实际", "graph.title": "分支流图", "graph.loading": "正在加载分支流图…", "graph.empty": "暂无可显示的 Git 分支流图。",
 } as const;
 
 type MessageKey = keyof typeof zh;
@@ -235,6 +236,7 @@ const en: Record<MessageKey, string> = {
   "attention.count": "Projects needing attention: {count}",
   "plan.kicker": "Human decisions", "plan.title": "Plan & decision log", "plan.newTitle": "New decision title", "plan.body": "Rationale (optional)", "plan.add": "Record decision", "plan.loading": "Loading decisions…", "plan.empty": "No decisions recorded yet.", "plan.status": "Decision status", "plan.planned": "Planned", "plan.doing": "Doing", "plan.done": "Done", "plan.abandoned": "Abandoned",
   "settings.kicker": "Reminder settings", "settings.title": "Reminders", "settings.enabled": "Enable reminders", "settings.cadence": "Reminder cadence", "settings.daily": "Daily", "settings.off": "Off", "settings.threshold": "Silence threshold (days)", "settings.save": "Save settings", "settings.test": "Send test reminder", "settings.saved": "Reminder settings saved.", "settings.tested": "Test reminder sent.",
+  "graph.kicker": "Git actual", "graph.title": "Branch flow graph", "graph.loading": "Loading branch flow…", "graph.empty": "No Git branch flow to display.",
 };
 
 export type Translate = (key: MessageKey, params?: Params) => string;
