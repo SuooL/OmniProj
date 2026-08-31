@@ -92,8 +92,24 @@ struct EntrySnapshot {
     mode: u32,
 }
 
+/// Snapshot the working tree — every file, directory and symlink under `root`
+/// **except the `.git` control directory**.
+///
+/// The guarantee under test is OmniProj's promise never to modify your *source*
+/// repository: your tracked/untracked working-tree files and their metadata. It
+/// is emphatically *not* a promise about Git's own bookkeeping inside `.git/`.
+/// Ordinary read-only commands (`git status`, `git log --since`, `git rev-list`)
+/// legitimately refresh `.git/` internals — the index stat-cache, the
+/// commit-graph, gc/maintenance state — and a newer Git on Linux does so where
+/// macOS's did not. Snapshotting `.git/` (with directory mtimes) therefore made
+/// this test flaky on CI while proving nothing about the source tree. The
+/// staged-state guarantee is asserted separately and precisely via
+/// [`index_snapshot`].
 fn tree_snapshot(root: &Path) -> BTreeMap<PathBuf, EntrySnapshot> {
     fn visit(root: &Path, path: &Path, entries: &mut BTreeMap<PathBuf, EntrySnapshot>) {
+        if path.file_name().is_some_and(|name| name == ".git") {
+            return;
+        }
         let metadata = fs::symlink_metadata(path).expect("snapshot metadata");
         let file_type = metadata.file_type();
         let (kind, contents) = if file_type.is_file() {
@@ -148,11 +164,10 @@ fn tree_snapshot(root: &Path) -> BTreeMap<PathBuf, EntrySnapshot> {
     entries
 }
 
-/// Human-readable, field-level description of how two tree snapshots differ.
-/// Used to pin down exactly which path (and which attribute) a "read-only"
-/// operation touched, so a CI-only failure is diagnosable from the log alone.
+/// Human-readable, field-level description of how two working-tree snapshots
+/// differ. Used to pin down exactly which path (and which attribute) a
+/// "read-only" operation touched, so a failure is diagnosable from the log alone.
 fn diff_tree(
-    root: &Path,
     before: &BTreeMap<PathBuf, EntrySnapshot>,
     after: &BTreeMap<PathBuf, EntrySnapshot>,
 ) -> Vec<String> {
@@ -162,7 +177,6 @@ fn diff_tree(
     keys.dedup();
     for key in keys {
         let rel = key.display();
-        let _ = root;
         match (before.get(key), after.get(key)) {
             (None, Some(_)) => diffs.push(format!("+ added   {rel}")),
             (Some(_), None) => diffs.push(format!("- removed {rel}")),
@@ -402,7 +416,7 @@ fn observation_and_commit_count_do_not_modify_the_source_tree_or_index() {
 
     let tree_after = tree_snapshot(&fixture.path);
     let index_after = index_snapshot(&fixture.path);
-    let tree_diff = diff_tree(&fixture.path, &tree_before, &tree_after);
+    let tree_diff = diff_tree(&tree_before, &tree_after);
     assert!(
         tree_diff.is_empty(),
         "repository tree changed during reads:\n{}",
