@@ -2215,6 +2215,41 @@ where
     f()
 }
 
+/// Serialize this process's own store *writers* so a parallel fan-out — e.g. a
+/// multi-project refresh issuing one IPC per project — cannot self-collide on the
+/// non-blocking store lock in [`with_store_txn`] and spuriously fail.
+///
+/// This gate is purely **in-process**. The on-disk `store.lock` stays the
+/// cross-process single-instance guard (a genuine second process still trips the
+/// non-blocking lock), and this deliberately does NOT wrap the init/[`ensure_home`]
+/// path, whose fail-fast `WouldBlock` contract other code depends on. The functions
+/// that use it never call one another, so the plain (non-reentrant) mutex cannot
+/// deadlock; a panicked writer only poisons the guard, which we recover.
+pub fn with_store_write_gate<T>(f: impl FnOnce() -> T) -> T {
+    use std::sync::{Mutex, OnceLock};
+    static GATE: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = GATE
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    f()
+}
+
+/// [`ensure_home`] followed by a store-mutating [`with_store_txn`], run as a single
+/// in-process-exclusive unit (see [`with_store_write_gate`]). App-level writers use
+/// this so their `ensure_home` preamble and their write share one serialization
+/// point and never race each other on the store lock; the init path uses the bare
+/// primitives instead.
+pub fn ensure_home_then_write<T, E>(f: impl FnOnce() -> Result<T, E>) -> Result<T, E>
+where
+    E: From<StoreError>,
+{
+    with_store_write_gate(|| {
+        ensure_home()?;
+        with_store_txn(f)
+    })
+}
+
 /// Replace a file durably without exposing a partially written destination.
 pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), StoreError> {
     atomic_write_with_guards(path, contents, || Ok(()))
