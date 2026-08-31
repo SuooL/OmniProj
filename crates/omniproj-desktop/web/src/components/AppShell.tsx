@@ -22,10 +22,10 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-import { api, AppError } from "../api";
+import { api } from "../api";
 import { saveCanonicalLocation } from "../domain/navigationSession";
 import { projectId as brandProjectId } from "../domain/project";
-import type { ProjectIndexResponse } from "../domain/project";
+import type { ProjectId, ProjectIndexResponse } from "../domain/project";
 import {
   ROUTES,
   projectOverviewPath,
@@ -38,9 +38,7 @@ import { ProjectOverviewPage } from "../routes/ProjectOverviewPage";
 import { ProjectsIndexPage } from "../routes/ProjectsIndexPage";
 import { AddProjectDialog } from "./AddProjectDialog";
 import {
-  ChevronDownIcon,
   ChevronLeftIcon,
-  ChevronRightIcon,
   FolderIcon,
   PlusIcon,
   RefreshIcon,
@@ -99,6 +97,9 @@ export function AppShell() {
   );
   const [polite, setPolite] = useState("");
   const [assertive, setAssertive] = useState("");
+  const [refreshProgress, setRefreshProgress] = useState<{ completed: number; total: number } | null>(null);
+  const refreshInFlight = useRef(false);
+  const startupRefreshStarted = useRef(false);
   const { data: sidebarProjects } = useQuery({
     queryKey: queryKeys.projectIndex,
     queryFn: api.listProjectIndex,
@@ -126,32 +127,71 @@ export function AppShell() {
     [searchParams, setSearchParams],
   );
 
-  // Pull-refresh re-observes every source (refresh_projects), folds each returned row into the
-  // Index cache without a refetch wave, and reports partial failures assertively so a source
-  // that could not be read is never silently dropped.
-  const onRefresh = useCallback(async () => {
-    announce("polite", "Refreshing projects…");
-    try {
-      const results = await api.refreshProjects(null);
+  const foldRefreshResults = useCallback(
+    (results: Awaited<ReturnType<typeof api.refreshProjects>>) => {
       queryClient.setQueryData<ProjectIndexResponse>(queryKeys.projectIndex, (current) => {
         if (!current) return current;
         const byId = new Map(results.filter((r) => r.item).map((r) => [r.project_id, r.item!]));
         return { ...current, projects: current.projects.map((p) => byId.get(p.project_id) ?? p) };
       });
-      const failed = results.filter((r) => r.outcome === "source_failed");
-      if (failed.length > 0) {
+    },
+    [queryClient],
+  );
+
+  // Refresh each source independently so completed rows appear immediately and one slow or
+  // unavailable repository cannot hide progress from the rest of the workspace.
+  const onRefresh = useCallback(async (silentEmpty = false) => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    const cached = queryClient.getQueryData<ProjectIndexResponse>(queryKeys.projectIndex);
+    const ids = Array.isArray(cached?.projects)
+      ? cached.projects.map((project) => project.project_id)
+      : [];
+    if (ids.length === 0) {
+      refreshInFlight.current = false;
+      if (!silentEmpty) announce("polite", "Projects are up to date.");
+      return;
+    }
+    setRefreshProgress({ completed: 0, total: ids.length });
+    announce("polite", "Refreshing projects…");
+    let failed = 0;
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const results = await api.refreshProjects([id]);
+          foldRefreshResults(results);
+          failed += results.filter((result) => result.outcome === "source_failed").length;
+        } catch {
+          failed += 1;
+        } finally {
+          setRefreshProgress((current) => current
+            ? { ...current, completed: current.completed + 1 }
+            : current);
+        }
+      }),
+    );
+    try {
+      if (failed > 0) {
         announce(
           "assertive",
-          `${failed.length} project${failed.length === 1 ? "" : "s"} could not be refreshed.`,
+          `${failed} project${failed === 1 ? "" : "s"} could not be refreshed. Last known facts were preserved.`,
         );
       } else {
         announce("polite", "Projects refreshed.");
       }
-    } catch (raw) {
-      const err = raw instanceof AppError ? raw : new AppError({ code: "unknown", message: "Refresh failed.", retryable: false, stateApplied: false });
-      announce("assertive", err.message);
+    } finally {
+      refreshInFlight.current = false;
+      setRefreshProgress(null);
     }
-  }, [announce, queryClient]);
+  }, [announce, foldRefreshResults, queryClient]);
+
+  // The persisted cache makes startup instant; this background pass then reconciles it with
+  // the current repositories once per application mount.
+  useEffect(() => {
+    if (!sidebarProjects || startupRefreshStarted.current) return;
+    startupRefreshStarted.current = true;
+    void onRefresh(true);
+  }, [onRefresh, sidebarProjects]);
 
   const openAddProject = useCallback(() => setAddProjectOpen(true), []);
   const appActions = useMemo(
@@ -164,15 +204,45 @@ export function AppShell() {
       setAddProjectOpen(false);
       return;
     }
-  }, [addProjectOpen]);
+    if (typeof window !== "undefined" && window.innerWidth < 800 && sidebarOpen) {
+      setSidebarOpen(false);
+    }
+  }, [addProjectOpen, sidebarOpen]);
 
   const showBack = location.pathname !== projectsPath();
   const sidebarProjectItems = Array.isArray(sidebarProjects?.projects)
     ? sidebarProjects.projects
     : [];
+  const sidebarMatches = sidebarProjectItems.filter((project) =>
+    project.name.toLowerCase().includes(filterValue.trim().toLowerCase()),
+  );
+  const activeSidebarProjects = sidebarMatches.filter((project) => project.status !== "archived");
+  const archivedSidebarProjects = sidebarMatches.filter((project) => project.status === "archived");
   const currentProject = sidebarProjectItems.find((project) =>
     location.pathname.includes(`/projects/${project.project_id}`),
   );
+
+  const navigateToProject = useCallback((id: ProjectId) => {
+    navigate(projectOverviewPath(id));
+    if (typeof window !== "undefined" && window.innerWidth < 800) setSidebarOpen(false);
+  }, [navigate]);
+
+  const renderProjectNodes = (projects: typeof sidebarProjectItems) => projects.map((project) => {
+    const active = location.pathname.includes(`/projects/${project.project_id}`);
+    return (
+      <div className="app-shell__project-node" key={project.project_id}>
+        <button
+          className="app-shell__project-item"
+          data-active={active}
+          type="button"
+          onClick={() => navigateToProject(project.project_id)}
+        >
+          <FolderIcon />
+          <span>{project.name}</span>
+        </button>
+      </div>
+    );
+  });
 
   const startWindowDrag = useCallback((event: React.MouseEvent<HTMLElement>) => {
     if (event.button !== 0) return;
@@ -217,14 +287,10 @@ export function AppShell() {
             >
               <ChevronLeftIcon />
             </button>
-            <button className="op-chrome-button" type="button" aria-label="Forward" disabled>
-              <ChevronRightIcon />
-            </button>
           </div>
           <div className="app-shell__sidebar-body">
             <div className="app-shell__brand-row">
               <strong>OmniProj</strong>
-              <ChevronDownIcon />
             </div>
             <div className="app-shell__search" role="search">
               <input
@@ -243,36 +309,22 @@ export function AppShell() {
                 <button type="button" onClick={openAddProject} aria-label="Add Project"><PlusIcon /></button>
               </div>
               <div className="app-shell__project-tree">
-                {sidebarProjectItems
-                  .filter((project) => project.status !== "archived")
-                  .map((project) => {
-                    const active = location.pathname.includes(`/projects/${project.project_id}`);
-                    return (
-                      <div className="app-shell__project-node" key={project.project_id}>
-                        <button
-                          className="app-shell__project-item"
-                          data-active={active}
-                          type="button"
-                          onClick={() => navigate(projectOverviewPath(project.project_id))}
-                        >
-                          <FolderIcon />
-                          <span>{project.name}</span>
-                        </button>
-                        {active && (
-                          <div className="app-shell__project-children">
-                            <span className="is-active">Overview</span>
-                            <span>Commitment</span>
-                            <span>Activity</span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                {renderProjectNodes(activeSidebarProjects)}
               </div>
+              {archivedSidebarProjects.length > 0 && (
+                <>
+                  <div className="app-shell__nav-section-title app-shell__nav-section-title--archived">
+                    <span>Archived</span>
+                  </div>
+                  <div className="app-shell__project-tree">
+                    {renderProjectNodes(archivedSidebarProjects)}
+                  </div>
+                </>
+              )}
             </nav>
             <div className="app-shell__sidebar-footer">
-              <span className="app-shell__avatar" aria-hidden="true">S</span>
-              <span>Suool David</span>
+              <span className="app-shell__local-dot" aria-hidden="true" />
+              <span>Local · read-only sources</span>
             </div>
           </div>
         </aside>
@@ -296,7 +348,18 @@ export function AppShell() {
               <strong>{currentProject?.name ?? "Projects"}</strong>
             </div>
             <div className="app-shell__actions">
-              <button type="button" onClick={onRefresh} aria-label="Refresh"><RefreshIcon /></button>
+              {refreshProgress && (
+                <span className="app-shell__refresh-progress" role="status">
+                  {refreshProgress.completed}/{refreshProgress.total}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => void onRefresh()}
+                aria-label={refreshProgress ? "Refreshing projects" : "Refresh"}
+                disabled={refreshProgress !== null}
+                data-refreshing={refreshProgress !== null}
+              ><RefreshIcon /></button>
               <button type="button" onClick={openAddProject} aria-label="New project"><PlusIcon /></button>
             </div>
           </header>
@@ -310,6 +373,15 @@ export function AppShell() {
             </Routes>
           </div>
         </section>
+
+        {sidebarOpen && (
+          <button
+            type="button"
+            className="app-shell__sidebar-backdrop"
+            aria-label="Close sidebar"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
 
         {addProjectOpen && <AddProjectDialog onClose={() => setAddProjectOpen(false)} />}
 

@@ -114,7 +114,7 @@ export function ProjectLifecycleControl({ overview }: ProjectLifecycleControlPro
               checked={confirmArchive}
               onChange={(e) => setConfirmArchive(e.target.checked)}
             />
-            I understand archiving removes this project from the operating index.
+            I understand archiving removes this project from the default operating view.
           </label>
         )}
       </div>

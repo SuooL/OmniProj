@@ -17,17 +17,13 @@ labels: bug
 
 ## Environment
 
-- OS: <!-- macOS / Linux (distro) — Windows is not supported yet -->
-- omniproj version: <!-- output of `omniproj --version` -->
-- LLM provider / model: <!-- e.g. deepseek/deepseek-chat, ollama/llama3.1, anthropic/... -->
-- Does it reproduce with a local model (Ollama)? <!-- yes / no / not tried -->
+- OS and version: <!-- e.g. macOS 15.6 -->
+- OmniProj desktop version: <!-- OmniProj > About, or the downloaded release name -->
+- Source repository state: <!-- available / moved / permission denied / unknown -->
 
-## `omniproj doctor` output
+## Store and refresh details
 
-<!-- Paste the output of `omniproj doctor` — it's read-only and helps a lot. -->
-
-```
-```
+<!-- Did OmniProj show a startup dialog, source warning, or refresh failure? Include the exact user-facing text. -->
 
 ## Logs / details
 

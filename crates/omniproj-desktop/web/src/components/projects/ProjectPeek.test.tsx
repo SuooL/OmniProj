@@ -37,6 +37,7 @@ function renderOverview(ov: ProjectOverview, handlers: Handlers = {}) {
     if (command === "list_project_index") {
       return indexResponse([indexItem({ project_id: ov.project_id, name: ov.name })]);
     }
+    if (command === "refresh_projects") return [];
     return ov; // mutations echo the overview by default
   });
   const client = new QueryClient({
@@ -54,6 +55,7 @@ function renderIndexThenPeek(ov: ProjectOverview) {
   window.history.replaceState(null, "", "/projects");
   invokeMock.mockImplementation(async (command: string) => {
     if (command === "get_project_overview") return ov;
+    if (command === "refresh_projects") return [];
     return { projects: [], review_policy: reviewPolicy };
   });
   const client = new QueryClient({
@@ -76,6 +78,7 @@ function callsTo(command: string): unknown[][] {
 
 beforeEach(() => {
   window.sessionStorage.clear();
+  window.localStorage.clear();
   window.history.replaceState(null, "", "/");
 });
 afterEach(() => invokeMock.mockReset());

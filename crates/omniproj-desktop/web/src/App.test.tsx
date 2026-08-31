@@ -21,6 +21,7 @@ function mockIpc() {
     if (command === "get_project_overview") {
       return overview({ project_id: (args?.input?.project_id ?? "project-1") as never });
     }
+    if (command === "refresh_projects") return [];
     return { projects: [], review_policy: reviewPolicy };
   });
 }
@@ -47,6 +48,7 @@ function currentUrl(): string {
 beforeEach(() => {
   mockIpc();
   window.sessionStorage.clear();
+  window.localStorage.clear();
   window.history.replaceState(null, "", "/");
 });
 
@@ -96,7 +98,7 @@ describe("desktop project navigation", () => {
     expect(window.location.pathname).toBe("/projects/project-1/overview");
   });
 
-  it("shows the selected project and its child navigation in the sidebar", async () => {
+  it("shows the selected project as active in the sidebar", async () => {
     const user = userEvent.setup();
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
@@ -105,9 +107,7 @@ describe("desktop project navigation", () => {
       }),
     );
     expect(await screen.findByTestId("overview-page")).toBeInTheDocument();
-    expect(screen.getByText("Overview")).toHaveClass("is-active");
-    expect(screen.getByText("Commitment")).toBeInTheDocument();
-    expect(screen.getByText("Activity")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Alpha" })).toHaveAttribute("data-active", "true");
   });
 
   it("Back and Forward restore the prior screen", async () => {
@@ -170,6 +170,17 @@ describe("desktop project navigation", () => {
     await screen.findByTestId("overview-page");
     expect(screen.getByRole("button", { name: "Alpha" })).toHaveAttribute("data-active", "true");
   });
+
+  it("restores the Index scroller and row focus after returning", async () => {
+    window.sessionStorage.setItem(
+      "omniproj.nav.indexView",
+      JSON.stringify({ scrollY: 96, focusId: "project-1" }),
+    );
+    renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
+    const row = within(await screen.findByTestId("projects-index")).getByRole("link", { name: /^Alpha\b/ });
+    await waitFor(() => expect(row).toHaveFocus());
+    expect(document.querySelector<HTMLElement>(".app-shell__content")?.scrollTop).toBe(96);
+  });
 });
 
 describe("filter/sort in search params", () => {
@@ -185,7 +196,7 @@ describe("filter/sort in search params", () => {
 
 describe("restart restoration and deep-link precedence", () => {
   it("restores the last canonical pathname+search when restarting at /", async () => {
-    window.sessionStorage.setItem(
+    window.localStorage.setItem(
       "omniproj.nav.canonical",
       "/projects?q=beta",
     );
@@ -196,7 +207,7 @@ describe("restart restoration and deep-link precedence", () => {
   });
 
   it("lets an explicit non-root deep link win over saved session state", async () => {
-    window.sessionStorage.setItem(
+    window.localStorage.setItem(
       "omniproj.nav.canonical",
       "/projects?q=beta",
     );

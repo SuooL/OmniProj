@@ -1,8 +1,10 @@
 # OmniProj 产品与 UI/UX 重构设计
 
-> Status: written design pending final review
+> Status: historical design proposal; not the shipped-feature contract
 >
 > Date: 2026-08-10
+>
+> Current behavior and supported scope are documented in `README.md`. In particular, the shipped R0 uses full-page project Overview navigation rather than the proposed Peek interaction.
 >
 > Scope: product requirements, domain model, information architecture, UI system, UX interaction, delivery phases, and dogfood validation
 > Supersedes UI and sequencing decisions in `docs/desktop-design.md` where this document is more specific. Product principles in `docs/omniproj-charter.md` remain authoritative until separately amended.

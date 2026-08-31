@@ -40,16 +40,14 @@ describe("applyOverviewToCaches", () => {
     expect(client.getQueryData(queryKeys.projectOverview(a))).toEqual(updated);
   });
 
-  it("leaves the Index array reference unchanged when the project is not present", () => {
+  it("appends a newly registered project when it is not yet present", () => {
     const client = createQueryClient();
     const known = projectId("known");
     client.setQueryData(queryKeys.projectIndex, indexResponse([indexItem({ project_id: known })]));
-    const before = client.getQueryData(queryKeys.projectIndex);
+    applyOverviewToCaches(client, overview({ project_id: projectId("stranger"), name: "Stranger" }));
 
-    applyOverviewToCaches(client, overview({ project_id: projectId("stranger") }));
-
-    expect(client.getQueryData(queryKeys.projectIndex)).toBe(before); // identity preserved
-    // ...but the stranger's Overview is still cached.
+    const index = client.getQueryData(queryKeys.projectIndex) as ReturnType<typeof indexResponse>;
+    expect(index.projects.map((row) => row.name)).toEqual(["Omni", "Stranger"]);
     expect(client.getQueryData(queryKeys.projectOverview(projectId("stranger")))).not.toBeUndefined();
   });
 

@@ -6,7 +6,7 @@
 import type { ProjectIndexItem, ReviewReason } from "./project";
 
 /** The four Index filters. Deterministic, local, and reversible. */
-export type ReviewFilter = "all" | "needs_review" | "waiting" | "parked";
+export type ReviewFilter = "all" | "needs_review" | "waiting" | "parked" | "archived";
 
 /** A transparent label for the default order — it is a review order, not a ranking. */
 export const REVIEW_ORDER_LABEL = "Review order (deterministic, not priority or health)";
@@ -33,17 +33,19 @@ export function applyReviewFilter(
 ): ProjectIndexItem[] {
   switch (filter) {
     case "all":
-      return items.slice();
+      return excludeArchived(items);
     case "needs_review":
-      return items.filter((item) => item.review_reasons.length > 0);
+      return items.filter((item) => item.status !== "archived" && item.review_reasons.length > 0);
     case "waiting":
       return items.filter((item) => item.status === "waiting");
     case "parked":
       return items.filter((item) => item.status === "parked");
+    case "archived":
+      return items.filter((item) => item.status === "archived");
   }
 }
 
-/** Defensive exclusion of archived projects (the backend already omits them). Immutable. */
+/** Exclude archived projects from ordinary operating views. Immutable. */
 export function excludeArchived(
   items: readonly ProjectIndexItem[],
 ): ProjectIndexItem[] {

@@ -78,8 +78,8 @@ export function ProjectFramingForm({ overview }: ProjectFramingFormProps) {
       </div>
       {isSetup && (
         <p className="op-section__intro">
-          Define the outcome and first concrete commitment before this project enters the
-          operating index.
+          Define the outcome and first concrete commitment before moving this project into
+          active work.
         </p>
       )}
       <div className="op-form-grid">

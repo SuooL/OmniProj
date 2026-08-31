@@ -42,13 +42,13 @@ test("1280x800: the full-height sidebar and continuous project list fit without 
   await expectNoHorizontalScroll(page);
 });
 
-test("1100: selecting a project replaces the main content and expands its sidebar node", async ({ page }) => {
+test("1100: selecting a project replaces the main content and marks its sidebar node", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 800 });
   await page.goto("/projects");
   await expect(page.locator(".op-row__metadata").first()).toBeVisible();
   await page.getByRole("link", { name: /^billing-worker/ }).click();
   await expect(page.getByTestId("overview-page")).toBeVisible();
-  await expect(page.getByText("Overview", { exact: true })).toHaveClass("is-active");
+  await expect(page.getByRole("button", { name: "billing-worker" })).toHaveAttribute("data-active", "true");
   await expectNoHorizontalScroll(page);
 });
 

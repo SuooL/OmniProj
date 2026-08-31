@@ -666,6 +666,10 @@ button {
   margin: var(--op-space-1) 0 0;
 }
 
+.app-shell__nav-section-title--archived {
+  margin-top: var(--op-space-5);
+}
+
 .app-shell__project-node {
   display: grid;
 }
@@ -766,16 +770,11 @@ button {
   font-size: var(--op-text-size-necessary);
 }
 
-.app-shell__avatar {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
+.app-shell__local-dot {
+  width: 7px;
+  height: 7px;
   border-radius: var(--op-radius-pill);
   background: var(--op-interactive-fg);
-  color: var(--op-text-inverse);
-  font-size: 10px;
-  font-weight: 640;
 }
 
 /* ---- Main surface -------------------------------------------------------- */
@@ -828,6 +827,13 @@ button {
   gap: var(--op-space-1);
 }
 
+.app-shell__refresh-progress {
+  color: var(--op-text-tertiary);
+  font-family: var(--op-font-mono);
+  font-size: var(--op-text-size-micro);
+  -webkit-app-region: no-drag;
+}
+
 .app-shell__context-bar button {
   display: grid;
   place-items: center;
@@ -847,6 +853,23 @@ button {
 .app-shell__context-bar button:hover {
   background: color-mix(in srgb, var(--op-text-primary) 8%, transparent);
   color: var(--op-text-primary);
+}
+
+.app-shell__context-bar button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.app-shell__context-bar button[data-refreshing="true"] svg {
+  animation: op-spin 0.85s linear infinite;
+}
+
+@keyframes op-spin {
+  to { transform: rotate(360deg); }
+}
+
+.app-shell__sidebar-backdrop {
+  display: none;
 }
 
 .app-shell__sidebar-toggle {
@@ -1850,6 +1873,15 @@ button {
     inset: 0 auto 0 0;
     width: min(252px, calc(100vw - var(--op-space-8)));
     box-shadow: var(--op-shadow-drawer);
+  }
+  .app-shell__sidebar-backdrop {
+    position: fixed;
+    z-index: 19;
+    inset: 0;
+    display: block;
+    padding: 0;
+    border: 0;
+    background: rgb(16 24 32 / 28%);
   }
   .app-shell[data-sidebar-open="false"] .app-shell__context-bar {
     padding-left: 80px;

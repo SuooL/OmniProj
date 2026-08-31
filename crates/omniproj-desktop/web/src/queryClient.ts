@@ -29,8 +29,8 @@ export function createQueryClient(): QueryClient {
 /**
  * Fold a freshly-returned Overview into both caches so the Index row and the detail view
  * reflect a mutation without any refetch. The Index row is patched in place from the
- * Overview's shared fields; a project not yet in the Index is left untouched (the next
- * Index load will include it).
+ * Overview's shared fields. A newly registered project is appended immediately so the
+ * persistent sidebar cannot remain stale while its first Overview is open.
  */
 export function applyOverviewToCaches(
   client: QueryClient,
@@ -55,6 +55,24 @@ export function applyOverviewToCaches(
         source_revision: overview.source?.revision ?? row.source_revision,
       };
     });
-    return changed ? { ...current, projects } : current;
+    if (changed) return { ...current, projects };
+    const source = overview.source;
+    return {
+      ...current,
+      projects: [
+        ...projects,
+        {
+          project_id: overview.project_id,
+          name: overview.name,
+          status: overview.status,
+          current_commitment: overview.current_commitment,
+          observed_actual: overview.observed_actual,
+          review_reasons: overview.review_reasons,
+          source_status: source?.status ?? "missing",
+          revision: overview.revision,
+          source_revision: source?.revision ?? 0,
+        },
+      ],
+    };
   });
 }

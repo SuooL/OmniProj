@@ -11,30 +11,32 @@ import type { ProjectIndexItem, ReviewPolicy } from "../../domain/project";
 import {
   REVIEW_ORDER_LABEL,
   applyReviewFilter,
-  excludeArchived,
   filterByText,
   type ReviewFilter,
 } from "../../domain/projectPresentation";
 import { FilterChip } from "../semantic/FilterChip";
 import { ProjectRow } from "./ProjectRow";
 
-type SortMode = "review" | "name" | "observed";
+type SortMode = "review" | "name" | "commit";
 
 const REVIEW_FILTERS: Array<{ value: ReviewFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: "needs_review", label: "Needs review" },
   { value: "waiting", label: "Waiting" },
   { value: "parked", label: "Parked" },
+  { value: "archived", label: "Archived" },
 ];
 
 function parseFilter(value: string | null): ReviewFilter {
-  return value === "needs_review" || value === "waiting" || value === "parked"
+  return value === "needs_review" || value === "waiting" || value === "parked" || value === "archived"
     ? value
     : "all";
 }
 
 function parseSort(value: string | null): SortMode {
-  return value === "name" || value === "observed" ? value : "review";
+  return value === "name" || value === "commit" || value === "observed"
+    ? value === "observed" ? "commit" : value
+    : "review";
 }
 
 /** Transparent, opt-in sort. `review` preserves the backend order verbatim (no re-ranking). */
@@ -44,10 +46,10 @@ function applySort(items: ProjectIndexItem[], sort: SortMode): ProjectIndexItem[
       return items;
     case "name":
       return [...items].sort((a, b) => a.name.localeCompare(b.name));
-    case "observed":
+    case "commit":
       return [...items].sort((a, b) => {
-        const at = a.observed_actual?.observed_at ?? "";
-        const bt = b.observed_actual?.observed_at ?? "";
+        const at = a.observed_actual?.last_commit?.committed_at ?? "";
+        const bt = b.observed_actual?.last_commit?.committed_at ?? "";
         return bt.localeCompare(at);
       });
   }
@@ -78,15 +80,14 @@ export function ProjectsIndex({
     setSearchParams(next, { replace: true, state: null });
   };
 
-  const nonArchived = useMemo(() => excludeArchived(projects), [projects]);
   const visible = useMemo(() => {
-    const base = applyReviewFilter(nonArchived, filter);
+    const base = applyReviewFilter(projects, filter);
     return applySort(filterByText(base, query), sort);
-  }, [nonArchived, filter, query, sort]);
+  }, [projects, filter, query, sort]);
 
-  // A store with no non-archived projects offers the primary recovery action (an all-archived
-  // store is empty for R0 purposes, not a dead "no matches" screen).
-  if (nonArchived.length === 0) {
+  // A truly empty store offers the primary recovery action. Archived-only stores retain the
+  // toolbar so the Archived filter remains an obvious recovery path.
+  if (projects.length === 0) {
     return (
       <section data-testid="projects-index-empty" aria-labelledby="projects-empty-heading">
         <h2 id="projects-empty-heading">No projects yet</h2>
@@ -128,7 +129,7 @@ export function ProjectsIndex({
             >
               <option value="review">Review order</option>
               <option value="name">Name</option>
-              <option value="observed">Recently observed</option>
+              <option value="commit">Recent commit</option>
             </select>
           </label>
         </div>

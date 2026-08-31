@@ -379,11 +379,11 @@ fn service_startup_migrates_v1_store_before_first_index_read() {
 }
 
 #[test]
-fn service_index_excludes_archived_projects() {
+fn service_index_includes_archived_projects_for_recovery() {
     let _guard = env_guard();
     let _home = Home::new("archived");
     let visible = register(&unique_path("archived-visible"), "Visible");
-    let hidden = register(&unique_path("archived-hidden"), "Hidden");
+    let archived = register(&unique_path("archived-hidden"), "Archived");
 
     // Archive `hidden` by driving its state to Archived (Active -> Archived).
     let service = service();
@@ -391,7 +391,7 @@ fn service_index_excludes_archived_projects() {
     // Setup, so complete setup, then archive.
     service
         .complete_project_setup(dto::CompleteProjectSetupInput {
-            project_id: hidden.id.clone(),
+            project_id: archived.id.clone(),
             expected_revision: 0,
             objective: "o".into(),
             desired_outcome: "d".into(),
@@ -401,7 +401,7 @@ fn service_index_excludes_archived_projects() {
         .unwrap();
     service
         .apply_project_mutation(dto::ProjectMutationInput {
-            project_id: hidden.id.clone(),
+            project_id: archived.id.clone(),
             expected_revision: 1,
             command: dto::MutationCommand::SetStatus {
                 status: ProjectStatus::Archived,
@@ -419,12 +419,39 @@ fn service_index_excludes_archived_projects() {
         .collect();
     assert!(ids.contains(&visible.id.as_str()));
     assert!(
-        !ids.contains(&hidden.id.as_str()),
-        "archived project must be hidden"
+        ids.contains(&archived.id.as_str()),
+        "archived projects must remain discoverable so they can be restored"
     );
-    // ...but it is still directly addressable.
-    let overview = service.get_project_overview(hidden.id.clone()).unwrap();
+    let overview = service.get_project_overview(archived.id.clone()).unwrap();
     assert_eq!(overview.status, ProjectStatus::Archived);
+}
+
+#[test]
+fn service_register_returns_a_fresh_observation_without_manual_refresh() {
+    let _guard = env_guard();
+    let _home = Home::new("register-observation");
+    let source = repo_with_commit("register-observation-src");
+    let service = service();
+
+    let overview = block_on(service.register_project(dto::RegisterProjectInput {
+        location: source.to_string_lossy().into_owned(),
+        name: "Fresh registration".into(),
+    }))
+    .unwrap();
+
+    let observed = overview
+        .observed_actual
+        .expect("registration should persist its validation observation");
+    assert_eq!(observed.observed_at, NOW);
+    assert_eq!(observed.last_commit.unwrap().subject, "initial");
+    assert_eq!(
+        overview
+            .source
+            .unwrap()
+            .last_successful_refresh_at
+            .as_deref(),
+        Some(NOW)
+    );
 }
 
 #[test]
@@ -752,7 +779,7 @@ fn refresh_never_clobbers_a_concurrent_relink() {
 }
 
 #[test]
-fn refresh_relink_to_a_new_repo_invalidates_the_stale_cache() {
+fn relink_immediately_replaces_the_previous_repository_observation() {
     // A relink keeps the same source id but changes the location. The previous repo's
     // observed facts must not survive as the current observed-actual.
     let _guard = env_guard();
@@ -780,23 +807,23 @@ fn refresh_relink_to_a_new_repo_invalidates_the_stale_cache() {
     }))
     .unwrap();
 
-    // The stale cache (repo A) must be suppressed until a fresh observation of repo B.
-    assert!(
-        service
-            .get_project_overview(record.id.clone())
-            .unwrap()
-            .observed_actual
-            .is_none(),
-        "stale observed-actual survived a relink to a different repo"
-    );
-
-    // Refreshing repopulates it against the new source.
-    block_on(service.refresh_projects(Some(vec![record.id.clone()]))).unwrap();
-    assert!(service
+    let observed = service
         .get_project_overview(record.id.clone())
         .unwrap()
         .observed_actual
-        .is_some());
+        .expect("relink should persist the new repository observation immediately");
+    assert_eq!(observed.last_commit.unwrap().subject, "initial");
+    let cached = repository_cache::load(
+        omniproj_core::load_project(&record.id)
+            .unwrap()
+            .primary_git_source()
+            .unwrap(),
+    )
+    .expect("new source observation is cached");
+    assert_eq!(
+        cached.source_location,
+        std::fs::canonicalize(&source_b).unwrap().to_string_lossy()
+    );
 }
 
 #[test]

@@ -51,6 +51,7 @@ function dispatchChord(key: string): KeyboardEvent {
 }
 
 beforeEach(() => {
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
   startDraggingMock.mockResolvedValue(undefined);
   invokeMock.mockImplementation(async (command: string, args?: { input?: { project_id?: string } }) => {
     if (command === "get_project_overview") {
@@ -60,6 +61,7 @@ beforeEach(() => {
     return { projects: [], review_policy: reviewPolicy };
   });
   window.sessionStorage.clear();
+  window.localStorage.clear();
   window.history.replaceState(null, "", "/");
 });
 
@@ -81,11 +83,12 @@ describe("primary navigation", () => {
 });
 
 describe("desktop sidebar", () => {
-  it("expands the current project into section navigation", async () => {
+  it("marks the current project without advertising unavailable subpages", async () => {
     renderAppAt("/projects/p1/overview", [indexItem({ project_id: "p1" as never, name: "Alpha" })]);
     await screen.findByTestId("overview-page");
     expect(screen.getByRole("button", { name: "Alpha" })).toHaveAttribute("data-active", "true");
-    expect(screen.getByText("Overview")).toHaveClass("is-active");
+    expect(screen.queryByText("Commitment")).not.toBeInTheDocument();
+    expect(screen.queryByText("Activity")).not.toBeInTheDocument();
   });
 
   it("can be hidden and restored from the main toolbar", async () => {
@@ -98,6 +101,37 @@ describe("desktop sidebar", () => {
 
     await user.click(screen.getByRole("button", { name: "Show sidebar" }));
     expect(document.querySelector(".app-shell")).toHaveAttribute("data-sidebar-open", "true");
+  });
+
+  it("filters the project tree on detail routes", async () => {
+    const user = userEvent.setup();
+    renderAppAt("/projects/p1/overview", [
+      indexItem({ project_id: "p1" as never, name: "Alpha" }),
+      indexItem({ project_id: "p2" as never, name: "Beta" }),
+    ]);
+    await screen.findByTestId("overview-page");
+    await user.type(screen.getByLabelText(/filter projects/i), "beta");
+    expect(screen.queryByRole("button", { name: "Alpha" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Beta" })).toBeInTheDocument();
+  });
+
+  it("keeps archived projects discoverable in a separate tree section", async () => {
+    renderAppAt("/projects", [indexItem({ name: "Old study", status: "archived" })]);
+    await screen.findByTestId("projects-index");
+    const nav = screen.getByRole("navigation", { name: /primary/i });
+    expect(within(nav).getByText("Archived")).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: "Old study" })).toBeInTheDocument();
+  });
+
+  it("closes the narrow drawer after choosing a project", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 640 });
+    const user = userEvent.setup();
+    renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
+    await screen.findByTestId("projects-index");
+    expect(document.querySelector(".app-shell")).toHaveAttribute("data-sidebar-open", "false");
+    await user.click(screen.getByRole("button", { name: "Show sidebar" }));
+    await user.click(screen.getByRole("button", { name: "Alpha" }));
+    expect(document.querySelector(".app-shell")).toHaveAttribute("data-sidebar-open", "false");
   });
 });
 
@@ -135,27 +169,31 @@ describe("keyboard shortcuts", () => {
   });
 
   it("Cmd/Ctrl+R prevents default and pull-refreshes only while the window is focused", async () => {
-    renderAppAt("/projects");
+    renderAppAt("/projects", [indexItem({ project_id: "p1" as never, name: "Alpha" })]);
     await screen.findByTestId("projects-index");
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("refresh_projects", { input: { project_ids: ["p1"] } }));
+    invokeMock.mockClear();
 
     // Unfocused window: neither the reload default nor a refresh.
     vi.spyOn(document, "hasFocus").mockReturnValue(false);
     const unfocused = dispatchChord("r");
     expect(unfocused.defaultPrevented).toBe(false);
-    expect(screen.getByTestId("live-polite")).toHaveTextContent("");
+    expect(invokeMock).not.toHaveBeenCalled();
 
     // Focused window: default reload is prevented and a refresh is announced.
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
     const focused = dispatchChord("r");
     expect(focused.defaultPrevented).toBe(true);
     expect(screen.getByTestId("live-polite")).toHaveTextContent(/refreshing/i);
-    expect(invokeMock).toHaveBeenCalledWith("refresh_projects", { input: { project_ids: null } });
+    expect(invokeMock).toHaveBeenCalledWith("refresh_projects", { input: { project_ids: ["p1"] } });
   });
 
   it("Cmd/Ctrl+R still refreshes while a text input is focused", async () => {
     const user = userEvent.setup();
-    renderAppAt("/projects");
+    renderAppAt("/projects", [indexItem({ project_id: "p1" as never, name: "Alpha" })]);
     await screen.findByTestId("projects-index");
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("refresh_projects", { input: { project_ids: ["p1"] } }));
+    invokeMock.mockClear();
     await user.click(screen.getByLabelText(/filter projects/i));
 
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
