@@ -11,7 +11,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  cli:
     strategy:
       matrix:
         include:
@@ -47,4 +47,45 @@ jobs:
           gh release upload ${{ github.ref_name }} \
             target/${{ matrix.target }}/release/omniproj-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
             target/${{ matrix.target }}/release/omniproj-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256 \
+            --clobber
+
+  desktop:
+    name: Desktop (${{ matrix.target }})
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/omniproj-desktop/web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install frontend and Tauri tooling
+        run: npm ci --prefix crates/omniproj-desktop/web
+      - name: Build desktop disk image
+        run: npm --prefix crates/omniproj-desktop/web run tauri -- build --target ${{ matrix.target }} --bundles dmg
+      - name: Create checksums
+        shell: bash
+        run: |
+          bundle_dir="target/${{ matrix.target }}/release/bundle/dmg"
+          artifacts=("$bundle_dir"/*.dmg)
+          test -f "${artifacts[0]}"
+          for artifact in "${artifacts[@]}"; do
+            shasum -a 256 "$artifact" > "$artifact.sha256"
+          done
+      - name: Upload desktop release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create ${{ github.ref_name }} --verify-tag --generate-notes 2>/dev/null || true
+          gh release upload ${{ github.ref_name }} \
+            target/${{ matrix.target }}/release/bundle/dmg/*.dmg \
+            target/${{ matrix.target }}/release/bundle/dmg/*.dmg.sha256 \
             --clobber

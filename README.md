@@ -75,7 +75,7 @@ R0 uses real path-based routes (never hash routes):
 | `/` | redirects to `/projects` |
 | `/projects` | the dense operating **Index** (one row per project) |
 | `/projects/:projectId` | redirects to that project's canonical Overview |
-| `/projects/:projectId/overview` | the **Project Overview** — a **Peek** over the Index when opened from a row on a wide window (≥ 800 px), or a **full page** on direct access / narrow windows |
+| `/projects/:projectId/overview` | the full-page **Project Overview** |
 
 On restart, OmniProj returns you to the last canonical URL; an explicit deep link always wins.
 
@@ -87,15 +87,20 @@ On restart, OmniProj returns you to the last canonical URL; an explicit deep lin
 | `Cmd/Ctrl + N` | open **Add Project** |
 | `Cmd/Ctrl + R` | pull-refresh (re-observe sources); prevents the browser reload only while the OmniProj window is focused |
 | `Enter` | open the focused project |
-| `Esc` | close the top surface — the Add Project modal before the Peek — and restore focus to the originating row |
+| `Esc` | close the Add Project modal, or close the sidebar drawer on a narrow window |
 | `Tab` / `Shift+Tab` | standard control navigation |
 
 ### The Index and the seven-day review rule
 
 The Index is ordered in a **deterministic review order** — source unavailable, setup incomplete,
 needs commitment, review action, scheduled review — explicitly **not** a priority or health
-ranking. A transparent, opt-in sort (name, recently observed) is available; the default is always
+ranking. A transparent, opt-in sort (name, recent commit) is available; the default is always
 the review order.
+
+The default operating view omits archived projects, but the **Archived** filter and sidebar
+section keep them discoverable so they can be opened and restored. OmniProj renders the persisted
+last-successful observation immediately, then refreshes repositories in the background at startup;
+completed rows update progressively and failures retain the last known facts.
 
 Beside the order label the Index shows **`Commitment review interval: 7 days`**, read from the
 backend `review_policy` (never a hard-coded frontend constant). A commitment with no confirmed

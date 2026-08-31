@@ -1,5 +1,7 @@
 # OmniProj 产品需求(PRD)
 
+> **状态说明（2026-08）：本文是后续 MVP 产品愿景，不是当前已交付功能清单。** 当前桌面版实现的是 README 所述 R0：Projects Index、Project Overview、commitment 与只读 Git observation。本文中的 task 管理、通知、Advance、Git flow graph 等仍属规划，不能据此判断当前版本已经提供。
+
 > 依据 `docs/omniproj-charter.md`(宪法)。
 > 形态/架构见 `docs/desktop-design.md`。本文只管**要什么、给谁、做到什么算数**,不管怎么实现。
 > 原则:**简单、好用、明确、可产品化;自用 + 开源。** 反对复杂、反对 scope creep、反对建了没人用。

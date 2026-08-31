@@ -1,5 +1,7 @@
 # R0 Trusted Project Re-entry Implementation Plan
 
+> **Status:** historical implementation plan. It records the original target (including Peek), but `README.md` is the contract for the current shipped R0 behavior.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship the approved R0 product loop: a Human-led, pull-based Projects Index with stable project identity, deterministic review reasons, URL-backed Project Peek/full-page detail, explicit current-commitment lifecycle, UI project registration/relink, local atomic persistence, and Undo.
