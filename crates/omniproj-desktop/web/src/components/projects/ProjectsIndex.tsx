@@ -27,8 +27,6 @@ const REVIEW_FILTERS: Array<{ value: ReviewFilter; label: string }> = [
   { value: "parked", label: "Parked" },
 ];
 
-const COLUMNS = ["Project", "Current commitment", "Observed actual", "Review"];
-
 function parseFilter(value: string | null): ReviewFilter {
   return value === "needs_review" || value === "waiting" || value === "parked"
     ? value
@@ -102,54 +100,53 @@ export function ProjectsIndex({
 
   return (
     <section className="op-index" aria-labelledby="projects-index-heading">
-      <div className="op-index__meta">
-        <span className="op-index__order">{REVIEW_ORDER_LABEL}</span>
-        <span className="op-index__interval">
-          Commitment review interval: {reviewPolicy.commitment_review_days} days
-        </span>
-      </div>
-
-      <div className="op-index__controls">
-        <div className="op-filters" role="group" aria-label="Review filters">
-          {REVIEW_FILTERS.map((chip) => (
-            <FilterChip
-              key={chip.value}
-              label={chip.label}
-              pressed={filter === chip.value}
-              onClick={() => setParam("filter", chip.value, chip.value !== "all")}
-            />
-          ))}
-        </div>
-        <label className="op-sort">
-          Review order
-          <select
-            value={sort}
-            onChange={(e) => setParam("sort", e.target.value, e.target.value !== "review")}
-          >
-            <option value="review">Review order</option>
-            <option value="name">Name</option>
-            <option value="observed">Recently observed</option>
-          </select>
-        </label>
-      </div>
-
-      <div className="op-index__head" aria-hidden="true">
-        {COLUMNS.map((c) => (
-          <span key={c} className="op-index__col">
-            {c}
+      <div className="op-index__toolbar">
+        <div className="op-index__meta">
+          <span className="op-index__order">{REVIEW_ORDER_LABEL}</span>
+          <span className="op-index__interval">
+            Commitment review interval: {reviewPolicy.commitment_review_days} days
           </span>
-        ))}
+        </div>
+
+        <div className="op-index__controls">
+          <div className="op-filters" role="group" aria-label="Review filters">
+            {REVIEW_FILTERS.map((chip) => (
+              <FilterChip
+                key={chip.value}
+                label={chip.label}
+                pressed={filter === chip.value}
+                onClick={() => setParam("filter", chip.value, chip.value !== "all")}
+              />
+            ))}
+          </div>
+          <label className="op-sort">
+            <span>Sort</span>
+            <select
+              aria-label="Review order"
+              value={sort}
+              onChange={(e) => setParam("sort", e.target.value, e.target.value !== "review")}
+            >
+              <option value="review">Review order</option>
+              <option value="name">Name</option>
+              <option value="observed">Recently observed</option>
+            </select>
+          </label>
+        </div>
       </div>
 
-      {visible.length === 0 ? (
-        <p data-testid="projects-index-nomatch">No projects match this filter.</p>
-      ) : (
-        <ul className="op-index__list" aria-label="Projects">
-          {visible.map((item) => (
-            <ProjectRow key={item.project_id} item={item} now={now} />
-          ))}
-        </ul>
-      )}
+      <div className="op-index__table">
+        {visible.length === 0 ? (
+          <p className="op-index__nomatch" data-testid="projects-index-nomatch">
+            No projects match this filter.
+          </p>
+        ) : (
+          <ul className="op-index__list" aria-label="Projects">
+            {visible.map((item) => (
+              <ProjectRow key={item.project_id} item={item} now={now} />
+            ))}
+          </ul>
+        )}
+      </div>
     </section>
   );
 }

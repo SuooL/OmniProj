@@ -53,6 +53,34 @@ impl Home {
         ensure_home().unwrap();
         Self { path }
     }
+
+    fn legacy_v1(tag: &str) -> Self {
+        let path = unique_path(&format!("{tag}-v1-home"));
+        std::env::set_var("OMNIPROJ_HOME", &path);
+
+        let project_id = "4480aa56adb5ec98";
+        let project = path.join("projects").join(project_id);
+        std::fs::create_dir_all(project.join("notes")).unwrap();
+        std::fs::write(path.join("SCHEMA_VERSION"), "1\n").unwrap();
+        std::fs::write(path.join(".gitignore"), "projects/*/cache/\n").unwrap();
+        std::fs::write(
+            project.join("meta.toml"),
+            format!(
+                "path = {:?}\nname = \"Legacy Desktop Project\"\nhash = {:?}\nadded_at = {:?}\n",
+                "/Users/research/legacy-desktop-project", project_id, NOW,
+            ),
+        )
+        .unwrap();
+
+        git(&path, &["init", "-q"]);
+        git(&path, &["config", "user.name", "R0 Test"]);
+        git(&path, &["config", "user.email", "r0@test.invalid"]);
+        git(&path, &["config", "commit.gpgsign", "false"]);
+        git(&path, &["add", "-A"]);
+        git(&path, &["commit", "-q", "-m", "seed schema v1"]);
+
+        Self { path }
+    }
 }
 
 impl Drop for Home {
@@ -332,6 +360,23 @@ fn dto_index_row_excludes_source_path_while_overview_includes_it() {
 // ---------------------------------------------------------------------------
 // service_ : methods (step 5)
 // ---------------------------------------------------------------------------
+
+#[test]
+fn service_startup_migrates_v1_store_before_first_index_read() {
+    let _guard = env_guard();
+    let home = Home::legacy_v1("startup-migration");
+
+    let service = DesktopService::initialize(FixedClock(NOW.to_owned())).unwrap();
+    let index = service.list_project_index().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(home.path.join("SCHEMA_VERSION")).unwrap(),
+        "2\n"
+    );
+    assert_eq!(index.projects.len(), 1);
+    assert_eq!(index.projects[0].name, "Legacy Desktop Project");
+    assert_eq!(index.projects[0].status, ProjectStatus::Setup);
+}
 
 #[test]
 fn service_index_excludes_archived_projects() {

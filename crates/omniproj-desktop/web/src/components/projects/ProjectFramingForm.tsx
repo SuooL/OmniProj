@@ -65,43 +65,69 @@ export function ProjectFramingForm({ overview }: ProjectFramingFormProps) {
     !mutation.pending;
 
   return (
-    <section aria-labelledby="framing-heading" data-testid="framing-form">
-      <h3 id="framing-heading">{isSetup ? "Complete setup" : "Framing"}</h3>
-      <label>
-        Objective
-        {/* Setup focuses the objective first (spec 9.4 order). */}
-        <input
-          aria-label="Objective"
-          autoFocus={isSetup}
-          value={objective}
-          onChange={(e) => setObjective(e.target.value)}
-        />
-      </label>
-      <label>
-        Desired outcome
-        <input
-          aria-label="Desired outcome"
-          value={desiredOutcome}
-          onChange={(e) => setDesiredOutcome(e.target.value)}
-        />
-      </label>
-      <label>
-        Phase (optional)
-        <input aria-label="Phase" value={phase} onChange={(e) => setPhase(e.target.value)} />
-      </label>
+    <section
+      className={`op-section op-form-section${isSetup ? " op-section--setup" : ""}`}
+      aria-labelledby="framing-heading"
+      data-testid="framing-form"
+    >
+      <div className="op-section__header">
+        <div>
+          <p className="op-section__kicker">Human-authored intent</p>
+          <h3 id="framing-heading">{isSetup ? "Complete setup" : "Project framing"}</h3>
+        </div>
+      </div>
       {isSetup && (
-        <label>
-          First commitment
+        <p className="op-section__intro">
+          Define the outcome and first concrete commitment before this project enters the
+          operating index.
+        </p>
+      )}
+      <div className="op-form-grid">
+        <label className="op-field op-field--wide">
+          <span>Objective</span>
+          {/* Setup focuses the objective first (spec 9.4 order). */}
           <input
-            aria-label="First commitment"
-            value={firstCommitment}
-            onChange={(e) => setFirstCommitment(e.target.value)}
+            aria-label="Objective"
+            autoFocus={isSetup}
+            value={objective}
+            onChange={(e) => setObjective(e.target.value)}
           />
         </label>
-      )}
-      <button type="button" disabled={!canSubmit} onClick={save}>
-        {isSetup ? "Complete setup" : "Save framing"}
-      </button>
+        <label className="op-field op-field--wide">
+          <span>Desired outcome</span>
+          <input
+            aria-label="Desired outcome"
+            value={desiredOutcome}
+            onChange={(e) => setDesiredOutcome(e.target.value)}
+          />
+        </label>
+        <label className="op-field">
+          <span>
+            Phase <small>Optional</small>
+          </span>
+          <input aria-label="Phase" value={phase} onChange={(e) => setPhase(e.target.value)} />
+        </label>
+        {isSetup && (
+          <label className="op-field op-field--wide">
+            <span>First commitment</span>
+            <input
+              aria-label="First commitment"
+              value={firstCommitment}
+              onChange={(e) => setFirstCommitment(e.target.value)}
+            />
+          </label>
+        )}
+      </div>
+      <div className="op-section__footer">
+        <button
+          className="op-button op-button--primary"
+          type="button"
+          disabled={!canSubmit}
+          onClick={save}
+        >
+          {isSetup ? "Complete setup" : "Save framing"}
+        </button>
+      </div>
       {failed && mutation.error && (
         <p role="alert" className="op-mutation-error" data-testid="framing-error">
           {mutation.error.recovery === "refetch"

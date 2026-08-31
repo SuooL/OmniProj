@@ -1,10 +1,10 @@
 // One dense Index row: four fields behind a single canonical project link. It obeys the badge
 // budget (<=1 ProjectStateTag, <=1 ReviewSignalBadge, <=3 FactLabels, and NO CommitmentStateTag
-// — that tag is Peek/history only, so the row stays within <=2 enclosed badges). It renders no
+// — that tag is history-only, so the row stays within <=2 enclosed badges). It renders no
 // full path, sparkline, health/priority, Git graph, Agent control, full task list, or any
 // activity-derived ranking.
 
-import { Link, useLocation } from "react-router-dom";
+import { Link } from "react-router-dom";
 
 import { saveIndexViewState } from "../../domain/navigationSession";
 import type { HeadState, ProjectIndexItem } from "../../domain/project";
@@ -15,6 +15,7 @@ import {
   primaryReason,
 } from "../../domain/projectPresentation";
 import { FactLabel } from "../semantic/FactLabel";
+import { ChevronRightIcon, FolderIcon } from "../Icons";
 import { ProjectStateTag } from "../semantic/ProjectStateTag";
 import { ReviewSignalBadge } from "../semantic/ReviewSignalBadge";
 
@@ -73,7 +74,6 @@ export interface ProjectRowProps {
 }
 
 export function ProjectRow({ item, now }: ProjectRowProps) {
-  const location = useLocation();
   const observed = item.observed_actual;
   const commitment = item.current_commitment;
   const primary = primaryReason(item);
@@ -81,13 +81,14 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
   const observedTime = observed ? formatRelativeTime(observed.observed_at, now) : null;
   const sinceCommitment = observed?.commits_since_commitment ?? null;
 
+  const reviewText = primary ? primary.label : "No review needed";
+
   return (
     <li className="op-row">
       <Link
         className="op-row__link"
         aria-label={rowAccessibleName(item)}
         to={projectOverviewPath(item.project_id)}
-        state={{ backgroundLocation: location }}
         data-focus-id={item.project_id}
         onClick={() =>
           saveIndexViewState({
@@ -96,44 +97,18 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
           })
         }
       >
-        {/* Project */}
-        <span className="op-cell op-cell--project">
-          <span className="op-field-label" aria-hidden="true">
-            Project
+        <span className="op-row__folder"><FolderIcon /></span>
+        <span className="op-row__body">
+          <span className="op-row__title-line">
+            <span className="op-row__name">{item.name}</span>
+            <ProjectStateTag status={item.status} />
           </span>
-          <span className="op-row__name">{item.name}</span>
-          <ProjectStateTag status={item.status} />
-        </span>
-
-        {/* Current commitment */}
-        <span className="op-cell op-cell--commitment">
-          <span className="op-field-label" aria-hidden="true">
-            Current commitment
+          <span className="op-row__commitment op-row__commitment--none">
+            {commitment ? commitment.text : "No current commitment"}
           </span>
-          {commitment ? (
-            <span className="op-row__commitment">{commitment.text}</span>
-          ) : (
-            <span className="op-row__commitment op-row__commitment--none">
-              No current commitment
-            </span>
-          )}
-          {sinceCommitment !== null && sinceCommitment > 0 && (
-            <span className="op-observed-note">
-              {sinceCommitment} commit{sinceCommitment === 1 ? "" : "s"} since
-            </span>
-          )}
-        </span>
-
-        {/* Observed actual */}
-        <span className="op-cell op-cell--observed">
-          <span className="op-field-label" aria-hidden="true">
-            Observed actual
-          </span>
-          {observed ? (
-            <>
-              {/* Branch + commit subject/SHA collapse away at 800-1099px (they live in the
-                  Peek/detail there); the relative time and delta always remain. */}
-              <span className="op-observed-detail">
+          <span className="op-row__metadata">
+            {observed ? (
+              <>
                 <FactLabel value={headText(observed.head)} />
                 {observed.last_commit ? (
                   <FactLabel
@@ -141,30 +116,24 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
                     title={observed.last_commit.sha}
                   />
                 ) : (
-                  <span className="op-observed-note">no commits</span>
+                  <span>no commits</span>
                 )}
-              </span>
-              {observedTime && (
-                <FactLabel label="observed" value={observedTime.text} title={observedTime.title} />
-              )}
-              {changeNote(item) && <span className="op-observed-note">{changeNote(item)}</span>}
-            </>
-          ) : (
-            <span className="op-observed-note">Not yet observed</span>
-          )}
-        </span>
-
-        {/* Review */}
-        <span className="op-cell op-cell--review">
-          <span className="op-field-label" aria-hidden="true">
-            Review
+              </>
+            ) : (
+              <span>Not yet observed</span>
+            )}
+            {observedTime && <FactLabel value={observedTime.text} title={observedTime.title} />}
+            {sinceCommitment !== null && sinceCommitment > 0 && (
+              <span>{sinceCommitment} commit{sinceCommitment === 1 ? "" : "s"} since</span>
+            )}
+            {observed && <span>{changeNote(item)}</span>}
           </span>
-          {primary ? (
-            <ReviewSignalBadge reason={primary} hidden={hidden} />
-          ) : (
-            <span className="op-row__review-clear">No review needed</span>
-          )}
         </span>
+        <span className="op-row__review-text">
+          {primary && <ReviewSignalBadge reason={primary} hidden={hidden} />}
+          {!primary && reviewText}
+        </span>
+        <span className="op-row__chevron"><ChevronRightIcon /></span>
       </Link>
     </li>
   );

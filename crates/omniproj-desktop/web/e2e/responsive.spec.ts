@@ -24,7 +24,7 @@ async function expectNoHorizontalScroll(page: Page) {
   ).toBeLessThanOrEqual(info.clientWidth);
 }
 
-test("1280x800: 9-11 rows visible across four aligned columns", async ({ page }) => {
+test("1280x800: the full-height sidebar and continuous project list fit without overflow", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/projects");
   await expect(page.getByRole("list", { name: "Projects" }).getByRole("listitem")).toHaveCount(12);
@@ -35,43 +35,43 @@ test("1280x800: 9-11 rows visible across four aligned columns", async ({ page })
       return b.top < window.innerHeight && b.bottom > 0;
     }).length,
   );
-  expect(visible, `visible rows=${visible}`).toBeGreaterThanOrEqual(9);
-  expect(visible).toBeLessThanOrEqual(11);
-  await expect(page.locator(".op-index__head")).toBeVisible();
+  expect(visible, `visible rows=${visible}`).toBeGreaterThanOrEqual(7);
+  expect(visible).toBeLessThanOrEqual(10);
+  await expect(page.locator(".app-shell__sidebar")).toBeVisible();
+  await expect(page.locator(".op-index__head")).toHaveCount(0);
   await expectNoHorizontalScroll(page);
 });
 
-test("1100: four columns with full Observed actual, and a Peek opens", async ({ page }) => {
+test("1100: selecting a project replaces the main content and expands its sidebar node", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 800 });
   await page.goto("/projects");
-  await expect(page.locator(".op-index__head")).toBeVisible();
-  await expect(page.locator(".op-observed-detail").first()).toBeVisible();
+  await expect(page.locator(".op-row__metadata").first()).toBeVisible();
   await page.getByRole("link", { name: /^billing-worker/ }).click();
-  await expect(page.getByTestId("overview-peek")).toBeVisible();
+  await expect(page.getByTestId("overview-page")).toBeVisible();
+  await expect(page.getByText("Overview", { exact: true })).toHaveClass("is-active");
   await expectNoHorizontalScroll(page);
 });
 
-test("1099 and 800: four columns but Observed actual compresses (branch/SHA hidden)", async ({ page }) => {
+test("1099 and 800: the desktop list compresses without introducing a table or horizontal scroll", async ({ page }) => {
   for (const width of [1099, 800]) {
     await page.setViewportSize({ width, height: 800 });
     await page.goto("/projects");
-    await expect(page.locator(".op-index__head")).toBeVisible();
-    await expect(page.locator(".op-observed-detail").first()).toBeHidden();
+    await expect(page.locator(".op-index__head")).toHaveCount(0);
+    await expect(page.locator(".app-shell__sidebar")).toBeVisible();
     await expectNoHorizontalScroll(page);
   }
 });
 
-test("799 and 640: rows stack and detail is a full page (no Index/Peek landmark)", async ({ page }) => {
+test("799 and 640: the sidebar can collapse and project detail remains a full page", async ({ page }) => {
   for (const width of [799, 640]) {
     await page.setViewportSize({ width, height: 800 });
     await page.goto("/projects");
-    await expect(page.locator(".op-index__head")).toBeHidden();
-    await expect(page.locator(".op-field-label").first()).toBeVisible();
+    await expect(page.locator(".app-shell__sidebar")).toBeHidden();
+    await expect(page.getByRole("button", { name: "Show sidebar" })).toBeVisible();
     await expectNoHorizontalScroll(page);
 
     await page.getByRole("link", { name: /^billing-worker/ }).click();
     await expect(page.getByTestId("overview-page")).toBeVisible();
-    await expect(page.getByTestId("overview-peek")).toHaveCount(0);
     await expect(page.getByTestId("projects-index")).toHaveCount(0);
     await expectNoHorizontalScroll(page);
   }
@@ -98,6 +98,6 @@ test("200% text: no horizontal overflow and actions stay reachable", async ({ pa
   expect(clipped, "no row clips its enlarged text").toBe(false);
 
   await page.getByRole("link", { name: /^billing-worker/ }).click();
-  await expect(page.getByTestId("overview-peek").getByRole("button", { name: "Replace" })).toBeVisible();
+  await expect(page.getByTestId("overview-page").getByRole("button", { name: "Replace" })).toBeVisible();
   await expectNoHorizontalScroll(page);
 });

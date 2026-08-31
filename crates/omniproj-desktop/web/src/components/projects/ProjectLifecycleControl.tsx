@@ -62,55 +62,72 @@ export function ProjectLifecycleControl({ overview }: ProjectLifecycleControlPro
   }
 
   return (
-    <section aria-labelledby="lifecycle-heading" data-testid="lifecycle-control">
-      <h3 id="lifecycle-heading">Lifecycle</h3>
-      <label>
-        Set status
-        <select
-          aria-label="Set status"
-          value={target}
-          onChange={(e) => setTarget(e.target.value as ProjectStatus)}
+    <section className="op-section op-form-section" aria-labelledby="lifecycle-heading" data-testid="lifecycle-control">
+      <div className="op-section__header">
+        <div>
+          <p className="op-section__kicker">Project state</p>
+          <h3 id="lifecycle-heading">Lifecycle</h3>
+        </div>
+      </div>
+      <div className="op-form-grid">
+        <label className="op-field">
+          <span>Set status</span>
+          <select
+            aria-label="Set status"
+            value={target}
+            onChange={(e) => setTarget(e.target.value as ProjectStatus)}
+          >
+            {TARGETS.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {needsReason && (
+          <label className="op-field op-field--wide">
+            <span>Reason</span>
+            <input
+              aria-label="Status reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            />
+          </label>
+        )}
+        {(target === "waiting" || target === "parked") && (
+          <label className="op-field">
+            <span>Review date{needsReviewDate ? "" : " (optional)"}</span>
+            <input
+              aria-label="Review date"
+              type="date"
+              value={reviewDate}
+              onChange={(e) => setReviewDate(e.target.value)}
+            />
+          </label>
+        )}
+        {needsConfirm && (
+          <label className="op-check-field">
+            <input
+              type="checkbox"
+              aria-label="Confirm archive"
+              checked={confirmArchive}
+              onChange={(e) => setConfirmArchive(e.target.checked)}
+            />
+            I understand archiving removes this project from the operating index.
+          </label>
+        )}
+      </div>
+      <div className="op-section__footer">
+        <button
+          className="op-button op-button--secondary"
+          type="button"
+          disabled={!canSave}
+          onClick={save}
         >
-          {TARGETS.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      {needsReason && (
-        <label>
-          Reason
-          <input aria-label="Status reason" value={reason} onChange={(e) => setReason(e.target.value)} />
-        </label>
-      )}
-      {(target === "waiting" || target === "parked") && (
-        <label>
-          Review date{needsReviewDate ? "" : " (optional)"}
-          <input
-            aria-label="Review date"
-            type="date"
-            value={reviewDate}
-            onChange={(e) => setReviewDate(e.target.value)}
-          />
-        </label>
-      )}
-      {needsConfirm && (
-        <label>
-          <input
-            type="checkbox"
-            aria-label="Confirm archive"
-            checked={confirmArchive}
-            onChange={(e) => setConfirmArchive(e.target.checked)}
-          />
-          I understand archiving removes this project from the operating index.
-        </label>
-      )}
-
-      <button type="button" disabled={!canSave} onClick={save}>
-        Update status
-      </button>
+          Update status
+        </button>
+      </div>
       {failed && mutation.error && (
         <p role="alert" className="op-mutation-error" data-testid="lifecycle-error">
           {mutation.error.message}

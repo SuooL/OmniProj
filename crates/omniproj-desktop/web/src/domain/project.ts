@@ -131,7 +131,7 @@ export interface ProjectIndexResponse {
   review_policy: ReviewPolicy;
 }
 
-// --- Overview (shared by Peek and full page) -------------------------------
+// --- Overview --------------------------------------------------------------
 export interface ProjectOverview {
   project_id: ProjectId;
   name: string;

@@ -1,6 +1,5 @@
-// Route behavior contract for the canonical AppShell. These assert URL shape, background
-// -location Peek routing, restart restoration, and deep-link precedence — before any router
-// exists (Step 1 -> RED), then satisfied by the background-location implementation (Step 2).
+// Route behavior contract for the canonical desktop AppShell: URL shape, full-page project
+// navigation, restart restoration, and deep-link precedence.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
@@ -11,13 +10,12 @@ const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
 import { App } from "./App";
-import { loadIndexViewState } from "./domain/navigationSession";
 import { projectId, type ProjectIndexItem } from "./domain/project";
 import { queryKeys } from "./queryKeys";
 import { indexItem, indexResponse, overview, reviewPolicy } from "./test/fixtures";
 
 // Command-aware IPC mock: the index is seeded per-test via setQueryData; the Overview is
-// fetched by the Peek/full page, so echo a valid Overview for the requested id.
+// fetched by the full page, so echo a valid Overview for the requested id.
 function mockIpc() {
   invokeMock.mockImplementation(async (command: string, args?: { input?: { project_id?: string } }) => {
     if (command === "get_project_overview") {
@@ -85,21 +83,20 @@ describe("canonical routes", () => {
   });
 });
 
-describe("background-location Peek", () => {
-  it("opens an Index-origin project as a Peek over the still-mounted Index at the canonical URL", async () => {
+describe("desktop project navigation", () => {
+  it("opens an Index-origin project in the main content surface", async () => {
     const user = userEvent.setup();
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
 
     const index = await screen.findByTestId("projects-index");
     await user.click(within(index).getByRole("link", { name: /^Alpha\b/ }));
 
-    expect(await screen.findByTestId("overview-peek")).toBeInTheDocument();
-    // The Index remains mounted beneath the Peek, and the URL is the canonical Overview.
-    expect(screen.getByTestId("projects-index")).toBeInTheDocument();
+    expect(await screen.findByTestId("overview-page")).toBeInTheDocument();
+    expect(screen.queryByTestId("projects-index")).not.toBeInTheDocument();
     expect(window.location.pathname).toBe("/projects/project-1/overview");
   });
 
-  it("Open as page clears background state without changing the object URL", async () => {
+  it("shows the selected project and its child navigation in the sidebar", async () => {
     const user = userEvent.setup();
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
@@ -107,15 +104,10 @@ describe("background-location Peek", () => {
         name: /^Alpha\b/,
       }),
     );
-    await screen.findByTestId("overview-peek");
-    const urlBefore = currentUrl();
-
-    await user.click(screen.getByRole("button", { name: /open as page/i }));
-
     expect(await screen.findByTestId("overview-page")).toBeInTheDocument();
-    expect(screen.queryByTestId("overview-peek")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("projects-index")).not.toBeInTheDocument();
-    expect(currentUrl()).toBe(urlBefore);
+    expect(screen.getByText("Overview")).toHaveClass("is-active");
+    expect(screen.getByText("Commitment")).toBeInTheDocument();
+    expect(screen.getByText("Activity")).toBeInTheDocument();
   });
 
   it("Back and Forward restore the prior screen", async () => {
@@ -126,13 +118,13 @@ describe("background-location Peek", () => {
         name: /^Alpha\b/,
       }),
     );
-    await screen.findByTestId("overview-peek");
+    await screen.findByTestId("overview-page");
 
     await act(async () => {
       window.history.back();
     });
     await waitFor(() =>
-      expect(screen.queryByTestId("overview-peek")).not.toBeInTheDocument(),
+      expect(screen.queryByTestId("overview-page")).not.toBeInTheDocument(),
     );
     expect(screen.getByTestId("projects-index")).toBeInTheDocument();
 
@@ -140,11 +132,11 @@ describe("background-location Peek", () => {
       window.history.forward();
     });
     await waitFor(() =>
-      expect(screen.getByTestId("overview-peek")).toBeInTheDocument(),
+      expect(screen.getByTestId("overview-page")).toBeInTheDocument(),
     );
   });
 
-  it("round-trips a project id with special characters through link, route param, and Open as page", async () => {
+  it("round-trips a project id with special characters through link and route param", async () => {
     const user = userEvent.setup();
     const weirdId = "weird/id %#";
     renderAppAt("/projects", [
@@ -156,20 +148,18 @@ describe("background-location Peek", () => {
       }),
     );
 
-    await screen.findByTestId("overview-peek");
+    await screen.findByTestId("overview-page");
     // The id round-trips decoded through the route param into the IPC call.
     expect(invokeMock).toHaveBeenCalledWith("get_project_overview", {
       input: { project_id: weirdId },
     });
 
-    await user.click(screen.getByRole("button", { name: /open as page/i }));
-    expect(await screen.findByTestId("overview-page")).toBeInTheDocument();
     expect(window.location.pathname).toBe(
       `/projects/${encodeURIComponent(weirdId)}/overview`,
     );
   });
 
-  it("records the return-focus id in the persistent navigation session on Peek open", async () => {
+  it("selects a project in the sidebar after opening it", async () => {
     const user = userEvent.setup();
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
@@ -177,9 +167,8 @@ describe("background-location Peek", () => {
         name: /^Alpha\b/,
       }),
     );
-    await screen.findByTestId("overview-peek");
-
-    expect(loadIndexViewState()?.focusId).toBe("project-1");
+    await screen.findByTestId("overview-page");
+    expect(screen.getByRole("button", { name: "Alpha" })).toHaveAttribute("data-active", "true");
   });
 });
 

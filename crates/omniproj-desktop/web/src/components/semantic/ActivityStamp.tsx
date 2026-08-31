@@ -1,5 +1,5 @@
 // An event verb paired with its time, e.g. "Completed · 3 days ago". Neutral; the exact
-// instant lives in `title`. Used by the Peek commitment history rail (Task 11) and defined
+// instant lives in `title`. Used by the commitment history rail (Task 11) and defined
 // here as part of the shared semantic grammar.
 
 export interface ActivityStampProps {

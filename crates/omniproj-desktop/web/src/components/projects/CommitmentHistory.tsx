@@ -26,8 +26,13 @@ export function CommitmentHistory({ transitions, now }: CommitmentHistoryProps) 
   if (transitions.length === 0) return null;
 
   return (
-    <section aria-labelledby="history-heading" data-testid="commitment-history">
-      <h3 id="history-heading">Recent commitment history</h3>
+    <section className="op-section op-section--history" aria-labelledby="history-heading" data-testid="commitment-history">
+      <div className="op-section__header">
+        <div>
+          <p className="op-section__kicker">Audit trail</p>
+          <h3 id="history-heading">Recent commitment history</h3>
+        </div>
+      </div>
       <ol className="op-history-rail">
         {transitions.map((t) => {
           const time = formatRelativeTime(t.occurred_at, now);

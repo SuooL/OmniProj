@@ -1,8 +1,5 @@
-// The interaction frame that wraps every screen: the single primary destination (Projects),
-// the local filter, Add Project, pull-refresh, the background-location Peek overlay, the
-// stacked Add Project modal, the global shortcuts, and the two persistent announcement
-// regions. Routing decisions live here; App.tsx only owns the BrowserRouter and the
-// pre-mount route restore.
+// The desktop interaction frame: a full-height project tree, native window controls, the main
+// route surface, the Add Project modal, global shortcuts, and persistent announcement regions.
 
 import {
   createContext,
@@ -13,9 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { Location } from "react-router-dom";
 import {
-  Link,
   Navigate,
   Route,
   Routes,
@@ -24,7 +19,8 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { api, AppError } from "../api";
 import { saveCanonicalLocation } from "../domain/navigationSession";
@@ -36,13 +32,20 @@ import {
   projectsPath,
 } from "../domain/routes";
 import { useAppShortcuts } from "../hooks/useAppShortcuts";
-import { useIsPeekViewport } from "../hooks/useMediaQuery";
 import { queryKeys } from "../queryKeys";
 import { NotFoundPage } from "../routes/NotFoundPage";
 import { ProjectOverviewPage } from "../routes/ProjectOverviewPage";
 import { ProjectsIndexPage } from "../routes/ProjectsIndexPage";
-import { ProjectPeek } from "./projects/ProjectPeek";
 import { AddProjectDialog } from "./AddProjectDialog";
+import {
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  FolderIcon,
+  PlusIcon,
+  RefreshIcon,
+  SidebarIcon,
+} from "./Icons";
 import { LiveStatus } from "./LiveStatus";
 
 // --- Announcer -------------------------------------------------------------
@@ -77,10 +80,6 @@ export function useAppActions(): AppActions {
   return actions;
 }
 
-interface BackgroundState {
-  backgroundLocation?: Location;
-}
-
 /** The bare `/projects/:projectId` always resolves to the canonical Overview. */
 function ProjectIdRedirect() {
   const params = useParams();
@@ -95,15 +94,15 @@ export function AppShell() {
   const [searchParams, setSearchParams] = useSearchParams();
   const filterRef = useRef<HTMLInputElement>(null);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => typeof window === "undefined" || window.innerWidth >= 800,
+  );
   const [polite, setPolite] = useState("");
   const [assertive, setAssertive] = useState("");
-
-  // A Peek only exists on a wide viewport; below 800px an Index-origin navigation is a real
-  // full-page detail (no Peek, no lingering Index in the DOM/a11y tree).
-  const isPeekViewport = useIsPeekViewport();
-  const backgroundLocation =
-    (location.state as BackgroundState | null)?.backgroundLocation ?? null;
-  const effectiveBackgroundLocation = isPeekViewport ? backgroundLocation : null;
+  const { data: sidebarProjects } = useQuery({
+    queryKey: queryKeys.projectIndex,
+    queryFn: api.listProjectIndex,
+  });
 
   const announce = useCallback<Announce>((level, message) => {
     if (level === "polite") setPolite(message);
@@ -122,11 +121,9 @@ export function AppShell() {
       const next = new URLSearchParams(searchParams);
       if (event.target.value) next.set("q", event.target.value);
       else next.delete("q");
-      // Preserve the current history state so filtering while a Peek is open does not drop
-      // `backgroundLocation` and silently reinterpret the Overview URL as a full page.
-      setSearchParams(next, { replace: true, state: location.state });
+      setSearchParams(next, { replace: true });
     },
-    [location.state, searchParams, setSearchParams],
+    [searchParams, setSearchParams],
   );
 
   // Pull-refresh re-observes every source (refresh_projects), folds each returned row into the
@@ -162,19 +159,29 @@ export function AppShell() {
     [openAddProject, onRefresh],
   );
 
-  // Escape closes only the topmost surface: the Add Project modal before the Peek. Closing a
-  // Peek pops history (rather than pushing a fresh Index entry) so the original Index entry —
-  // which carries scroll offset and return-focus id in history state — is restored, and Back
-  // does not re-open the just-dismissed Peek.
   const handleEscape = useCallback(() => {
     if (addProjectOpen) {
       setAddProjectOpen(false);
       return;
     }
-    if (effectiveBackgroundLocation) {
-      navigate(-1);
-    }
-  }, [addProjectOpen, effectiveBackgroundLocation, navigate]);
+  }, [addProjectOpen]);
+
+  const showBack = location.pathname !== projectsPath();
+  const sidebarProjectItems = Array.isArray(sidebarProjects?.projects)
+    ? sidebarProjects.projects
+    : [];
+  const currentProject = sidebarProjectItems.find((project) =>
+    location.pathname.includes(`/projects/${project.project_id}`),
+  );
+
+  const startWindowDrag = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("button, input, select, textarea, a, [role='button']")) return;
+    void getCurrentWindow().startDragging().catch(() => {
+      // Browser tests and preview builds do not expose a native window.
+    });
+  }, []);
 
   useAppShortcuts({
     onFocusFilter: () => filterRef.current?.focus(),
@@ -186,45 +193,123 @@ export function AppShell() {
   return (
     <AnnouncerContext.Provider value={announce}>
       <AppActionsContext.Provider value={appActions}>
-      <div className="app-shell">
-        <header className="app-shell__bar">
-          <nav aria-label="Primary">
-            <Link to={projectsPath()}>Projects</Link>
-          </nav>
-          <div role="search">
-            <input
-              ref={filterRef}
-              type="search"
-              aria-label="Filter projects"
-              value={filterValue}
-              onChange={onFilterChange}
-            />
+      <div className="app-shell" data-sidebar-open={sidebarOpen}>
+        <aside className="app-shell__sidebar">
+          <div
+            className="app-shell__sidebar-chrome"
+            data-tauri-drag-region
+            onMouseDown={startWindowDrag}
+          >
+            <button
+              className="op-chrome-button"
+              type="button"
+              aria-label="Hide sidebar"
+              onClick={() => setSidebarOpen(false)}
+            >
+              <SidebarIcon />
+            </button>
+            <button
+              className="op-chrome-button"
+              type="button"
+              aria-label="Back to projects"
+              onClick={() => navigate(projectsPath())}
+              disabled={!showBack}
+            >
+              <ChevronLeftIcon />
+            </button>
+            <button className="op-chrome-button" type="button" aria-label="Forward" disabled>
+              <ChevronRightIcon />
+            </button>
           </div>
-          <button type="button" onClick={openAddProject}>
-            Add Project
-          </button>
-          <button type="button" onClick={onRefresh}>
-            Refresh
-          </button>
-        </header>
+          <div className="app-shell__sidebar-body">
+            <div className="app-shell__brand-row">
+              <strong>OmniProj</strong>
+              <ChevronDownIcon />
+            </div>
+            <div className="app-shell__search" role="search">
+              <input
+                ref={filterRef}
+                type="search"
+                aria-label="Filter projects"
+                placeholder="Search projects"
+                value={filterValue}
+                onChange={onFilterChange}
+              />
+              <kbd aria-hidden="true">⌘F</kbd>
+            </div>
+            <nav aria-label="Primary" className="app-shell__nav">
+              <div className="app-shell__nav-section-title">
+                <span>Projects</span>
+                <button type="button" onClick={openAddProject} aria-label="Add Project"><PlusIcon /></button>
+              </div>
+              <div className="app-shell__project-tree">
+                {sidebarProjectItems
+                  .filter((project) => project.status !== "archived")
+                  .map((project) => {
+                    const active = location.pathname.includes(`/projects/${project.project_id}`);
+                    return (
+                      <div className="app-shell__project-node" key={project.project_id}>
+                        <button
+                          className="app-shell__project-item"
+                          data-active={active}
+                          type="button"
+                          onClick={() => navigate(projectOverviewPath(project.project_id))}
+                        >
+                          <FolderIcon />
+                          <span>{project.name}</span>
+                        </button>
+                        {active && (
+                          <div className="app-shell__project-children">
+                            <span className="is-active">Overview</span>
+                            <span>Commitment</span>
+                            <span>Activity</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            </nav>
+            <div className="app-shell__sidebar-footer">
+              <span className="app-shell__avatar" aria-hidden="true">S</span>
+              <span>Suool David</span>
+            </div>
+          </div>
+        </aside>
 
-        {/* The main outlet renders the background (Index) while a Peek is open, so the Index
-            stays mounted underneath it. */}
-        <Routes location={effectiveBackgroundLocation ?? location}>
-          <Route path={ROUTES.root} element={<Navigate to={projectsPath()} replace />} />
-          <Route path={ROUTES.projects} element={<ProjectsIndexPage />} />
-          <Route path={ROUTES.projectById} element={<ProjectIdRedirect />} />
-          <Route path={ROUTES.projectOverview} element={<ProjectOverviewPage />} />
-          <Route path={ROUTES.notFound} element={<NotFoundPage />} />
-        </Routes>
-
-        {/* The Peek overlay: the same canonical Overview URL, rendered over the still-mounted
-            Index — but only on a wide viewport. */}
-        {effectiveBackgroundLocation && (
-          <Routes>
-            <Route path={ROUTES.projectOverview} element={<ProjectPeek />} />
-          </Routes>
-        )}
+        <section className="app-shell__main">
+          <header
+            className="app-shell__context-bar"
+            data-tauri-drag-region
+            onMouseDown={startWindowDrag}
+          >
+            <div className="app-shell__context-title">
+              <button
+                className="app-shell__sidebar-toggle"
+                type="button"
+                aria-label="Show sidebar"
+                onClick={() => setSidebarOpen(true)}
+              >
+                <SidebarIcon />
+              </button>
+              <FolderIcon />
+              <strong>{currentProject?.name ?? "Projects"}</strong>
+            </div>
+            <div className="app-shell__actions">
+              <button type="button" onClick={onRefresh} aria-label="Refresh"><RefreshIcon /></button>
+              <button type="button" onClick={openAddProject} aria-label="New project"><PlusIcon /></button>
+            </div>
+          </header>
+          <div className="app-shell__content">
+            <Routes>
+              <Route path={ROUTES.root} element={<Navigate to={projectsPath()} replace />} />
+              <Route path={ROUTES.projects} element={<ProjectsIndexPage />} />
+              <Route path={ROUTES.projectById} element={<ProjectIdRedirect />} />
+              <Route path={ROUTES.projectOverview} element={<ProjectOverviewPage />} />
+              <Route path={ROUTES.notFound} element={<NotFoundPage />} />
+            </Routes>
+          </div>
+        </section>
 
         {addProjectOpen && <AddProjectDialog onClose={() => setAddProjectOpen(false)} />}
 

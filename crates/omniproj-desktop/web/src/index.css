@@ -1,40 +1,52 @@
 @import "tailwindcss";
 
-/* OmniProj semantic token contract (--op-*). Components consume these roles ONLY — never raw
-   palette hex, never a per-project decorative color. Every role has Light, Dark, high-contrast,
-   and forced-colors behavior. Color is always redundant with visible text; there is no grid
-   background, phosphor palette, glow, pulse, opacity-disabled, or status animation. */
+/* =============================================================================
+   OmniProj — desktop design language: "an instrument, not a dashboard".
+
+   One authored layer. No stacked generations, no !important overrides fighting
+   each other, no raw hex outside this token block. The visual voice is
+   editorial and precise: hairline rules as the primary structural device,
+   tabular numerals as a protagonist, one teal accent used sparingly, and
+   generous typographic rhythm instead of decorative cards.
+
+   Every role below has Light, Dark, high-contrast and forced-colors behavior.
+   Color is always redundant with visible text — there is no health score,
+   priority ranking, glow, pulse, or status animation. Components consume the
+   --op-* roles ONLY; a component file never names a raw hex or a palette color.
+   ========================================================================== */
 
 :root {
   color-scheme: light dark;
 
-  /* Surfaces */
-  --op-bg-canvas: #f5f7fa;
-  --op-bg-surface: #ffffff;
-  --op-bg-subtle: #eef2f6;
+  /* -- Surfaces. A quiet three-step depth: recessed chrome, paper content,
+        inset fields. ------------------------------------------------------- */
+  --op-bg-app: #e9edf2;       /* window chrome + left rail (recessed) */
+  --op-bg-canvas: #f5f7fa;    /* inset fields, wells */
+  --op-bg-surface: #ffffff;   /* the "paper" the content sits on */
+  --op-bg-subtle: #eef2f6;    /* zebra / quiet fills */
   --op-bg-raised: #ffffff;
 
-  /* Text */
+  /* -- Text. Tertiary still clears 4.5:1 on the paper surface for the few
+        necessary uses (definition terms, source path, muted notes). -------- */
   --op-text-primary: #17202a;
   --op-text-secondary: #4b5b6b;
-  /* Tertiary must still clear 4.5:1 on the canvas for the necessary text that uses it
-     (definition terms, source path, muted notes) — this value measures ~4.6:1. */
   --op-text-tertiary: #5f6e7e;
   --op-text-inverse: #ffffff;
 
-  /* Borders */
+  /* -- Borders. Strong doubles as a control boundary → clears 3:1 on canvas. */
   --op-border-subtle: #d8e0e8;
-  /* Strong border doubles as a control boundary, so it must clear 3:1 on the canvas. */
+  --op-border-hairline: #e3e9ef;   /* the lightest editorial rule */
   --op-border-strong: #647485;
 
-  /* Interactive */
+  /* -- Interactive. One accent — a deep instrument teal. ------------------- */
   --op-interactive-fg: #006f8b;
   --op-interactive-hover: #00596f;
   --op-interactive-pressed: #004556;
   --op-interactive-disabled: #90a1b0;
+  --op-interactive-wash: color-mix(in srgb, var(--op-interactive-fg) 9%, transparent);
   --op-focus-ring: #006f8b;
 
-  /* Status: fg on bg, with a derived, non-opacity border. */
+  /* -- Status: fg on bg, with a derived, non-opacity border. -------------- */
   --op-status-neutral-fg: #475569;
   --op-status-neutral-bg: #f1f5f9;
   --op-status-neutral-border: #b6c2cf;
@@ -60,12 +72,12 @@
   --op-status-danger-border: #e59aa8;
   --op-status-danger-icon: #9f1239;
 
-  /* Provenance: unadopted Agent derivative (violet), never reused for status. */
+  /* -- Provenance: unadopted Agent derivative (violet), never reused for status. */
   --op-provenance-agent-fg: #6d28d9;
   --op-provenance-agent-bg: #ede9fe;
   --op-provenance-agent-border: #b9a6ee;
 
-  /* Categorical data series (deeper views only; R0 forbids most viz). */
+  /* -- Categorical data series (deeper views only; R0 forbids most viz). --- */
   --op-data-series-1: #0e7490;
   --op-data-series-2: #a16207;
   --op-data-series-3: #9333ea;
@@ -73,7 +85,8 @@
   --op-data-series-5: #b91c1c;
   --op-data-series-6: #1d4ed8;
 
-  /* Type scale (spec 10.5). */
+  /* -- Type. The first six tokens are the scaling contract (a11y text-zoom
+        doubles them); headings are separate, fixed display sizes. ---------- */
   --op-text-size-micro: 11px;
   --op-text-size-necessary: 12px;
   --op-text-size-body: 13px;
@@ -81,16 +94,45 @@
   --op-line-necessary: 16px;
   --op-line-body: 18px;
 
-  /* Control minimums. */
+  --op-text-size-title: 15px;    /* section headings (h3) */
+  --op-text-size-heading: 20px;  /* commitment / dialog (h2) */
+  --op-text-size-page: 26px;     /* page (h1) + overview name */
+
+  --op-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --op-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* -- Space scale (4pt rhythm). --------------------------------------------- */
+  --op-space-1: 4px;
+  --op-space-2: 8px;
+  --op-space-3: 12px;
+  --op-space-4: 16px;
+  --op-space-5: 20px;
+  --op-space-6: 24px;
+  --op-space-7: 32px;
+  --op-space-8: 48px;
+
+  /* -- Radius scale. --------------------------------------------------------- */
+  --op-radius-sm: 5px;
+  --op-radius-md: 8px;
+  --op-radius-lg: 12px;
+  --op-radius-pill: 999px;
+  --op-radius: var(--op-radius-sm);
+
+  /* -- Control minimums. ----------------------------------------------------- */
   --op-control-min: 28px;
   --op-control-icon-min: 32px;
 
-  --op-radius: 6px;
+  /* -- Elevation. Reserved for true overlays only. --------------------------- */
+  --op-shadow-overlay: 0 24px 80px rgb(15 23 42 / 22%);
+  --op-shadow-drawer: 14px 0 40px rgb(15 23 42 / 14%);
+
   --op-transition: 120ms;
+  --op-ease: cubic-bezier(0.2, 0, 0.15, 1);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --op-bg-app: #0d1116;
     --op-bg-canvas: #0b0e13;
     --op-bg-surface: #121720;
     --op-bg-subtle: #18202b;
@@ -102,12 +144,14 @@
     --op-text-inverse: #0b0e13;
 
     --op-border-subtle: #2b3745;
+    --op-border-hairline: #222d3a;
     --op-border-strong: #627286;
 
     --op-interactive-fg: #58d3f2;
     --op-interactive-hover: #7ce0ff;
     --op-interactive-pressed: #a6ecff;
     --op-interactive-disabled: #46586b;
+    --op-interactive-wash: color-mix(in srgb, var(--op-interactive-fg) 14%, transparent);
     --op-focus-ring: #58d3f2;
 
     --op-status-neutral-fg: #cbd5e1;
@@ -145,13 +189,17 @@
     --op-data-series-4: #4ade80;
     --op-data-series-5: #f87171;
     --op-data-series-6: #60a5fa;
+
+    --op-shadow-overlay: 0 28px 90px rgb(0 0 0 / 60%);
+    --op-shadow-drawer: 14px 0 40px rgb(0 0 0 / 55%);
   }
 }
 
-/* High contrast: strengthen borders and demote tertiary text to secondary. */
+/* High contrast: strengthen borders and promote tertiary text to secondary. */
 @media (prefers-contrast: more) {
   :root {
     --op-border-subtle: var(--op-border-strong);
+    --op-border-hairline: var(--op-border-strong);
     --op-text-tertiary: var(--op-text-secondary);
     --op-status-neutral-border: var(--op-status-neutral-fg);
     --op-status-info-border: var(--op-status-info-fg);
@@ -167,6 +215,7 @@
     --op-interactive-fg: LinkText;
     --op-focus-ring: Highlight;
     --op-border-subtle: CanvasText;
+    --op-border-hairline: CanvasText;
     --op-border-strong: CanvasText;
   }
   .op-badge,
@@ -175,57 +224,103 @@
   }
 }
 
+/* =============================================================================
+   Base
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 html,
 body,
 #root {
   height: 100%;
 }
 
-/* Always reserve the scrollbar gutter so the layout width is identical whether or not a
-   vertical scrollbar shows. Without this, a classic (non-overlay) scrollbar — as on Linux/CI —
-   narrows the client width after layout and induces spurious horizontal overflow. */
+/* Reserve the scrollbar gutter so layout width is identical with or without a
+   vertical scrollbar (classic scrollbars on Linux/CI would otherwise narrow the
+   client width after layout and induce spurious horizontal overflow). */
 html {
   scrollbar-gutter: stable;
 }
 
 body {
   margin: 0;
-  background-color: var(--op-bg-canvas);
+  background-color: var(--op-bg-surface);
   color: var(--op-text-primary);
-  font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-family: var(--op-font-ui);
   font-size: var(--op-text-size-body);
   line-height: var(--op-line-body);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--op-interactive-fg) 24%, transparent);
 }
 
 /* Visible keyboard focus on every focusable surface (>=3:1 boundary). */
 :focus-visible {
   outline: 2px solid var(--op-focus-ring);
-  outline-offset: 1px;
+  outline-offset: 2px;
+  border-radius: var(--op-radius-sm);
 }
 
-/* Constrained label primitives — structure only; role colors are supplied as inline
-   var(--op-*) so no component file ever names a raw hex or a color role directly. */
+/* Numerals read like an instrument panel wherever a fact is a number. */
+.op-page-heading__count strong,
+.op-index__interval,
+.op-row__metadata,
+.op-section__count,
+.op-section__meta,
+.op-stamp,
+.op-fact,
+.op-dl dd,
+.op-source-path,
+.op-path-box {
+  font-variant-numeric: tabular-nums;
+}
+
+/* =============================================================================
+   Label primitives — structure only; role colors arrive as inline var(--op-*)
+   from the components (see tone.ts), so no rule here names a color role.
+   ========================================================================== */
+
 .op-badge,
 .op-tag {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  min-height: 20px;
+  gap: var(--op-space-1);
+  min-height: 19px;
   max-width: 100%;
   padding: 1px 7px;
   border: 1px solid transparent;
-  border-radius: var(--op-radius);
-  font-size: var(--op-text-size-necessary);
+  border-radius: var(--op-radius-sm);
+  font-size: var(--op-text-size-micro);
   line-height: var(--op-line-necessary);
   font-weight: 600;
+  letter-spacing: 0.01em;
 }
-/* Short lifecycle words stay on one line; review labels may wrap in a narrow column rather
-   than overflow the row (which would force horizontal page scroll). */
+
 .op-tag {
   white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
+
 .op-badge {
   white-space: normal;
   overflow-wrap: anywhere;
@@ -235,92 +330,715 @@ body {
   font-size: var(--op-text-size-necessary);
   line-height: var(--op-line-necessary);
   color: var(--op-text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
-.op-fact {
-  font-size: var(--op-text-size-necessary);
-  line-height: var(--op-line-necessary);
-  color: var(--op-text-secondary);
-}
-.op-fact__label {
-  color: var(--op-text-secondary);
-}
-
+.op-fact,
+.op-fact__label,
 .op-stamp {
   font-size: var(--op-text-size-necessary);
   line-height: var(--op-line-necessary);
   color: var(--op-text-secondary);
 }
 
+.op-fact__label {
+  color: var(--op-text-tertiary);
+}
+
+/* Filter toggle — a real button; pressed also shifts weight, never color alone. */
 .op-chip {
   display: inline-flex;
   align-items: center;
   min-height: var(--op-control-min);
-  padding: 2px 10px;
-  border: 1px solid var(--op-border-strong);
-  border-radius: 999px;
-  background: var(--op-bg-surface);
+  padding: 2px var(--op-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--op-radius-md);
+  background: transparent;
   color: var(--op-text-secondary);
   font-size: var(--op-text-size-necessary);
   line-height: var(--op-line-necessary);
+  font-weight: 550;
   cursor: pointer;
   transition:
-    color var(--op-transition),
-    border-color var(--op-transition),
-    background-color var(--op-transition);
+    color var(--op-transition) var(--op-ease),
+    border-color var(--op-transition) var(--op-ease),
+    background-color var(--op-transition) var(--op-ease);
 }
+
+.op-chip:hover {
+  background: color-mix(in srgb, var(--op-text-primary) 5%, transparent);
+  color: var(--op-text-primary);
+}
+
 .op-chip[aria-pressed="true"] {
-  background: var(--op-status-info-bg);
-  border-color: var(--op-status-info-border);
-  color: var(--op-status-info-fg);
+  background: color-mix(in srgb, var(--op-text-primary) 8%, transparent);
+  color: var(--op-text-primary);
+  font-weight: 680;
 }
 
-/* Dense four-column Projects Index. Columns are shared by the header and every row so they
-   stay aligned; rows have a min-height (never a fixed clipped height). */
-.app-shell__bar {
-  display: flex;
-  flex-wrap: wrap;
+/* =============================================================================
+   Buttons
+   ========================================================================== */
+
+.op-button {
+  display: inline-flex;
   align-items: center;
-  gap: 8px 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--op-border-subtle);
-}
-.app-shell__bar [role="search"] {
-  flex: 1 1 160px;
-  min-width: 120px;
-}
-.app-shell__bar input[type="search"] {
-  width: 100%;
-  min-height: var(--op-control-min);
-  box-sizing: border-box;
-  border: 1px solid var(--op-border-strong);
-  border-radius: var(--op-radius);
-  padding: 2px 8px;
-}
-.app-shell__bar button {
-  min-height: var(--op-control-min);
+  justify-content: center;
+  gap: var(--op-space-1);
+  min-height: 32px;
+  padding: 5px var(--op-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--op-radius-md);
+  font-size: var(--op-text-size-necessary);
+  font-weight: 640;
+  cursor: pointer;
+  transition:
+    color var(--op-transition) var(--op-ease),
+    border-color var(--op-transition) var(--op-ease),
+    background-color var(--op-transition) var(--op-ease),
+    transform var(--op-transition) var(--op-ease);
 }
 
-.op-index__head,
-.op-row__link {
+.op-button:active {
+  transform: translateY(1px);
+}
+
+.op-button--primary {
+  border-color: var(--op-interactive-fg);
+  background: var(--op-interactive-fg);
+  color: var(--op-text-inverse);
+}
+
+.op-button--primary:hover {
+  border-color: var(--op-interactive-hover);
+  background: var(--op-interactive-hover);
+}
+
+.op-button--secondary {
+  border-color: var(--op-border-strong);
+  background: var(--op-bg-surface);
+  color: var(--op-text-secondary);
+}
+
+.op-button--secondary:hover {
+  border-color: var(--op-text-secondary);
+  color: var(--op-text-primary);
+}
+
+.op-button--ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--op-interactive-fg);
+}
+
+.op-button--ghost:hover {
+  background: var(--op-interactive-wash);
+}
+
+.op-button:disabled,
+.op-primary:disabled {
+  border-color: var(--op-border-subtle);
+  background: var(--op-bg-subtle);
+  color: var(--op-interactive-disabled);
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* The one bare "primary" used by the empty state. */
+.op-primary {
+  min-height: 32px;
+  padding: 5px var(--op-space-4);
+  border: 1px solid var(--op-interactive-fg);
+  border-radius: var(--op-radius-md);
+  background: var(--op-interactive-fg);
+  color: var(--op-text-inverse);
+  font-size: var(--op-text-size-body);
+  font-weight: 640;
+  cursor: pointer;
+}
+
+/* =============================================================================
+   Application frame — a single, coherent definition.
+
+   Two columns: a recessed navigation rail (owning the titlebar traffic-light
+   inset) and the paper main surface (its own contextual toolbar + scroll).
+   ========================================================================== */
+
+.app-shell {
   display: grid;
-  grid-template-columns:
-    minmax(180px, 1.1fr) minmax(240px, 1.5fr) minmax(190px, 1fr) minmax(150px, 0.8fr);
-  gap: 16px;
-  align-items: start;
-  padding: 0 12px;
+  grid-template: minmax(0, 1fr) / 252px minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
 }
 
-.op-index__head {
-  padding-top: 6px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--op-border-subtle);
-  /* Visible column headers: secondary tone so 11px text still clears 4.5:1. */
+/* ---- Left rail ----------------------------------------------------------- */
+
+.app-shell__sidebar {
+  grid-column: 1;
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  background: var(--op-bg-app);
+  border-right: 1px solid var(--op-border-subtle);
+}
+
+.app-shell__sidebar-chrome {
+  display: flex;
+  align-items: center;
+  gap: var(--op-space-1);
+  /* Clear the macOS overlay traffic lights. */
+  padding: 0 var(--op-space-2) 0 80px;
+  -webkit-app-region: drag;
+}
+
+.app-shell__sidebar-chrome button {
+  -webkit-app-region: no-drag;
+}
+
+.op-chrome-button {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--op-radius-sm);
+  background: transparent;
+  color: var(--op-text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--op-transition) var(--op-ease),
+    color var(--op-transition) var(--op-ease);
+}
+
+.op-chrome-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.op-chrome-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--op-text-primary) 8%, transparent);
+  color: var(--op-text-primary);
+}
+
+.op-chrome-button:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+.app-shell__sidebar-body {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  padding: var(--op-space-2) var(--op-space-3) var(--op-space-3);
+}
+
+/* Wordmark — a teal register-mark before a tightly-set name. The signature. */
+.app-shell__brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 0 var(--op-space-2);
+  color: var(--op-text-primary);
+}
+
+.app-shell__brand-row strong {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--op-space-2);
+  font-size: var(--op-text-size-emphasis);
+  font-weight: 680;
+  letter-spacing: -0.01em;
+}
+
+.app-shell__brand-row strong::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--op-interactive-fg);
+}
+
+.app-shell__brand-row svg {
+  width: 13px;
+  height: 13px;
+  color: var(--op-text-tertiary);
+}
+
+/* Sidebar search. */
+.app-shell__search {
+  position: relative;
+}
+
+.app-shell__sidebar .app-shell__search {
+  flex: 0 0 auto;
+  margin: var(--op-space-2) 0 var(--op-space-5);
+}
+
+.app-shell__search input[type="search"] {
+  width: 100%;
+  min-height: 30px;
+  box-sizing: border-box;
+  padding: 4px 36px 4px var(--op-space-3);
+  border: 1px solid var(--op-border-strong);
+  border-radius: var(--op-radius-md);
+  background: var(--op-bg-canvas);
+  color: var(--op-text-primary);
+  transition: border-color var(--op-transition) var(--op-ease),
+    background-color var(--op-transition) var(--op-ease),
+    box-shadow var(--op-transition) var(--op-ease);
+}
+
+.app-shell__search input[type="search"]::placeholder {
+  color: var(--op-text-tertiary);
+}
+
+.app-shell__search input[type="search"]:focus {
+  outline: none;
+  border-color: var(--op-interactive-fg);
+  background: var(--op-bg-surface);
+  box-shadow: 0 0 0 3px var(--op-interactive-wash);
+}
+
+.app-shell__search kbd {
+  position: absolute;
+  top: 50%;
+  right: var(--op-space-2);
+  transform: translateY(-50%);
+  padding: 1px 5px;
+  border-radius: var(--op-radius-sm);
+  background: transparent;
+  color: var(--op-text-tertiary);
+  font-family: var(--op-font-mono);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+/* Navigation. */
+.app-shell__nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.app-shell__nav-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  padding: 0 var(--op-space-2);
   color: var(--op-text-secondary);
   font-size: var(--op-text-size-micro);
-  line-height: var(--op-line-necessary);
+  font-weight: 700;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.app-shell__nav-section-title button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--op-radius-sm);
+  background: transparent;
+  color: var(--op-text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--op-transition) var(--op-ease),
+    color var(--op-transition) var(--op-ease);
+}
+
+.app-shell__nav-section-title button:hover {
+  background: color-mix(in srgb, var(--op-text-primary) 8%, transparent);
+  color: var(--op-text-primary);
+}
+
+.app-shell__nav-section-title button svg,
+.app-shell__context-bar button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.app-shell__project-tree {
+  display: grid;
+  margin: var(--op-space-1) 0 0;
+}
+
+.app-shell__project-node {
+  display: grid;
+}
+
+.app-shell__project-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--op-space-2);
+  min-height: 31px;
+  padding: 2px var(--op-space-2);
+  border: 0;
+  border-radius: var(--op-radius-sm);
+  background: transparent;
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-body);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--op-transition) var(--op-ease),
+    color var(--op-transition) var(--op-ease);
+}
+
+.app-shell__project-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell__project-item > span:first-child {
+  color: var(--op-text-tertiary);
+  text-align: center;
+}
+
+.app-shell__project-item svg {
+  width: 15px;
+  height: 15px;
+}
+
+.app-shell__project-item:hover {
+  background: color-mix(in srgb, var(--op-text-primary) 5%, transparent);
+  color: var(--op-text-primary);
+}
+
+/* The reading edge: a teal tick marks the project you are in. */
+.app-shell__project-item[data-active="true"] {
+  background: color-mix(in srgb, var(--op-text-primary) 8%, transparent);
+  color: var(--op-text-primary);
+  font-weight: 600;
+}
+
+.app-shell__project-item[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: var(--op-radius-pill);
+  background: var(--op-interactive-fg);
+}
+
+.app-shell__project-item[data-active="true"] > span:first-child {
+  color: var(--op-interactive-fg);
+}
+
+.app-shell__project-children {
+  display: grid;
+  gap: 1px;
+  margin: 1px 0 var(--op-space-1) 31px;
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-necessary);
+}
+
+.app-shell__project-children span {
+  min-height: 25px;
+  padding: 3px var(--op-space-2);
+  box-sizing: border-box;
+  border-radius: var(--op-radius-sm);
+}
+
+.app-shell__project-children .is-active {
+  color: var(--op-text-primary);
+  background: color-mix(in srgb, var(--op-text-primary) 6%, transparent);
+  font-weight: 560;
+}
+
+/* Sidebar footer / identity. */
+.app-shell__sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--op-space-2);
+  margin-top: auto;
+  padding: var(--op-space-3) var(--op-space-2) var(--op-space-1);
+  border-top: 1px solid var(--op-border-subtle);
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-necessary);
+}
+
+.app-shell__avatar {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--op-radius-pill);
+  background: var(--op-interactive-fg);
+  color: var(--op-text-inverse);
+  font-size: 10px;
+  font-weight: 640;
+}
+
+/* ---- Main surface -------------------------------------------------------- */
+
+.app-shell__main {
+  grid-column: 2;
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  background: var(--op-bg-surface);
+}
+
+.app-shell__context-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0 var(--op-space-4);
+  border-bottom: 1px solid var(--op-border-subtle);
+  -webkit-app-region: drag;
+}
+
+.app-shell__context-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--op-space-2);
+  color: var(--op-text-primary);
+}
+
+.app-shell__context-title > svg {
+  width: 16px;
+  height: 16px;
+  color: var(--op-text-tertiary);
+}
+
+.app-shell__context-title strong {
+  overflow: hidden;
+  font-size: var(--op-text-size-body);
+  font-weight: 640;
+  letter-spacing: -0.005em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--op-space-1);
+}
+
+.app-shell__context-bar button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--op-radius-sm);
+  background: transparent;
+  color: var(--op-text-secondary);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background-color var(--op-transition) var(--op-ease),
+    color var(--op-transition) var(--op-ease);
+}
+
+.app-shell__context-bar button:hover {
+  background: color-mix(in srgb, var(--op-text-primary) 8%, transparent);
+  color: var(--op-text-primary);
+}
+
+.app-shell__sidebar-toggle {
+  display: none;
+}
+
+.app-shell__content {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--op-bg-surface);
+}
+
+/* Collapsed sidebar. */
+.app-shell[data-sidebar-open="false"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell[data-sidebar-open="false"] .app-shell__sidebar {
+  display: none;
+}
+
+.app-shell[data-sidebar-open="false"] .app-shell__main {
+  grid-column: 1;
+}
+
+.app-shell[data-sidebar-open="false"] .app-shell__context-bar {
+  padding-left: 80px;
+}
+
+.app-shell[data-sidebar-open="false"] .app-shell__sidebar-toggle {
+  display: grid;
+}
+
+/* =============================================================================
+   Projects Index — the dense operating index, on a bounded, centered measure.
+   ========================================================================== */
+
+.op-index-page {
+  display: block;
+  width: min(880px, calc(100% - 2 * var(--op-space-8)));
+  margin: 0 auto;
+  padding: var(--op-space-7) 0 var(--op-space-8);
+}
+
+.op-page-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--op-space-4);
+  padding-bottom: var(--op-space-5);
+}
+
+.op-page-heading__eyebrow {
+  margin: 0 0 var(--op-space-1);
+  color: var(--op-interactive-fg);
+  font-size: var(--op-text-size-micro);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 14px;
+  text-transform: uppercase;
+}
+
+.op-page-heading h1 {
+  margin: 0;
+  font-size: var(--op-text-size-page);
+  font-weight: 720;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.op-page-heading__summary {
+  max-width: 52ch;
+  margin: var(--op-space-2) 0 0;
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-necessary);
+}
+
+.op-page-heading__count {
+  display: flex;
+  align-items: baseline;
+  gap: var(--op-space-1);
+  margin: 0;
+  color: var(--op-text-tertiary);
+  font-size: var(--op-text-size-necessary);
+  white-space: nowrap;
+}
+
+.op-page-heading__count strong {
+  color: var(--op-text-primary);
+  font-size: var(--op-text-size-heading);
+  font-weight: 700;
+}
+
+/* Loading / error panels. */
+.op-state-panel {
+  margin: var(--op-space-4) 0;
+  padding: var(--op-space-4);
+  border: 1px solid var(--op-border-subtle);
+  border-radius: var(--op-radius-lg);
+  background: var(--op-bg-surface);
+  color: var(--op-text-secondary);
+}
+
+.op-state-panel--error {
+  border-color: var(--op-status-danger-border);
+  background: color-mix(in srgb, var(--op-status-danger-bg) 40%, var(--op-bg-surface));
+  color: var(--op-status-danger-fg);
+}
+
+.op-state-panel--error button {
+  margin-top: var(--op-space-3);
+}
+
+/* Index toolbar (order + filters + sort). */
+.op-index {
+  display: flex;
+  flex-direction: column;
+}
+
+.op-index__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--op-space-3) var(--op-space-5);
+  min-height: 40px;
+  padding-bottom: var(--op-space-2);
+  border-bottom: 1px solid var(--op-border-subtle);
+}
+
+.op-index__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.op-index__order {
+  color: var(--op-text-primary);
+  font-size: var(--op-text-size-necessary);
+  font-weight: 620;
+}
+
+.op-index__interval {
+  color: var(--op-text-tertiary);
+  font-size: var(--op-text-size-micro);
+}
+
+.op-index__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--op-space-4);
+}
+
+.op-filters {
+  display: flex;
+  gap: var(--op-space-1);
+}
+
+.op-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--op-space-2);
+  color: var(--op-text-tertiary);
+  font-size: var(--op-text-size-micro);
+  font-weight: 600;
   letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.op-sort select {
+  min-height: 28px;
+  padding: 2px var(--op-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--op-radius-sm);
+  background: transparent;
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-necessary);
+  font-weight: 550;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+  transition: background-color var(--op-transition) var(--op-ease);
+}
+
+.op-sort select:hover {
+  background: color-mix(in srgb, var(--op-text-primary) 5%, transparent);
+}
+
+/* The list itself — hairline-separated rows, no card, no table header. */
+.op-index__table {
+  min-width: 0;
 }
 
 .op-index__list {
@@ -329,197 +1047,856 @@ body {
   padding: 0;
 }
 
+.op-index__nomatch {
+  margin: 0;
+  padding: var(--op-space-8) var(--op-space-4);
+  color: var(--op-text-secondary);
+  text-align: center;
+}
+
 .op-row {
-  border-bottom: 1px solid var(--op-border-subtle);
+  border-bottom: 1px solid var(--op-border-hairline);
+}
+
+.op-row:last-child {
+  border-bottom: 0;
 }
 
 .op-row__link {
-  box-sizing: border-box;
-  min-height: 66px;
-  padding-top: 8px;
-  padding-bottom: 8px;
+  position: relative;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto 16px;
+  align-items: center;
+  gap: var(--op-space-3);
+  min-height: 72px;
+  padding: var(--op-space-3) var(--op-space-2);
   color: inherit;
   text-decoration: none;
-  align-content: center;
+  border-radius: var(--op-radius-md);
+  transition: background-color var(--op-transition) var(--op-ease);
 }
+
 .op-row__link:hover {
+  background: color-mix(in srgb, var(--op-text-primary) 4%, transparent);
+}
+
+/* The reading edge again, echoing the sidebar. */
+.op-row__link:hover::before,
+.op-row__link:focus-visible::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 2px;
+  border-radius: var(--op-radius-pill);
+  background: var(--op-interactive-fg);
+}
+
+.op-row__link:focus-visible {
+  outline: 2px solid var(--op-focus-ring);
+  outline-offset: -2px;
+}
+
+.op-row__folder {
+  align-self: start;
+  padding-top: 2px;
+  color: var(--op-text-tertiary);
+}
+
+.op-row__folder svg {
+  width: 18px;
+  height: 18px;
+}
+
+.op-row__body {
+  display: grid;
+  gap: var(--op-space-1);
+  min-width: 0;
+}
+
+.op-row__title-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--op-space-1) var(--op-space-2);
+}
+
+.op-row__name {
+  color: var(--op-text-primary);
+  font-size: var(--op-text-size-emphasis);
+  font-weight: 660;
+  letter-spacing: -0.01em;
+}
+
+.op-row__commitment {
+  min-width: 0;
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.op-row__commitment--none {
+  color: var(--op-text-secondary);
+}
+
+.op-row__metadata {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--op-space-1) var(--op-space-3);
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-micro);
+}
+
+/* Machine facts (branch, SHA) read as monospace — observed reality. */
+.op-row__metadata .op-fact {
+  color: var(--op-text-secondary);
+  font-family: var(--op-font-mono);
+  font-size: var(--op-text-size-micro);
+}
+
+.op-row__review-text {
+  align-self: center;
+  justify-self: end;
+  max-width: 220px;
+  color: var(--op-text-tertiary);
+  font-size: var(--op-text-size-micro);
+  text-align: right;
+}
+
+.op-row__chevron {
+  align-self: center;
+  color: var(--op-text-tertiary);
+  opacity: 0.5;
+  transition: opacity var(--op-transition) var(--op-ease),
+    color var(--op-transition) var(--op-ease);
+}
+
+.op-row__link:hover .op-row__chevron {
+  color: var(--op-interactive-fg);
+  opacity: 1;
+}
+
+.op-row__chevron svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* =============================================================================
+   Project Overview — an editorial document: hairline-separated sections on a
+   comfortable reading measure. Section identity is carried by its kicker color,
+   not by a decorative card.
+   ========================================================================== */
+
+.op-overview-page {
+  width: min(760px, calc(100% - 2 * var(--op-space-8)));
+  margin: 0 auto;
+  padding: var(--op-space-8) 0;
+}
+
+.op-overview {
+  display: block;
+}
+
+.op-overview__hero {
+  padding-bottom: var(--op-space-6);
+  border-bottom: 1px solid var(--op-border-subtle);
+}
+
+.op-overview__eyebrow,
+.op-section__kicker {
+  margin: 0 0 var(--op-space-1);
+  color: var(--op-text-tertiary);
+  font-size: var(--op-text-size-micro);
+  font-weight: 700;
+  line-height: 14px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.op-overview__eyebrow {
+  color: var(--op-interactive-fg);
+}
+
+.op-overview__title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--op-space-2) var(--op-space-3);
+}
+
+.op-overview__name {
+  margin: 0;
+  color: var(--op-text-primary);
+  font-size: var(--op-text-size-page);
+  font-weight: 730;
+  line-height: 1.15;
+  letter-spacing: -0.032em;
+}
+
+.op-overview__name:focus-visible {
+  outline: 2px solid var(--op-focus-ring);
+  outline-offset: 4px;
+}
+
+.op-source-path,
+.op-path-box {
+  margin: var(--op-space-3) 0 0;
+  padding: var(--op-space-2) var(--op-space-3);
+  border: 1px solid var(--op-border-hairline);
+  border-radius: var(--op-radius-md);
+  background: var(--op-bg-canvas);
+  color: var(--op-text-tertiary);
+  font-family: var(--op-font-mono);
+  font-size: var(--op-text-size-micro);
+  line-height: var(--op-line-necessary);
+  overflow-wrap: anywhere;
+}
+
+.op-overview__primary,
+.op-overview__secondary,
+.op-overview__settings {
+  display: block;
+}
+
+/* Sections. */
+.op-section {
+  padding: var(--op-space-6) 0;
+  border-bottom: 1px solid var(--op-border-subtle);
+}
+
+.op-overview .op-section:last-child {
+  border-bottom: 0;
+}
+
+.op-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--op-space-3);
+  margin-bottom: var(--op-space-3);
+}
+
+.op-section__header h3 {
+  margin: 0;
+  color: var(--op-text-primary);
+  font-size: var(--op-text-size-title);
+  font-weight: 680;
+  line-height: 20px;
+  letter-spacing: -0.012em;
+}
+
+/* Kicker color communicates the section's stance — the only place hue enters
+   the document flow, and always alongside the heading text. */
+.op-section--commitment .op-section__kicker {
+  color: var(--op-interactive-fg);
+}
+
+.op-section--review .op-section__kicker,
+.op-section--setup .op-section__kicker {
+  color: var(--op-status-warning-fg);
+}
+
+.op-section--danger .op-section__kicker {
+  color: var(--op-status-danger-fg);
+}
+
+.op-section__count,
+.op-section__meta {
+  flex: 0 0 auto;
+  color: var(--op-text-tertiary);
+  font-size: var(--op-text-size-micro);
+}
+
+.op-section__count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--op-radius-pill);
+  background: var(--op-status-warning-bg);
+  color: var(--op-status-warning-fg);
+  font-weight: 700;
+}
+
+.op-section__indicator {
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  border-radius: var(--op-radius-pill);
+  background: var(--op-text-tertiary);
+}
+
+.op-section__indicator--clear {
+  background: var(--op-status-success-icon);
+}
+
+.op-section__intro {
+  margin: calc(-1 * var(--op-space-1)) 0 var(--op-space-3);
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-necessary);
+}
+
+.op-section__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--op-space-2);
+  margin-top: var(--op-space-4);
+}
+
+/* Commitment — the document's lede. */
+.op-commitment-text {
+  margin: var(--op-space-1) 0 var(--op-space-4);
+  color: var(--op-text-primary);
+  font-size: var(--op-text-size-heading);
+  font-weight: 620;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+}
+
+.op-commitment-actions,
+.op-mutation-error__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--op-space-2);
+}
+
+.op-undo-button {
+  margin-top: var(--op-space-2);
+  padding-left: 0;
+}
+
+/* Forms. */
+.op-set-form,
+.op-replace-form,
+.op-form-grid {
+  display: grid;
+  gap: var(--op-space-3);
+}
+
+.op-set-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.op-replace-form {
+  grid-template-columns: 1fr 1fr;
+  margin-top: var(--op-space-3);
+  padding: var(--op-space-3);
+  border-radius: var(--op-radius-md);
+  background: var(--op-bg-canvas);
+}
+
+.op-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.op-field--wide,
+.op-check-field {
+  grid-column: 1 / -1;
+}
+
+.op-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--op-space-1);
+  min-width: 0;
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-micro);
+  font-weight: 640;
+}
+
+.op-field > span {
+  display: flex;
+  align-items: baseline;
+  gap: var(--op-space-1);
+}
+
+.op-field small {
+  color: var(--op-text-tertiary);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.op-field input,
+.op-field select,
+.op-form-section input,
+.op-form-section select,
+.op-dialog input {
+  width: 100%;
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 6px var(--op-space-3);
+  border: 1px solid var(--op-border-strong);
+  border-radius: var(--op-radius-md);
+  background: var(--op-bg-canvas);
+  color: var(--op-text-primary);
+  outline: none;
+  transition: border-color var(--op-transition) var(--op-ease),
+    background-color var(--op-transition) var(--op-ease),
+    box-shadow var(--op-transition) var(--op-ease);
+}
+
+.op-field input:focus,
+.op-field select:focus,
+.op-form-section input:focus,
+.op-form-section select:focus,
+.op-dialog input:focus {
+  border-color: var(--op-interactive-fg);
+  background: var(--op-bg-surface);
+  box-shadow: 0 0 0 3px var(--op-interactive-wash);
+}
+
+.op-check-field {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--op-space-2);
+  padding: var(--op-space-2) var(--op-space-3);
+  border-radius: var(--op-radius-md);
+  background: var(--op-bg-canvas);
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-necessary);
+}
+
+.op-check-field input {
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+}
+
+/* Definition lists (observed facts). */
+.op-dl {
+  display: grid;
+  grid-template-columns: minmax(82px, max-content) minmax(0, 1fr);
+  gap: var(--op-space-2) var(--op-space-4);
+  margin: 0;
+  font-size: var(--op-text-size-body);
+}
+
+.op-dl dt {
+  color: var(--op-text-tertiary);
+  font-size: var(--op-text-size-necessary);
+}
+
+.op-dl dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--op-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.op-muted {
+  margin: 0;
+  color: var(--op-text-tertiary);
+  font-size: var(--op-text-size-body);
+}
+
+/* Inline notices. */
+.op-observed-stale,
+.op-mutation-error,
+.op-mutation-note {
+  margin: var(--op-space-2) 0 0;
+  padding: var(--op-space-2) var(--op-space-3);
+  border-radius: var(--op-radius-md);
+  font-size: var(--op-text-size-necessary);
+}
+
+.op-observed-stale,
+.op-mutation-note {
+  border: 1px solid var(--op-status-warning-border);
+  background: var(--op-status-warning-bg);
+  color: var(--op-status-warning-fg);
+}
+
+.op-mutation-error {
+  border: 1px solid var(--op-status-danger-border);
+  background: var(--op-status-danger-bg);
+  color: var(--op-status-danger-fg);
+}
+
+.op-mutation-error p {
+  margin: 0 0 var(--op-space-2);
+}
+
+/* Transition rail — a hairline timeline with teal nodes. */
+.op-history-rail {
+  position: relative;
+  display: grid;
+  gap: var(--op-space-2);
+  margin: 0;
+  padding: 0 0 0 var(--op-space-4);
+  list-style: none;
+  font-size: var(--op-text-size-necessary);
+}
+
+.op-history-rail::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 3px;
+  width: 1px;
+  background: var(--op-border-subtle);
+}
+
+.op-history-rail li {
+  position: relative;
+}
+
+.op-history-rail li::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--op-space-4) + 0px);
+  top: 5px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--op-bg-surface);
+  border-radius: var(--op-radius-pill);
+  background: var(--op-interactive-fg);
+}
+
+.op-history-reason {
+  color: var(--op-text-tertiary);
+}
+
+/* Review reasons. */
+.op-review-reasons,
+.op-review-reason__evidence {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.op-review-reasons {
+  display: grid;
+  gap: var(--op-space-3);
+}
+
+.op-review-reason {
+  display: grid;
+  gap: var(--op-space-1);
+}
+
+.op-review-reason__evidence {
+  display: grid;
+  gap: var(--op-space-1);
+  padding-left: var(--op-space-1);
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-necessary);
+}
+
+/* =============================================================================
+   Dialog / picker / validation
+   ========================================================================== */
+
+.op-dialog {
+  width: min(520px, calc(100vw - 2 * var(--op-space-4)));
+  max-height: calc(100vh - 3 * var(--op-space-4));
+  box-sizing: border-box;
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--op-border-subtle);
+  border-radius: var(--op-radius-lg);
+  background: var(--op-bg-surface);
+  color: var(--op-text-primary);
+  box-shadow: var(--op-shadow-overlay);
+}
+
+.op-dialog::backdrop {
+  background: rgb(10 18 30 / 44%);
+  backdrop-filter: blur(4px);
+}
+
+.op-dialog__header {
+  display: flex;
+  gap: var(--op-space-3);
+  padding: var(--op-space-5) var(--op-space-5) var(--op-space-4);
+  border-bottom: 1px solid var(--op-border-subtle);
+}
+
+.op-dialog__header .op-window-button {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.op-dialog__icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--op-radius-md);
+  background: var(--op-interactive-fg);
+  color: var(--op-text-inverse);
+}
+
+.op-dialog__icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.op-dialog__header h2 {
+  margin: 0;
+  font-size: var(--op-text-size-heading);
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.op-dialog__header p:last-child {
+  margin: var(--op-space-1) 0 0;
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-necessary);
+}
+
+.op-dialog__body {
+  display: grid;
+  gap: var(--op-space-3);
+  padding: var(--op-space-4) var(--op-space-5);
+}
+
+.op-window-button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--op-radius-pill);
+  background: transparent;
+  color: var(--op-text-secondary);
+  cursor: pointer;
+  transition: background-color var(--op-transition) var(--op-ease),
+    color var(--op-transition) var(--op-ease);
+}
+
+.op-window-button:hover {
+  background: color-mix(in srgb, var(--op-text-primary) 8%, transparent);
+  color: var(--op-text-primary);
+}
+
+.op-window-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.op-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--op-space-3);
+  width: 100%;
+  padding: var(--op-space-3);
+  border: 1px dashed var(--op-border-strong);
+  border-radius: var(--op-radius-md);
+  background: var(--op-bg-canvas);
+  color: var(--op-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--op-transition) var(--op-ease),
+    background-color var(--op-transition) var(--op-ease);
+}
+
+.op-picker:hover {
+  border-color: var(--op-interactive-fg);
+  background: var(--op-interactive-wash);
+}
+
+.op-picker__mark {
+  display: grid;
+  place-items: center;
+  width: 31px;
+  height: 31px;
+  border-radius: var(--op-radius-md);
+  background: var(--op-bg-surface);
+  color: var(--op-interactive-fg);
+}
+
+.op-picker__mark svg {
+  width: 18px;
+  height: 18px;
+}
+
+.op-picker strong,
+.op-picker small {
+  display: block;
+}
+
+.op-picker small {
+  margin-top: 2px;
+  color: var(--op-text-tertiary);
+  font-size: 10px;
+}
+
+.op-validation-card {
+  padding: var(--op-space-3);
+  border: 1px solid var(--op-border-subtle);
+  border-radius: var(--op-radius-md);
+}
+
+.op-validation-card--success {
+  border-color: var(--op-status-success-border);
+  background: color-mix(in srgb, var(--op-status-success-bg) 55%, var(--op-bg-surface));
+}
+
+.op-validation-card--warning {
+  border-color: var(--op-status-warning-border);
+  background: color-mix(in srgb, var(--op-status-warning-bg) 55%, var(--op-bg-surface));
+}
+
+.op-validation-card--danger {
+  border-color: var(--op-status-danger-border);
+  background: color-mix(in srgb, var(--op-status-danger-bg) 55%, var(--op-bg-surface));
+}
+
+.op-validation-card__title {
+  margin: 0 0 var(--op-space-2);
+  color: var(--op-status-success-fg);
+  font-size: var(--op-text-size-necessary);
+  font-weight: 700;
+}
+
+.op-validation-card p {
+  margin: 0 0 var(--op-space-2);
+}
+
+.op-dialog-actions {
+  display: flex;
+  flex-direction: row-reverse;
+  gap: var(--op-space-2);
+  padding: var(--op-space-3) var(--op-space-5);
+  border-top: 1px solid var(--op-border-subtle);
   background: var(--op-bg-subtle);
 }
 
-.op-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-.op-row__name {
-  font-size: var(--op-text-size-emphasis);
-  font-weight: 600;
-  color: var(--op-text-primary);
-}
-.op-row__commitment {
-  font-size: var(--op-text-size-body);
-  color: var(--op-text-primary);
-}
-.op-row__commitment--none,
-.op-row__review-clear {
-  color: var(--op-text-secondary);
-}
-.op-observed-note {
-  /* Carries real information ("no commits", "N changed", commits-since): 12px necessary-text
-     floor and the secondary (not tertiary) tone so small-text contrast stays >= 4.5:1. */
-  font-size: var(--op-text-size-necessary);
-  color: var(--op-text-secondary);
-}
-
-/* Field labels are for the stacked layout; hidden but present at wide widths. */
-.op-field-label {
-  display: none;
-  font-size: var(--op-text-size-micro);
-  color: var(--op-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.op-index__meta,
-.op-index__controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-}
-.op-index__order {
-  font-size: var(--op-text-size-necessary);
-  color: var(--op-text-secondary);
-}
-.op-index__interval {
-  font-size: var(--op-text-size-necessary);
-  color: var(--op-text-secondary);
-}
-.op-filters {
-  display: flex;
-  gap: 6px;
-}
-.op-sort {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--op-text-size-necessary);
-  color: var(--op-text-secondary);
-}
-.op-sort select {
-  min-height: var(--op-control-min);
-  border: 1px solid var(--op-border-strong);
-  border-radius: var(--op-radius);
-  background: var(--op-bg-surface);
-  color: var(--op-text-primary);
-  padding: 2px 6px;
-}
-.op-primary {
-  min-height: var(--op-control-min);
-  padding: 4px 14px;
-  border: 1px solid var(--op-interactive-fg);
-  border-radius: var(--op-radius);
-  background: var(--op-interactive-fg);
-  color: var(--op-text-inverse);
-  font-size: var(--op-text-size-body);
-  cursor: pointer;
-}
-
-/* 800-1099px: keep four columns but narrow them (so nothing overflows at 800) and compress
-   Observed actual to relative time + delta; the branch and commit subject/SHA move to detail. */
-@media (min-width: 800px) and (max-width: 1099px) {
-  .op-index__head,
-  .op-row__link {
-    grid-template-columns:
-      minmax(120px, 1.1fr) minmax(160px, 1.6fr) minmax(90px, 0.9fr) minmax(96px, 0.7fr);
-    gap: 10px;
-  }
-  .op-observed-detail {
-    display: none;
-  }
-}
-
-/* Stacked layout below 800px: one column, field labels visible, Index becomes the primary
-   stacked content. */
-@media (max-width: 799px) {
-  .op-index__head {
-    display: none;
-  }
-  .op-row__link {
-    grid-template-columns: 1fr;
-    gap: 6px;
-  }
-  .op-field-label {
-    display: block;
-  }
-}
-
-/* Project Overview + Peek. The Peek is a non-modal inspector docked on the right, sized so the
-   Index stays visible beside it. */
-.op-peek {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: clamp(480px, 42vw, 560px);
-  overflow-y: auto;
-  padding: 16px 20px;
-  background: var(--op-bg-surface);
-  border-left: 1px solid var(--op-border-subtle);
-  box-shadow: -4px 0 16px rgb(0 0 0 / 12%);
-}
-.op-overview {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  max-width: 720px;
-}
-.op-overview__name {
-  margin: 0;
-  font-size: var(--op-text-size-emphasis);
-  color: var(--op-text-primary);
-}
-.op-overview__name:focus-visible {
-  outline: 2px solid var(--op-focus-ring);
-  outline-offset: 2px;
-}
-.op-source-path {
-  font-size: var(--op-text-size-necessary);
-  color: var(--op-text-tertiary);
-  word-break: break-all;
-}
-.op-dl {
+.op-relink-confirm {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 4px 16px;
+  gap: var(--op-space-2);
+  margin-top: var(--op-space-2);
+}
+
+/* =============================================================================
+   Empty / not-found
+   ========================================================================== */
+
+.op-empty-page {
+  display: flex;
+  min-height: calc(100vh - 52px);
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--op-space-7);
+  text-align: center;
+}
+
+.op-empty-page__mark {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: var(--op-space-4);
+  border: 1px solid var(--op-border-subtle);
+  border-radius: var(--op-radius-lg);
+  background: var(--op-bg-surface);
+  color: var(--op-interactive-fg);
+  font-size: 17px;
+  font-weight: 750;
+  box-shadow: var(--op-shadow-overlay);
+}
+
+.op-empty-page h1 {
   margin: 0;
-  font-size: var(--op-text-size-body);
+  font-size: var(--op-text-size-page);
+  letter-spacing: -0.035em;
 }
-.op-dl dt {
-  color: var(--op-text-tertiary);
+
+.op-empty-page > p:not(.op-page-heading__eyebrow) {
+  max-width: 44ch;
+  margin: var(--op-space-2) 0 var(--op-space-4);
+  color: var(--op-text-secondary);
 }
-.op-dl dd {
-  margin: 0;
-  color: var(--op-text-primary);
+
+/* =============================================================================
+   Responsive
+   ========================================================================== */
+
+/* Collapse the overview's inner grids first (they are already block, but keep
+   the measure comfortable). */
+@media (max-width: 899px) {
+  .op-overview-page,
+  .op-index-page {
+    width: calc(100% - 2 * var(--op-space-6));
+  }
 }
-.op-muted {
-  color: var(--op-text-tertiary);
-  font-size: var(--op-text-size-body);
+
+/* Below 800px the rail becomes an overlay drawer; a "Show sidebar" button
+   appears in the context bar. */
+@media (max-width: 799px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .app-shell__main {
+    grid-column: 1;
+  }
+  .app-shell__sidebar {
+    position: fixed;
+    z-index: 20;
+    inset: 0 auto 0 0;
+    width: min(252px, calc(100vw - var(--op-space-8)));
+    box-shadow: var(--op-shadow-drawer);
+  }
+  .app-shell[data-sidebar-open="false"] .app-shell__context-bar {
+    padding-left: 80px;
+  }
+  .op-index-page,
+  .op-overview-page {
+    width: calc(100% - 2 * var(--op-space-4));
+    padding-top: var(--op-space-5);
+  }
+  .op-form-grid,
+  .op-replace-form,
+  .op-set-form {
+    grid-template-columns: 1fr;
+  }
+  .op-field--wide,
+  .op-check-field {
+    grid-column: auto;
+  }
+  .op-page-heading {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--op-space-3);
+  }
+  .op-index__toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--op-space-2);
+  }
+  .op-index__controls {
+    justify-content: space-between;
+  }
+  .op-filters {
+    flex-wrap: wrap;
+  }
 }
-.op-mutation-error {
-  color: var(--op-status-danger-fg);
-  font-size: var(--op-text-size-necessary);
-}
-.op-mutation-note {
-  color: var(--op-status-warning-fg);
-  font-size: var(--op-text-size-necessary);
-}
-.op-history-rail {
-  margin: 0;
-  padding-left: 18px;
-  font-size: var(--op-text-size-necessary);
+
+/* Very narrow: let the review text drop under the body rather than crowd it. */
+@media (max-width: 639px) {
+  .op-row__link {
+    grid-template-columns: 26px minmax(0, 1fr) 16px;
+  }
+  .op-row__review-text {
+    grid-column: 2 / 3;
+    justify-self: start;
+    max-width: none;
+    text-align: left;
+  }
 }
 
 /* Reduced motion: no nonessential animation or smooth scrolling. */
