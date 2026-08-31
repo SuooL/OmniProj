@@ -55,7 +55,16 @@ with an in-crate mock provider (no network, no keys). Please keep new tests herm
 
 ## Before you open a PR — the CI gates
 
-CI runs the same four checks on every PR. Run them locally first; all must pass:
+CI runs the same Rust and frontend checks on every PR. Run the repository gate locally first;
+all steps must pass:
+
+```sh
+./scripts/pre-pr-check.sh
+```
+
+The script is the source-of-truth wrapper and runs from the repository root. It also changes
+into the frontend directory before invoking npm, preventing a false pass/fail caused by the
+wrong working directory. The underlying Rust gates are:
 
 ```sh
 cargo fmt --all --check                              # formatting
@@ -63,6 +72,10 @@ cargo clippy --workspace --all-targets -- -D warnings  # lints (warnings are err
 cargo build --workspace --locked                     # build
 cargo test --workspace --locked                      # tests
 ```
+
+After committing and pushing, wait for `gh pr checks <number>` to finish. A local pass does not
+replace remote CI evidence; if any job fails, inspect that job's log and fix it before claiming
+the PR is ready.
 
 `fmt` and `clippy` are **required**, not optional. `-D warnings` means any clippy
 warning fails CI.
