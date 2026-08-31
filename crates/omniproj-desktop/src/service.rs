@@ -616,6 +616,15 @@ impl<C: Clock> R0Service for DesktopService<C> {
                 review_at,
             },
             MutationCommand::SetCommitment { text } => ProjectCommand::SetCommitment { text },
+            MutationCommand::SetCommitmentFromTask {
+                text,
+                source_task_id,
+                adopted_from_proposal_id,
+            } => ProjectCommand::SetCommitmentFromTask {
+                text,
+                source_task_id,
+                adopted_from_proposal_id,
+            },
             MutationCommand::ConfirmCommitment { work_item_id } => {
                 ProjectCommand::ConfirmCommitment { work_item_id }
             }

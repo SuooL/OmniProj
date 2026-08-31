@@ -1,5 +1,5 @@
-// The typed thin client over the R0 desktop backend (Tauri IPC). Exactly the 15 approved
-// commands, each invoked with a single top-level `input` argument whose fields are
+// The typed thin client over the reviewed desktop backend (Tauri IPC). Commands are
+// invoked with a single top-level `input` argument whose fields are
 // snake_case — matching `crates/omniproj-desktop/src/commands.rs`. Pull-only: nothing here
 // polls or pushes. Every rejection is normalized into a typed `AppError`.
 
@@ -23,11 +23,13 @@ import type {
   SetProjectStatusInput,
   SourceValidation,
   UndoCommitmentTransitionInput,
-  Task,
+  TaskList,
+  AdvanceProposal,
   TimelineCommit,
   GraphCommit,
-  PlanEntry,
+  PlanList,
   ReminderSettings,
+  DogfoodSummary,
 } from "./domain/project";
 
 /** Invoke one command, wrapping args in the single `input` key and typing the rejection. */
@@ -79,23 +81,27 @@ export const api = {
   undoCommitmentTransition: (input: UndoCommitmentTransitionInput) =>
     call<ProjectOverview>("undo_commitment_transition", input),
 
-  getTasks: (project_id: ProjectId) => call<Task[]>("get_tasks", { project_id }),
+  getTasks: (project_id: ProjectId) => call<TaskList>("get_tasks", { project_id }),
   getAttentionSummary: () => call<{ count: number; project_ids: ProjectId[] }>("get_attention_summary"),
-  addTask: (input: { project_id: ProjectId; text: string; unclear: boolean }) => call<Task[]>("add_task", input),
-  updateTask: (input: { project_id: ProjectId; id: string; status: string; due: string | null; note: string | null }) => call<Task[]>("update_task", input),
-  removeTask: (input: { project_id: ProjectId; id: string }) => call<Task[]>("remove_task", input),
+  addTask: (input: { project_id: ProjectId; expected_revision: string; text: string; unclear: boolean }) => call<TaskList>("add_task", input),
+  updateTask: (input: { project_id: ProjectId; expected_revision: string; id: string; status: string; due: string | null; note: string | null }) => call<TaskList>("update_task", input),
+  removeTask: (input: { project_id: ProjectId; expected_revision: string; id: string }) => call<TaskList>("remove_task", input),
   getCommitTimeline: (project_id: ProjectId, limit = 50) => call<TimelineCommit[]>("get_commit_timeline", { project_id, limit }),
   getGitGraph: (project_id: ProjectId, limit = 40) => call<GraphCommit[]>("get_git_graph", { project_id, limit }),
-  attributeCommit: (input: { project_id: ProjectId; id: string; sha: string }) => call<Task[]>("attribute_commit", input),
-  unattributeCommit: (input: { project_id: ProjectId; id: string; sha: string }) => call<Task[]>("unattribute_commit", input),
-  advanceTask: (input: { project_id: ProjectId; id: string }) => call<string[]>("advance_task", input),
-  adoptSubtasks: (input: { project_id: ProjectId; texts: string[] }) => call<Task[]>("adopt_subtasks", input),
-  getPlan: (project_id: ProjectId) => call<PlanEntry[]>("get_plan", { project_id }),
-  addPlanEntry: (input: { project_id: ProjectId; title: string; body: string }) => call<PlanEntry[]>("add_plan_entry", input),
-  setPlanStatus: (input: { project_id: ProjectId; id: string; status: string }) => call<PlanEntry[]>("set_plan_status", input),
+  attributeCommit: (input: { project_id: ProjectId; expected_revision: string; id: string; sha: string }) => call<TaskList>("attribute_commit", input),
+  unattributeCommit: (input: { project_id: ProjectId; expected_revision: string; id: string; sha: string }) => call<TaskList>("unattribute_commit", input),
+  advanceTask: (input: { project_id: ProjectId; id: string }) => call<AdvanceProposal>("advance_task", input),
+  adoptSubtasks: (input: { project_id: ProjectId; expected_revision: string; proposal_id: string; texts: string[] }) => call<TaskList>("adopt_subtasks", input),
+  promoteTaskToCommitment: (input: { project_id: ProjectId; task_id: string; expected_task_revision: string; expected_project_revision: number }) => call<ProjectOverview>("promote_task_to_commitment", input),
+  getPlan: (project_id: ProjectId) => call<PlanList>("get_plan", { project_id }),
+  addPlanEntry: (input: { project_id: ProjectId; expected_revision: string; title: string; body: string }) => call<PlanList>("add_plan_entry", input),
+  setPlanStatus: (input: { project_id: ProjectId; expected_revision: string; id: string; status: string }) => call<PlanList>("set_plan_status", input),
+  setPlanCommit: (input: { project_id: ProjectId; expected_revision: string; id: string; commit: string | null }) => call<PlanList>("set_plan_commit", input),
   getReminderSettings: () => call<ReminderSettings>("get_reminder_settings"),
   setReminderSettings: (settings: ReminderSettings) => call<ReminderSettings>("set_reminder_settings", { settings }),
   testReminder: () => call<void>("test_reminder"),
+  getDogfoodSummary: () => call<DogfoodSummary>("get_dogfood_summary"),
+  recordReentryEvent: (input: { project_id: ProjectId; duration_seconds: number }) => call<DogfoodSummary>("record_reentry_event", input),
 } as const;
 
 export { AppError };

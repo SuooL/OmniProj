@@ -18,10 +18,11 @@ Projects Index  →  re-enter one project  →  see the current commitment and t
                 →  observed activity flows back on the next refresh
 ```
 
-The desktop now includes a human task list (`notes/next.md`), a read-only Git commit timeline
-with task attribution, an explicit Advance proposal/adoption flow, an append-only decision log
-(`plan.md`), and configurable reminders (daily/off, silence threshold, test notification). The
-source repository remains read-only throughout.
+The current development desktop includes a Human planning task list (`notes/next.md`) whose items
+can be explicitly promoted to the single project-level Current Commitment, a read-only Git commit
+timeline with task attribution, selective Advance proposal adoption with retained provenance, an
+append-only decision log (`plan.md`), deduplicated configurable reminders, and a local re-entry
+timer for the dogfood gate. The source repository remains read-only throughout.
 
 ---
 
@@ -46,15 +47,20 @@ Each project gets a stable, permanent `ProjectId` and its own directory:
     notes/project.md               # your single human-state document: TOML front matter +
                                    #   a byte-preserved Markdown body. OmniProj never rewrites
                                    #   your prose; it only edits the front matter atomically.
+    notes/next.md                  # Human planning tasks; content-revision protected
+    plan.md                        # Human plan/decision log with optional commit anchors
+    auto/advance/                  # Agent proposals; Human adoption retains provenance
     cache/r0-observation.json      # last successful repository observation (derived, regenerable)
-    auto/  learned.md              # legacy pre-R0 documents — preserved untouched, not used by R0
+    learned.md                     # legacy pre-R0 document — preserved untouched
+  dogfood/reentry-events.jsonl     # local append-only product-validation events
 ```
 
 - **`ProjectId` is permanent.** Relinking a moved repository changes only
   `ProjectSource.location`, never the identity — every cache and index entry stays keyed by
   `ProjectId`, so history and search survive a move.
-- Every store mutation is **atomic** and **audited** with the exact paths it touched. A human
-  mutation uses an expected revision and appends to an immutable transition history.
+- Replaceable Human documents are written **atomically**, audited with the exact paths touched,
+  and protected by an expected revision. Append-only dogfood events are serialized under the
+  store lock. Commitment mutations additionally append to an immutable transition history.
 
 ## Migration & recovery
 
@@ -148,6 +154,11 @@ capabilities, deeper surfaces) stays blocked until the re-entry loop earns it in
 - **2–4 weeks** of daily use,
 - across **at least five real projects**,
 - producing **at least twenty re-entry events**, with the agreed re-entry metrics recorded.
+
+Use the Overview's **Re-entry timer**: start it when opening a project and finish when the next
+action is clear enough to begin real work. Events are stored locally in
+`~/.omniproj/dogfood/reentry-events.jsonl`; the UI reports event count, distinct projects, and
+median re-entry time. See [`docs/dogfood.md`](docs/dogfood.md) for the interpretation rules.
 
 These are **product-learning thresholds to force honest evaluation — not scientific universals.**
 Navigation and features are earned by a repeated, durable workflow, not added speculatively.

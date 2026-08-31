@@ -340,6 +340,11 @@ pub enum MutationCommand {
     SetCommitment {
         text: String,
     },
+    SetCommitmentFromTask {
+        text: String,
+        source_task_id: String,
+        adopted_from_proposal_id: Option<String>,
+    },
     ConfirmCommitment {
         work_item_id: WorkItemId,
     },

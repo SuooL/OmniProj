@@ -2,14 +2,10 @@
 //!
 //! This file is a source archive of the milestone-era Tauri command surface. It is
 //! intentionally NOT declared as a module from `lib.rs`, so none of it compiles into
-//! the shipped R0 binary — that is what prevents the deferred commands (`advance_task`,
-//! `get_graph`, `get_plan`, `get_attention`, `test_reminder`, task/decision editing,
-//! notifications, …) from re-entering the product surface. It is kept verbatim so the
-//! later R1/R2/R3 redesign can lift proven implementations rather than reinvent them.
+//! the shipped binary. The reviewed MVP surface now has independent implementations;
+//! this archive remains only as historical context for still-deferred experiments.
 //!
-//! It references crates that the R0 desktop crate no longer depends on
-//! (`omniproj_distill`, `tauri_plugin_notification`); that is expected — an archive is
-//! read, not built.
+//! It is read, not built.
 
 use serde::Serialize;
 use std::path::Path;

@@ -104,6 +104,39 @@ fn set_commitment(
         .state
 }
 
+#[test]
+fn lifecycle_task_promotion_retains_task_and_agent_provenance() {
+    let store = TestStore::new("task-promotion");
+    let mutation = store
+        .apply(
+            0,
+            ProjectCommand::SetCommitmentFromTask {
+                text: "Validate on an external cohort".into(),
+                source_task_id: "a1b2".into(),
+                adopted_from_proposal_id: Some("proposal-1234".into()),
+            },
+            AT_1,
+        )
+        .unwrap();
+    let current = mutation.state.current_next_action_id.as_ref().unwrap();
+    let item = mutation
+        .state
+        .work_items
+        .iter()
+        .find(|item| &item.id == current)
+        .unwrap();
+    assert_eq!(item.source_task_id.as_deref(), Some("a1b2"));
+    assert_eq!(
+        item.adopted_from_proposal_id.as_deref(),
+        Some("proposal-1234")
+    );
+    assert!(store
+        .load()
+        .render()
+        .unwrap()
+        .contains("source_task_id = \"a1b2\""));
+}
+
 fn save_framing(store: &TestStore, expected_revision: u64, at: &str) {
     store
         .apply(

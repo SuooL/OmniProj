@@ -106,6 +106,9 @@ pub struct NextItem {
     /// line directly under the task — a nested line any markdown renderer shows, and
     /// which round-trips. `None` when unset. Multi-line notes are collapsed to one line.
     pub note: Option<String>,
+    /// Agent proposal that this Human-adopted task came from. Provenance is retained
+    /// after adoption; the proposal itself remains under `auto/`.
+    pub adopted_from_proposal_id: Option<String>,
 }
 
 /// A parsed `next.md`. `lines` preserves the full document (tasks + raw passthrough)
@@ -180,7 +183,22 @@ impl NextDoc {
             due: None,
             commits: Vec::new(),
             note: None,
+            adopted_from_proposal_id: None,
         }));
+        id
+    }
+
+    /// Append a user-adopted proposal item while preserving its Agent provenance.
+    pub fn add_adopted(&mut self, text: &str, proposal_id: &str) -> String {
+        let id = self.add(text, false);
+        for line in &mut self.lines {
+            if let Line::Task(item) = line {
+                if item.id.as_deref() == Some(id.as_str()) {
+                    item.adopted_from_proposal_id = Some(proposal_id.to_owned());
+                    break;
+                }
+            }
+        }
         id
     }
 
@@ -356,6 +374,7 @@ fn parse_task_line(raw: &str) -> Option<NextItem> {
     let mut id = None;
     let mut due = None;
     let mut commits = Vec::new();
+    let mut adopted_from_proposal_id = None;
     if let Some(open) = body.rfind("<!--#") {
         if let Some(close_rel) = body[open..].find("-->") {
             let inner = &body[open + 5..open + close_rel];
@@ -377,6 +396,10 @@ fn parse_task_line(raw: &str) -> Option<NextItem> {
                                     commits.push(h.to_string());
                                 }
                             }
+                        } else if let Some(proposal_id) = kv.strip_prefix("proposal:") {
+                            if is_metadata_id(proposal_id) {
+                                adopted_from_proposal_id = Some(proposal_id.to_string());
+                            }
                         }
                     }
                     body = body[..open].trim_end();
@@ -397,6 +420,7 @@ fn parse_task_line(raw: &str) -> Option<NextItem> {
         due,
         commits,
         note: None,
+        adopted_from_proposal_id,
     })
 }
 
@@ -430,11 +454,23 @@ fn render_task_line(t: &NextItem) -> String {
             } else {
                 format!(" commits:{}", t.commits.join(","))
             };
-            format!(" <!--#{id}{due}{commits}-->")
+            let proposal = t
+                .adopted_from_proposal_id
+                .as_ref()
+                .map(|proposal_id| format!(" proposal:{proposal_id}"))
+                .unwrap_or_default();
+            format!(" <!--#{id}{due}{commits}{proposal}-->")
         }
         None => String::new(),
     };
     format!("- [{check}] {prefix}{}{suffix}", t.text)
+}
+
+fn is_metadata_id(value: &str) -> bool {
+    (4..=96).contains(&value.len())
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
 }
 
 /// True iff `s` is a syntactically valid `YYYY-MM-DD` (digit/hyphen shape only — not a
@@ -612,6 +648,24 @@ mod tests {
         assert_eq!(
             re.items().next().unwrap().commits,
             vec!["abc1234", "def5678"]
+        );
+    }
+
+    #[test]
+    fn adopted_task_provenance_round_trips_in_human_readable_metadata() {
+        let mut doc = NextDoc::default();
+        doc.add_adopted("Define external cohort", "proposal-1234");
+        let rendered = doc.render();
+        assert!(rendered.contains("proposal:proposal-1234"));
+        let parsed = NextDoc::parse(&rendered);
+        assert_eq!(
+            parsed
+                .items()
+                .next()
+                .unwrap()
+                .adopted_from_proposal_id
+                .as_deref(),
+            Some("proposal-1234")
         );
     }
 

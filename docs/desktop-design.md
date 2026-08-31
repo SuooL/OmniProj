@@ -25,7 +25,7 @@
 
 **人主导 task 管理(核心活动)**:点进项目 → 富 task 列表:增删 task、状态 open/doing/done、预期完成日期、问题备注、讨论。这是核心价值,**不是"极简一行"**——工具支持人把规划做好(charter §4c 纠正版)。
 
-**git 对账基础**:项目详情里 git 提交时间线 + 把 commit 归属到 task(多对一),一眼看计划 vs 实际。**完整 git flow graph(分支图叠加)作深化**。
+**git 对账基础**:项目详情里 git 提交时间线 + 把 commit 归属、解除、改绑到 task(多对一),一眼看计划 vs 实际。当前 topology summary 只表达 parent/ref/merge；**完整 branch-lane graph 作深化**。
 
 **自动派生**:腐坏度 / 活动 / 提交这些 git 已知的自动算,不用你手录。
 
@@ -36,7 +36,7 @@
 | 层 | 界面 | 里程碑 |
 |---|---|---|
 | **关注 Attend** | 主屏晨间屏 + 菜单栏 + 原生通知 | M0–M1 |
-| **记录 Record** | 项目详情:**人主导 task 管理**(状态/日期/问题备注/讨论)+ git flow graph 对账(task↔commit 多对一,*实际*⇔*意图*)+ 计划/决策日志(`plan.md`,含「决定不做」abandoned) | M2 基础 → M3 flow graph |
+| **记录 Record** | 项目详情:**人主导 task 管理**(状态/日期/问题备注)+ task→Current Commitment + commit timeline 对账(task↔commit 多对一,*实际*⇔*意图*)+ 计划/决策日志(`plan.md`,含「决定不做」abandoned) | M2 基础 → M4 branch lanes |
 | **推进 Advance** | 卡住/未成形条目上的「Advance」按钮 → agent 拆成候选下一步(落 `auto/` derivative,用户挑选→提升为 ground truth)。**agent 推荐,人决策** | M4 |
 | *形态 Form* | Tauri 窗口 + 菜单栏,React/Tailwind 可视化 | 贯穿 |
 
@@ -72,9 +72,13 @@ Tauri 桌面 app
 
 **砍(✅ 已删)**:`omniproj-api` axum server 层(→ Tauri IPC)、`omniproj-daemon`(→ Tauri 后台)、`omniproj-ipc`、opinion / user-model / second-opinion / deep-pipeline / curate / eval / doctor / install-service / reconcile / mcp。CLI(`omniproj-cli`)**最终**只保留 `add`(注册项目),其余走桌面 UI(当前渐进保留见上)。
 
-**新建(窄)**:Tauri 外壳 + IPC 命令、菜单栏/每日通知、**task 模型扩展**(状态 doing / 预期完成日期 / 问题备注 / 讨论)、结构化逐提交历史、**git flow graph 视图 + task↔commit 对应**、`plan.md` 决策日志(abandoned 标记)、Advance 拆解写路径(现 clarify 刻意不收敛,需新 prompt)。
+**新建(窄)**:Tauri 外壳 + IPC 命令、菜单栏/每日通知、**task 模型扩展**(状态 doing / 预期完成日期 / 问题备注)、task→Current Commitment provenance、结构化逐提交历史、**commit topology summary + task↔commit 对应**、`plan.md` 决策日志(abandoned 标记)、Advance 拆解写路径。
 
 ## 7. 里程碑(到开源可发布)
+
+> 2026-08-31 implementation note：M0–M3 已形成可 dogfood 的纵向切片；M4 的决策日志
+> 已提前落地，但 Git 视图目前是 commit topology summary，不是完整 branch-lane graph。
+> 进入 M5/M6 前仍必须完成 README 定义的真实 dogfood gate。
 
 | M | 内容 | 产出 | dogfood |
 |---|---|---|---|

@@ -161,7 +161,12 @@ export interface Task {
   due: string | null;
   note: string | null;
   commits: string[];
+  adopted_from_proposal_id: string | null;
+  linked_work_item_id: string | null;
+  is_current_commitment: boolean;
 }
+export interface TaskList { revision: string; tasks: Task[]; }
+export interface AdvanceProposal { proposal_id: string; candidates: string[]; }
 
 export interface TimelineCommit {
   sha: string;
@@ -175,7 +180,9 @@ export interface GraphCommit { sha: string; short_sha: string; parents: string[]
 
 export type PlanStatus = "planned" | "doing" | "done" | "abandoned";
 export interface PlanEntry { id: string | null; date: string; title: string; status: PlanStatus; commit: string | null; body: string; }
-export interface ReminderSettings { enabled: boolean; cadence: "daily" | "off"; silent_days_threshold: number; }
+export interface PlanList { revision: string; entries: PlanEntry[]; }
+export interface ReminderSettings { enabled: boolean; cadence: "daily" | "off"; silent_days_threshold: number; revision: string; }
+export interface DogfoodSummary { event_count: number; project_count: number; median_duration_seconds: number | null; meets_event_threshold: boolean; meets_project_threshold: boolean; }
 
 // --- Source validation ------------------------------------------------------
 // `validate_project_source` returns a typed state for BOTH the valid preview (`ok`) and

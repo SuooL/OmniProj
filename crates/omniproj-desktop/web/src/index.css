@@ -1346,6 +1346,8 @@ button {
 .op-task-unclear { color:var(--op-status-warning-fg); }
 .op-task-actions { display:flex; align-items:center; gap:var(--op-space-2); flex-shrink:0; }
 .op-task-actions select { min-height:28px; }
+.op-proposal { display:grid; gap:var(--op-space-2); margin:var(--op-space-3) 0; padding:var(--op-space-3); border:1px solid var(--op-border-strong); border-radius:var(--op-radius-md); background:var(--op-surface-raised); }
+.op-proposal > label { display:flex; align-items:flex-start; gap:var(--op-space-2); }
 .op-timeline li { display:grid; grid-template-columns:72px minmax(0,1fr); gap:var(--op-space-3); padding:var(--op-space-3) 0; border-top:1px solid var(--op-border-hairline); }
 .op-timeline code { color:var(--op-interactive-fg); font-family:var(--op-font-mono); }
 .op-timeline span { display:grid; gap:2px; min-width:0; }

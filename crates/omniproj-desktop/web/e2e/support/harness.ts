@@ -91,6 +91,9 @@ export async function installMockTauri(page: Page): Promise<void> {
     const overviews: Record<string, ReturnType<typeof overviewOf>> = {};
     for (const s of seed) overviews[s.id] = overviewOf(s);
     let txCounter = 100;
+    const tasksByProject: Record<string, any[]> = {};
+    const taskRevision: Record<string, number> = {};
+    for (const s of seed) { tasksByProject[s.id] = []; taskRevision[s.id] = 1; }
 
     function fail(code: string) {
       const stateApplied = w.__mock.failStateApplied;
@@ -122,6 +125,23 @@ export async function installMockTauri(page: Page): Promise<void> {
           return Promise.resolve({ projects: index, review_policy: REVIEW_POLICY });
         case "get_project_overview":
           return Promise.resolve(overviews[input.project_id]);
+        case "get_tasks":
+          return Promise.resolve({ revision: `task-${taskRevision[input.project_id] ?? 1}`, tasks: tasksByProject[input.project_id] ?? [] });
+        case "add_task": {
+          const list = tasksByProject[input.project_id] ?? (tasksByProject[input.project_id] = []);
+          list.push({ id: `task-${list.length + 1}`, text: input.text, status: "open", unclear: input.unclear, due: null, note: null, commits: [], adopted_from_proposal_id: null, linked_work_item_id: null, is_current_commitment: false });
+          taskRevision[input.project_id] = (taskRevision[input.project_id] ?? 1) + 1;
+          return Promise.resolve({ revision: `task-${taskRevision[input.project_id]}`, tasks: list });
+        }
+        case "get_commit_timeline":
+        case "get_git_graph":
+          return Promise.resolve([]);
+        case "get_plan":
+          return Promise.resolve({ revision: "plan-1", entries: [] });
+        case "get_reminder_settings":
+          return Promise.resolve({ enabled: true, cadence: "daily", silent_days_threshold: 7, revision: "settings-1" });
+        case "get_dogfood_summary":
+          return Promise.resolve({ event_count: 0, project_count: 0, median_duration_seconds: null, meets_event_threshold: false, meets_project_threshold: false });
         case "validate_project_source": {
           const loc: string = input.location ?? "";
           if (loc.includes("dup")) return Promise.resolve({ state: "duplicate", location: loc, existing_project_id: "p04", existing_name: "billing-worker" });

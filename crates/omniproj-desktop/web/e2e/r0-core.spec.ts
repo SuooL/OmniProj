@@ -133,3 +133,11 @@ test("completing a commitment leaves no replacement", async ({ page }) => {
   await expect(page.getByTestId("set-form")).toBeVisible(); // now shows the empty set form
   await expect(page.getByText("Idempotent retries")).toHaveCount(0);
 });
+
+test("planning task creation is revisioned and appears without a page reload", async ({ page }) => {
+  await page.goto("/projects/p04/overview");
+  const board = page.getByTestId("task-board");
+  await board.getByLabel("New task").fill("Validate retry behavior under failover");
+  await board.getByRole("button", { name: "Add task" }).click();
+  await expect(board.getByText("Validate retry behavior under failover")).toBeVisible();
+});
