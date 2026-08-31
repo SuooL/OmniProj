@@ -10,8 +10,10 @@ import { ProjectsIndex } from "../components/projects/ProjectsIndex";
 import { useAppActions } from "../components/AppShell";
 import { loadIndexViewState } from "../domain/navigationSession";
 import { queryKeys } from "../queryKeys";
+import { localizeError, useI18n } from "../i18n/I18nProvider";
 
 export function ProjectsIndexPage() {
+  const { locale, t } = useI18n();
   const restoredView = useRef(false);
   const { openAddProject } = useAppActions();
   const { data, isLoading, isError, error, refetch } = useQuery({
@@ -43,23 +45,23 @@ export function ProjectsIndexPage() {
     >
       <header className="op-page-heading">
         <div>
-          <p className="op-page-heading__eyebrow">Workspace</p>
-          <h1 id="projects-index-heading">Projects</h1>
+          <p className="op-page-heading__eyebrow">{t("index.workspace")}</p>
+          <h1 id="projects-index-heading">{t("shell.projects")}</h1>
           <p className="op-page-heading__summary">
-            Re-enter each project through its current commitment and observed work.
+            {t("index.summary")}
           </p>
         </div>
         {data && (
           <p className="op-page-heading__count">
             <strong>{data.projects.length}</strong>
-            <span>{data.projects.length === 1 ? "project" : "projects"}</span>
+            <span>{t("index.projectCount", { count: data.projects.length })}</span>
           </p>
         )}
       </header>
 
       {isLoading && (
         <p className="op-state-panel" data-testid="projects-index-loading" role="status">
-          Loading projects…
+          {t("index.loading")}
         </p>
       )}
 
@@ -69,13 +71,13 @@ export function ProjectsIndexPage() {
           data-testid="projects-index-error"
           role="alert"
         >
-          <p>{error instanceof AppError ? error.message : "Couldn't load projects."}</p>
+          <p>{error instanceof AppError ? localizeError(error, locale) : t("index.loadFailed")}</p>
           <button
             className="op-button op-button--secondary"
             type="button"
             onClick={() => refetch()}
           >
-            Try again
+            {t("common.tryAgain")}
           </button>
         </div>
       )}

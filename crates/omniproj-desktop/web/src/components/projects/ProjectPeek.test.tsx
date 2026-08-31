@@ -79,6 +79,7 @@ function callsTo(command: string): unknown[][] {
 beforeEach(() => {
   window.sessionStorage.clear();
   window.localStorage.clear();
+  window.localStorage.setItem("omniproj.locale", "en");
   window.history.replaceState(null, "", "/");
 });
 afterEach(() => invokeMock.mockReset());

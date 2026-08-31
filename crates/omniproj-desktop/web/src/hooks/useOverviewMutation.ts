@@ -18,6 +18,7 @@ import type { ProjectId, ProjectOverview } from "../domain/project";
 import { applyOverviewToCaches } from "../queryClient";
 import { queryKeys } from "../queryKeys";
 import { useAnnouncer } from "../components/AppShell";
+import { localizeError, useI18n } from "../i18n/I18nProvider";
 
 export type MutationOutcome =
   | { status: "success"; overview: ProjectOverview }
@@ -41,6 +42,7 @@ export interface OverviewMutation {
 export function useOverviewMutation(): OverviewMutation {
   const queryClient = useQueryClient();
   const announce = useAnnouncer();
+  const { locale, t } = useI18n();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
 
@@ -63,20 +65,20 @@ export function useOverviewMutation(): OverviewMutation {
             queryKey: queryKeys.projectOverview(projectId),
           });
           if (err.stateApplied) {
-            announce("assertive", "State saved; audit commit failed.");
+            announce("assertive", t("mutation.auditFailed"));
             return { status: "durable_audit_failed", error: err };
           }
-          announce("assertive", "This project changed since you started. Review the latest and resubmit.");
+          announce("assertive", t("mutation.conflict"));
           return { status: "conflict", error: err };
         }
 
-        announce("assertive", err.message);
+        announce("assertive", localizeError(err, locale));
         return { status: "error", error: err };
       } finally {
         setPending(false);
       }
     },
-    [announce, queryClient],
+    [announce, locale, queryClient, t],
   );
 
   const reset = useCallback(() => setError(null), []);

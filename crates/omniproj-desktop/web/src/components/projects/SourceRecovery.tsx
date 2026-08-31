@@ -12,6 +12,7 @@ import type { ProjectId, ProjectOverview, ProjectSource, SourceValidation } from
 import { projectOverviewPath } from "../../domain/routes";
 import { useOverviewMutation } from "../../hooks/useOverviewMutation";
 import { chooseProjectDirectory } from "../../platform/dialog";
+import { localizeError, useI18n } from "../../i18n/I18nProvider";
 
 const RECOVERABLE: ReadonlySet<ProjectSource["status"]> = new Set([
   "missing",
@@ -19,11 +20,31 @@ const RECOVERABLE: ReadonlySet<ProjectSource["status"]> = new Set([
   "unreadable",
 ]);
 
+function sourceStatusLabel(status: ProjectSource["status"], locale: "zh-CN" | "en"): string {
+  if (locale === "en") return status;
+  switch (status) {
+    case "missing": return "缺失";
+    case "moved": return "已移动";
+    case "unreadable": return "不可读";
+    case "available": return "可用";
+  }
+}
+
+function validationStateLabel(state: SourceValidation["state"], locale: "zh-CN" | "en"): string {
+  if (locale === "en") return state.replace(/_/g, " ");
+  const labels: Record<SourceValidation["state"], string> = {
+    ok: "可用", duplicate: "已注册", missing: "目录缺失", unreadable: "无法读取",
+    not_git_repository: "不是 Git 仓库", bare_repository: "裸仓库", observation_failed: "观测失败",
+  };
+  return labels[state];
+}
+
 export interface SourceRecoveryProps {
   overview: ProjectOverview;
 }
 
 export function SourceRecovery({ overview }: SourceRecoveryProps) {
+  const { locale, t } = useI18n();
   const mutation = useOverviewMutation();
   const navigate = useNavigate();
   const source = overview.source;
@@ -35,6 +56,7 @@ export function SourceRecovery({ overview }: SourceRecoveryProps) {
   const [failed, setFailed] = useState(false);
 
   if (!source || !RECOVERABLE.has(source.status)) return null;
+  const sourceStatus = sourceStatusLabel(source.status, locale);
 
   async function choose() {
     if (validating || mutation.pending) return;
@@ -49,7 +71,7 @@ export function SourceRecovery({ overview }: SourceRecoveryProps) {
     try {
       setValidation(await api.validateProjectSource(chosen));
     } catch (e) {
-      setValidateError(e instanceof AppError ? e.message : "Couldn't validate that folder.");
+      setValidateError(e instanceof AppError ? localizeError(e, locale) : t("add.validateFailed"));
     } finally {
       setValidating(false);
     }
@@ -67,7 +89,7 @@ export function SourceRecovery({ overview }: SourceRecoveryProps) {
           expected_location: source.location,
           new_location: newPath,
         }),
-      "Source relinked.",
+      t("recovery.success"),
     );
     if (result.status !== "success") setFailed(true);
   }
@@ -80,32 +102,31 @@ export function SourceRecovery({ overview }: SourceRecoveryProps) {
     <section className="op-section op-section--danger" aria-labelledby="source-recovery-heading" data-testid="source-recovery">
       <div className="op-section__header">
         <div>
-          <p className="op-section__kicker">Recovery required</p>
-          <h3 id="source-recovery-heading">Source unavailable</h3>
+          <p className="op-section__kicker">{t("recovery.kicker")}</p>
+          <h3 id="source-recovery-heading">{t("recovery.title")}</h3>
         </div>
       </div>
       <p>
-        This project's source is <strong>{source.status}</strong>. Point it at the repository's new
-        location to restore observations — the project keeps its identity and history.
+        {t("recovery.description", { status: sourceStatus })}
       </p>
 
       <button className="op-button op-button--secondary" type="button" onClick={choose} disabled={mutation.pending || validating}>
-        Choose new location…
+        {t("recovery.choose")}
       </button>
       {newPath && <p className="op-path-box" data-testid="relink-path">{newPath}</p>}
 
       {validation?.state === "duplicate" && (
         <div className="op-validation-card op-validation-card--warning" data-testid="relink-duplicate" role="alert">
-          <p>That folder is already registered as “{validation.existing_name}”.</p>
+          <p>{t("recovery.duplicate", { name: validation.existing_name })}</p>
           <button className="op-button op-button--secondary" type="button" onClick={() => openExisting(validation.existing_project_id)}>
-            Open existing project
+            {t("add.openExisting")}
           </button>
         </div>
       )}
 
       {validation && validation.state !== "ok" && validation.state !== "duplicate" && (
         <p className="op-mutation-error" role="alert" data-testid="relink-invalid">
-          That folder can't be used ({validation.state.replace(/_/g, " ")}).
+          {t("recovery.invalid", { state: validationStateLabel(validation.state, locale) })}
         </p>
       )}
 
@@ -114,11 +135,11 @@ export function SourceRecovery({ overview }: SourceRecoveryProps) {
           <label className="op-check-field">
             <input
               type="checkbox"
-              aria-label="Confirm relink"
+              aria-label={t("recovery.confirm")}
               checked={confirmed}
               onChange={(e) => setConfirmed(e.target.checked)}
             />
-            I confirm this is the same project's repository.
+            {t("recovery.confirmNotice")}
           </label>
           <button
             className="op-button op-button--primary"
@@ -126,7 +147,7 @@ export function SourceRecovery({ overview }: SourceRecoveryProps) {
             disabled={mutation.pending || !confirmed}
             onClick={relink}
           >
-            Relink source
+            {t("recovery.relink")}
           </button>
         </div>
       )}
@@ -138,7 +159,7 @@ export function SourceRecovery({ overview }: SourceRecoveryProps) {
       )}
       {failed && mutation.error && (
         <p role="alert" data-testid="source-recovery-error">
-          {mutation.error.message}
+          {localizeError(mutation.error, locale)}
         </p>
       )}
     </section>

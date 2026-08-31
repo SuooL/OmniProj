@@ -761,13 +761,36 @@ button {
 /* Sidebar footer / identity. */
 .app-shell__sidebar-footer {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: var(--op-space-2);
   margin-top: auto;
   padding: var(--op-space-3) var(--op-space-2) var(--op-space-1);
   border-top: 1px solid var(--op-border-subtle);
   color: var(--op-text-secondary);
   font-size: var(--op-text-size-necessary);
+}
+
+.app-shell__language,
+.app-shell__source-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--op-space-2);
+}
+
+.app-shell__language select {
+  max-width: 112px;
+  min-height: var(--op-control-min);
+  border: 1px solid var(--op-border-subtle);
+  border-radius: var(--op-radius-sm);
+  background: var(--op-bg-canvas);
+  color: var(--op-text-primary);
+  font: inherit;
+}
+
+.app-shell__source-note {
+  justify-content: flex-start;
 }
 
 .app-shell__local-dot {

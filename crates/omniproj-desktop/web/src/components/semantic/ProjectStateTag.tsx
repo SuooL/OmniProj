@@ -4,20 +4,22 @@
 
 import type { ProjectStatus } from "../../domain/project";
 import { toneStyle, type StatusTone } from "./tone";
+import { projectStatusLabel, useI18n } from "../../i18n/I18nProvider";
 
-const STATE_TAG: Partial<Record<ProjectStatus, { label: string; tone: StatusTone }>> = {
-  setup: { label: "Setup", tone: "info" },
-  waiting: { label: "Waiting", tone: "neutral" },
-  parked: { label: "Parked", tone: "neutral" },
-  archived: { label: "Archived", tone: "neutral" },
+const STATE_TONE: Partial<Record<ProjectStatus, StatusTone>> = {
+  setup: "info",
+  waiting: "neutral",
+  parked: "neutral",
+  archived: "neutral",
 };
 
 export function ProjectStateTag({ status }: { status: ProjectStatus }) {
-  const tag = STATE_TAG[status];
-  if (!tag) return null;
+  const { locale } = useI18n();
+  const tone = STATE_TONE[status];
+  if (!tone) return null;
   return (
-    <span className="op-tag" style={toneStyle(tag.tone)} data-state={status}>
-      {tag.label}
+    <span className="op-tag" style={toneStyle(tone)} data-state={status}>
+      {projectStatusLabel(status, locale)}
     </span>
   );
 }

@@ -9,23 +9,15 @@ import { useSearchParams } from "react-router-dom";
 
 import type { ProjectIndexItem, ReviewPolicy } from "../../domain/project";
 import {
-  REVIEW_ORDER_LABEL,
   applyReviewFilter,
   filterByText,
   type ReviewFilter,
 } from "../../domain/projectPresentation";
 import { FilterChip } from "../semantic/FilterChip";
 import { ProjectRow } from "./ProjectRow";
+import { useI18n } from "../../i18n/I18nProvider";
 
 type SortMode = "review" | "name" | "commit";
-
-const REVIEW_FILTERS: Array<{ value: ReviewFilter; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "needs_review", label: "Needs review" },
-  { value: "waiting", label: "Waiting" },
-  { value: "parked", label: "Parked" },
-  { value: "archived", label: "Archived" },
-];
 
 function parseFilter(value: string | null): ReviewFilter {
   return value === "needs_review" || value === "waiting" || value === "parked" || value === "archived"
@@ -68,6 +60,14 @@ export function ProjectsIndex({
   now,
   onAddProject,
 }: ProjectsIndexProps) {
+  const { t } = useI18n();
+  const reviewFilters: Array<{ value: ReviewFilter; label: string }> = [
+    { value: "all", label: t("index.filterAll") },
+    { value: "needs_review", label: t("index.filterNeedsReview") },
+    { value: "waiting", label: t("index.filterWaiting") },
+    { value: "parked", label: t("index.filterParked") },
+    { value: "archived", label: t("index.filterArchived") },
+  ];
   const [searchParams, setSearchParams] = useSearchParams();
   const query = searchParams.get("q") ?? "";
   const filter = parseFilter(searchParams.get("filter"));
@@ -90,10 +90,10 @@ export function ProjectsIndex({
   if (projects.length === 0) {
     return (
       <section data-testid="projects-index-empty" aria-labelledby="projects-empty-heading">
-        <h2 id="projects-empty-heading">No projects yet</h2>
-        <p>Add a project to begin re-entering and advancing your work.</p>
+        <h2 id="projects-empty-heading">{t("index.emptyTitle")}</h2>
+        <p>{t("index.emptyBody")}</p>
         <button type="button" className="op-primary" onClick={onAddProject}>
-          Add project
+          {t("index.addProject")}
         </button>
       </section>
     );
@@ -103,15 +103,15 @@ export function ProjectsIndex({
     <section className="op-index" aria-labelledby="projects-index-heading">
       <div className="op-index__toolbar">
         <div className="op-index__meta">
-          <span className="op-index__order">{REVIEW_ORDER_LABEL}</span>
+          <span className="op-index__order">{t("index.reviewOrderDetail")}</span>
           <span className="op-index__interval">
-            Commitment review interval: {reviewPolicy.commitment_review_days} days
+            {t("index.reviewInterval", { days: reviewPolicy.commitment_review_days })}
           </span>
         </div>
 
         <div className="op-index__controls">
-          <div className="op-filters" role="group" aria-label="Review filters">
-            {REVIEW_FILTERS.map((chip) => (
+          <div className="op-filters" role="group" aria-label={t("index.reviewFilters")}>
+            {reviewFilters.map((chip) => (
               <FilterChip
                 key={chip.value}
                 label={chip.label}
@@ -121,15 +121,15 @@ export function ProjectsIndex({
             ))}
           </div>
           <label className="op-sort">
-            <span>Sort</span>
+            <span>{t("index.sort")}</span>
             <select
-              aria-label="Review order"
+              aria-label={t("index.reviewOrder")}
               value={sort}
               onChange={(e) => setParam("sort", e.target.value, e.target.value !== "review")}
             >
-              <option value="review">Review order</option>
-              <option value="name">Name</option>
-              <option value="commit">Recent commit</option>
+              <option value="review">{t("index.reviewOrder")}</option>
+              <option value="name">{t("index.sortName")}</option>
+              <option value="commit">{t("index.sortRecentCommit")}</option>
             </select>
           </label>
         </div>
@@ -138,10 +138,10 @@ export function ProjectsIndex({
       <div className="op-index__table">
         {visible.length === 0 ? (
           <p className="op-index__nomatch" data-testid="projects-index-nomatch">
-            No projects match this filter.
+            {t("index.noMatch")}
           </p>
         ) : (
-          <ul className="op-index__list" aria-label="Projects">
+          <ul className="op-index__list" aria-label={t("shell.projects")}>
             {visible.map((item) => (
               <ProjectRow key={item.project_id} item={item} now={now} />
             ))}

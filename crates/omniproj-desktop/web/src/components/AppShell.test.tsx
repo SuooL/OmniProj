@@ -62,6 +62,7 @@ beforeEach(() => {
   });
   window.sessionStorage.clear();
   window.localStorage.clear();
+  window.localStorage.setItem("omniproj.locale", "en");
   window.history.replaceState(null, "", "/");
 });
 

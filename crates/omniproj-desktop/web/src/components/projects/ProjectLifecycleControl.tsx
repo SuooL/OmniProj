@@ -8,13 +8,7 @@ import { useState } from "react";
 import { api } from "../../api";
 import type { ProjectOverview, ProjectStatus } from "../../domain/project";
 import { useOverviewMutation } from "../../hooks/useOverviewMutation";
-
-const TARGETS: Array<{ value: ProjectStatus; label: string }> = [
-  { value: "active", label: "Active" },
-  { value: "waiting", label: "Waiting" },
-  { value: "parked", label: "Parked" },
-  { value: "archived", label: "Archived" },
-];
+import { localizeError, projectStatusLabel, useI18n } from "../../i18n/I18nProvider";
 
 function toReviewAt(date: string): string | null {
   return date.trim() === "" ? null : `${date}T00:00:00Z`;
@@ -25,6 +19,8 @@ export interface ProjectLifecycleControlProps {
 }
 
 export function ProjectLifecycleControl({ overview }: ProjectLifecycleControlProps) {
+  const { locale, t } = useI18n();
+  const targets: ProjectStatus[] = ["active", "waiting", "parked", "archived"];
   const mutation = useOverviewMutation();
   const [target, setTarget] = useState<ProjectStatus>(overview.status);
   const [reason, setReason] = useState(overview.status_reason ?? "");
@@ -55,7 +51,7 @@ export function ProjectLifecycleControl({ overview }: ProjectLifecycleControlPro
           reason: needsReason ? reason.trim() : null,
           review_at: target === "waiting" || target === "parked" ? toReviewAt(reviewDate) : null,
         }),
-      "Project status updated.",
+      t("lifecycle.success"),
     );
     // On success the input is done; on any failure keep the reason/date so nothing is lost.
     if (result.status !== "success") setFailed(true);
@@ -65,21 +61,21 @@ export function ProjectLifecycleControl({ overview }: ProjectLifecycleControlPro
     <section className="op-section op-form-section" aria-labelledby="lifecycle-heading" data-testid="lifecycle-control">
       <div className="op-section__header">
         <div>
-          <p className="op-section__kicker">Project state</p>
-          <h3 id="lifecycle-heading">Lifecycle</h3>
+          <p className="op-section__kicker">{t("lifecycle.kicker")}</p>
+          <h3 id="lifecycle-heading">{t("lifecycle.title")}</h3>
         </div>
       </div>
       <div className="op-form-grid">
         <label className="op-field">
-          <span>Set status</span>
+          <span>{t("lifecycle.setStatus")}</span>
           <select
-            aria-label="Set status"
+            aria-label={t("lifecycle.setStatus")}
             value={target}
             onChange={(e) => setTarget(e.target.value as ProjectStatus)}
           >
-            {TARGETS.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
+            {targets.map((status) => (
+              <option key={status} value={status}>
+                {projectStatusLabel(status, locale)}
               </option>
             ))}
           </select>
@@ -87,9 +83,9 @@ export function ProjectLifecycleControl({ overview }: ProjectLifecycleControlPro
 
         {needsReason && (
           <label className="op-field op-field--wide">
-            <span>Reason</span>
+            <span>{t("lifecycle.reason")}</span>
             <input
-              aria-label="Status reason"
+              aria-label={t("lifecycle.statusReason")}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
             />
@@ -97,9 +93,9 @@ export function ProjectLifecycleControl({ overview }: ProjectLifecycleControlPro
         )}
         {(target === "waiting" || target === "parked") && (
           <label className="op-field">
-            <span>Review date{needsReviewDate ? "" : " (optional)"}</span>
+            <span>{needsReviewDate ? t("lifecycle.reviewDate") : t("lifecycle.reviewDateOptional")}</span>
             <input
-              aria-label="Review date"
+              aria-label={t("lifecycle.reviewDate")}
               type="date"
               value={reviewDate}
               onChange={(e) => setReviewDate(e.target.value)}
@@ -110,11 +106,11 @@ export function ProjectLifecycleControl({ overview }: ProjectLifecycleControlPro
           <label className="op-check-field">
             <input
               type="checkbox"
-              aria-label="Confirm archive"
+              aria-label={t("lifecycle.confirmArchive")}
               checked={confirmArchive}
               onChange={(e) => setConfirmArchive(e.target.checked)}
             />
-            I understand archiving removes this project from the default operating view.
+            {t("lifecycle.archiveNotice")}
           </label>
         )}
       </div>
@@ -125,12 +121,12 @@ export function ProjectLifecycleControl({ overview }: ProjectLifecycleControlPro
           disabled={!canSave}
           onClick={save}
         >
-          Update status
+          {t("lifecycle.update")}
         </button>
       </div>
       {failed && mutation.error && (
         <p role="alert" className="op-mutation-error" data-testid="lifecycle-error">
-          {mutation.error.message}
+          {localizeError(mutation.error, locale)}
         </p>
       )}
     </section>

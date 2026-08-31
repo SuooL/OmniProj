@@ -63,9 +63,9 @@ pub fn run() {
                     let handle = app.handle().clone();
                     app.dialog()
                         .message(format!(
-                            "The local OmniProj store could not be opened or migrated.\n\n{error}\n\nYour project repositories were not changed."
+                            "无法打开或迁移 OmniProj 本地数据。\n\n{error}\n\n你的项目仓库未被更改。"
                         ))
-                        .title("OmniProj couldn't start")
+                        .title("OmniProj 无法启动")
                         .kind(MessageDialogKind::Error)
                         .show(move |_| handle.exit(1));
                     return Ok(());
@@ -75,8 +75,8 @@ pub fn run() {
 
             // Neutral menu-bar presence: Open / Quit only. No attention count, no
             // reminder cadence, no notifications (all deferred out of R0).
-            let show = MenuItemBuilder::with_id("show", "Open OmniProj").build(app)?;
-            let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            let show = MenuItemBuilder::with_id("show", "打开 OmniProj").build(app)?;
+            let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
             let tray = TrayIconBuilder::with_id("main")
                 .icon(
