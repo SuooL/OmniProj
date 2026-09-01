@@ -46,11 +46,11 @@ describe("headers and policy", () => {
     expect(container.querySelector(".op-index__head")).not.toBeInTheDocument();
   });
 
-  it("labels the order as factual attention order and never as priority", () => {
+  it("labels the order as explicit-decision review order and never as priority", () => {
     renderIndex();
     expect(screen.getByText(REVIEW_ORDER_LABEL)).toBeInTheDocument();
     expect(
-      screen.getByRole("combobox", { name: /attention order/i }),
+      screen.getByRole("combobox", { name: /review order/i }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("combobox", { name: /priority/i }),

@@ -136,6 +136,7 @@ test("completing a commitment leaves no replacement", async ({ page }) => {
 
 test("planning task creation is revisioned and appears without a page reload", async ({ page }) => {
   await page.goto("/projects/p04/overview");
+  await page.getByRole("button", { name: "Plan" }).click();
   const board = page.getByTestId("task-board");
   await board.getByLabel("New task").fill("Validate retry behavior under failover");
   await board.getByRole("button", { name: "Add task" }).click();
@@ -144,6 +145,7 @@ test("planning task creation is revisioned and appears without a page reload", a
 
 test("Agent settings enable the explicit Advance and adopt loop", async ({ page }) => {
   await page.goto("/projects/p04/overview");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   const settings = page.getByTestId("agent-settings");
   await settings.getByRole("combobox", { name: /^Provider$/ }).selectOption("deepseek");
   await settings.getByRole("textbox", { name: /^Model$/ }).fill("deepseek-chat");
@@ -153,12 +155,16 @@ test("Agent settings enable the explicit Advance and adopt loop", async ({ page 
   await settings.getByRole("button", { name: "Test connection" }).click();
   await expect(settings.getByText("Agent connection is ready.")).toBeVisible();
 
+  await page.getByRole("button", { name: "billing-worker" }).click();
+  await page.getByRole("button", { name: "Plan" }).click();
   const board = page.getByTestId("task-board");
   await board.getByLabel("New task").fill("Fix the intermittent retry bug");
   await board.getByLabel("Not yet clear (?)").check();
   await board.getByRole("button", { name: "Add task" }).click();
   await board.getByRole("button", { name: "Ask Agent to break down" }).click();
   await expect(board.getByText("Write a regression test")).toBeVisible();
+  await board.getByLabel("Write a regression test").check();
+  await board.getByLabel("Implement the smallest fix").check();
   await board.getByRole("button", { name: "Adopt selected" }).click();
   await expect(board.getByText("Implement the smallest fix")).toBeVisible();
 });

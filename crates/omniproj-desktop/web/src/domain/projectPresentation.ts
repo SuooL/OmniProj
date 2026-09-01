@@ -9,7 +9,7 @@ import type { ProjectIndexItem, ReviewReason } from "./project";
 export type ReviewFilter = "all" | "needs_review" | "waiting" | "parked" | "archived";
 
 /** A transparent label for the default order — it is a review order, not a ranking. */
-export const REVIEW_ORDER_LABEL = "Attention order (factual silence, not priority or health)";
+export const REVIEW_ORDER_LABEL = "Review order (projects needing an explicit decision first)";
 
 /** Case-insensitive substring match on the project name. */
 export function matchesQuery(item: ProjectIndexItem, query: string): boolean {

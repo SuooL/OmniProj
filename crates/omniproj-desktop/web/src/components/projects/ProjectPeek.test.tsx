@@ -85,16 +85,16 @@ beforeEach(() => {
 afterEach(() => invokeMock.mockReset());
 
 describe("content order and source", () => {
-  it("renders the fixed section order and shows the full source path only here", async () => {
+  it("starts with re-entry context and reveals repository detail only in Activity", async () => {
+    const user = userEvent.setup();
     renderOverview(overview({ source: projectSource({ location: "/Users/dev/omni" }) }));
     await screen.findByTestId("project-overview");
 
     const order = [
       "overview-identity",
+      "reentry-context",
       "review-reasons",
       "current-commitment",
-      "observed-actual",
-      "commitment-history",
     ].map((id) => screen.getByTestId(id));
 
     for (let i = 1; i < order.length; i++) {
@@ -102,6 +102,14 @@ describe("content order and source", () => {
         order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
     }
+    expect(screen.queryByTestId("source-path")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("observed-actual")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Plan" }));
+    expect(screen.queryByTestId("source-path")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Observed change" }));
+    expect(await screen.findByTestId("observed-actual")).toBeInTheDocument();
     expect(screen.getByTestId("source-path")).toHaveTextContent("/Users/dev/omni");
   });
 
@@ -122,16 +130,19 @@ describe("content order and source", () => {
   });
 
   it("on source failure shows cached facts with a timestamp and recovery, never inactivity wording", async () => {
+    const user = userEvent.setup();
     renderOverview(
       overview({
         source: projectSource({ status: "missing" }),
         observed_actual: observedActual({ observed_at: "2026-08-10T09:00:00Z" }),
       }),
     );
-    await screen.findByTestId("observed-actual");
-    expect(screen.getByTestId("observed-stale")).toBeInTheDocument();
-    expect(screen.getByTestId("source-recovery")).toBeInTheDocument();
+    expect(await screen.findByTestId("source-recovery")).toBeInTheDocument();
+    expect(screen.queryByTestId("observed-actual")).not.toBeInTheDocument();
     expect(screen.queryByText(/inactiv/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Observed change" }));
+    expect(await screen.findByTestId("observed-stale")).toBeInTheDocument();
   });
 });
 
@@ -320,6 +331,8 @@ describe("lifecycle and source recovery", () => {
     renderOverview(overview({ status: "active", revision: 1 }), {
       set_project_status: () => overview({ status: "waiting", revision: 2 }),
     });
+    await screen.findByTestId("project-overview");
+    await user.click(screen.getByRole("button", { name: "Project settings" }));
     const control = within(await screen.findByTestId("lifecycle-control"));
     await user.selectOptions(control.getByLabelText("Set status"), "waiting");
     const save = control.getByRole("button", { name: "Update status" });
@@ -345,6 +358,8 @@ describe("lifecycle and source recovery", () => {
     renderOverview(overview({ status: "parked", status_reason: "later" }), {
       set_project_status: () => overview({ status: "active", revision: 2 }),
     });
+    await screen.findByTestId("project-overview");
+    await user.click(screen.getByRole("button", { name: "Project settings" }));
     const control = within(await screen.findByTestId("lifecycle-control"));
 
     await user.selectOptions(control.getByLabelText("Set status"), "archived");

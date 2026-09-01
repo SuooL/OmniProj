@@ -18,21 +18,25 @@ import { useI18n } from "../../i18n/I18nProvider";
 import { TaskBoard } from "./TaskBoard";
 import { CommitTimeline } from "./CommitTimeline";
 import { PlanLog } from "./PlanLog";
-import { ReminderSettings } from "../ReminderSettings";
 import { GitFlowGraph } from "./GitFlowGraph";
-import { DogfoodRecorder } from "./DogfoodRecorder";
-import { AgentSettings } from "../AgentSettings";
+import { ReentryContext } from "./ReentryContext";
+
+export type ProjectWorkspaceView = "reentry" | "plan" | "activity" | "project";
 
 export interface ProjectOverviewProps {
   overview: ProjectOverviewDto;
   now: Date;
   headingRef?: Ref<HTMLHeadingElement>;
+  view?: ProjectWorkspaceView;
+  onViewChange?: (view: ProjectWorkspaceView) => void;
 }
 
 export function ProjectOverview({
   overview,
   now,
   headingRef,
+  view = "reentry",
+  onViewChange = () => {},
 }: ProjectOverviewProps) {
   const { t } = useI18n();
   const isSetup = overview.status === "setup";
@@ -50,41 +54,64 @@ export function ProjectOverview({
             <ProjectStateTag status={overview.status} />
           </div>
         </div>
-        {overview.source && (
+        {overview.source && (view === "activity" || view === "project") && (
           <p data-testid="source-path" className="op-source-path">
             {overview.source.location}
           </p>
         )}
       </header>
 
-      <div className="op-overview__primary">
-        {/* 2. Expanded review reasons */}
-        <ReviewReasons reasons={overview.review_reasons} />
+      {isSetup ? (
+        <div className="op-overview__primary"><ProjectFramingForm overview={overview} /></div>
+      ) : (
+        <>
+          <nav className="op-workspace-tabs" aria-label={t("workspace.label")}>
+            {(["reentry", "plan", "activity", "project"] as const).map((candidate) => (
+              <button
+                key={candidate}
+                type="button"
+                aria-current={view === candidate ? "page" : undefined}
+                onClick={() => onViewChange(candidate)}
+              >
+                {t(`workspace.${candidate}`)}
+              </button>
+            ))}
+          </nav>
 
-        {/* 3. Current commitment actions — or the atomic Complete-setup framing */}
-        {isSetup ? (
-          <ProjectFramingForm overview={overview} />
-        ) : (
-          <CurrentCommitment overview={overview} />
-        )}
-      </div>
+          {view === "reentry" && (
+            <div className="op-overview__primary" data-testid="reentry-view">
+              <ReentryContext overview={overview} />
+              <ReviewReasons reasons={overview.review_reasons} />
+              <CurrentCommitment overview={overview} />
+              <SourceRecovery overview={overview} />
+            </div>
+          )}
 
-      <div className="op-overview__secondary">
-        {!isSetup && <><DogfoodRecorder projectId={overview.project_id} /><TaskBoard projectId={overview.project_id} projectRevision={overview.revision} hasCurrentCommitment={overview.current_commitment !== null} /><CommitTimeline projectId={overview.project_id} /><GitFlowGraph projectId={overview.project_id} /><PlanLog projectId={overview.project_id} /><ReminderSettings /><AgentSettings /></>}
-        {/* 4. Observed actual + source recovery */}
-        <ObservedActual observed={overview.observed_actual} source={overview.source} now={now} />
-        <SourceRecovery overview={overview} />
+          {view === "plan" && (
+            <div className="op-overview__secondary" data-testid="plan-view">
+              <TaskBoard projectId={overview.project_id} hasCurrentCommitment={overview.current_commitment !== null} />
+              <PlanLog projectId={overview.project_id} />
+              <CommitmentHistory transitions={overview.recent_transitions} now={now} />
+            </div>
+          )}
 
-        {/* 5. Recent commitment transition rail */}
-        <CommitmentHistory transitions={overview.recent_transitions} now={now} />
+          {view === "activity" && (
+            <div className="op-overview__secondary" data-testid="activity-view">
+              <ObservedActual observed={overview.observed_actual} source={overview.source} now={now} />
+              <SourceRecovery overview={overview} />
+              <CommitTimeline projectId={overview.project_id} />
+              <GitFlowGraph projectId={overview.project_id} />
+            </div>
+          )}
 
-        {!isSetup && (
-          <div className="op-overview__settings">
-            <ProjectFramingForm overview={overview} />
-            <ProjectLifecycleControl overview={overview} />
-          </div>
-        )}
-      </div>
+          {view === "project" && (
+            <div className="op-overview__settings" data-testid="project-view">
+              <ProjectFramingForm overview={overview} />
+              <ProjectLifecycleControl overview={overview} />
+            </div>
+          )}
+        </>
+      )}
     </article>
   );
 }

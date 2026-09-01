@@ -102,6 +102,7 @@ test("axe: project navigation and the Add Project dialog have no critical/seriou
 
 test("Overview text (definition terms, source path) meets >=4.5:1 contrast", async ({ page }) => {
   await page.goto("/projects/p04/overview");
+  await page.getByRole("button", { name: "Observed change" }).click();
   await expect(page.getByTestId("observed-actual")).toBeVisible();
   for (const selector of [".op-dl dt", ".op-source-path"]) {
     if ((await page.locator(selector).count()) === 0) continue;

@@ -13,7 +13,7 @@ use std::sync::{Mutex, MutexGuard};
 use serde_json::{json, Value};
 
 use omniproj_core::project::{register_project, RegisterOutcome, RegisterProjectInput};
-use omniproj_core::project_state::ProjectStatus;
+use omniproj_core::project_state::{ProjectStateDoc, ProjectStatus};
 use omniproj_core::{ensure_home, ProjectId, ProjectRecord};
 
 use omniproj_desktop::dto;
@@ -201,7 +201,7 @@ fn mvp_task_writes_are_revision_checked_atomic_and_path_scoped() {
     assert_eq!(stale.code, ErrorCode::RevisionConflict);
     assert_eq!(mvp::get_tasks(record.id.clone()).unwrap().tasks.len(), 1);
 
-    let relative = format!("projects/{}/notes/next.md", record.id.as_str());
+    let relative = format!("projects/{}/notes/project.md", record.id.as_str());
     let committed = Command::new("git")
         .arg("-C")
         .arg(&home.path)
@@ -249,10 +249,10 @@ fn mvp_plan_link_and_advance_adoption_preserve_provenance() {
         adopted.tasks[0].adopted_from_proposal_id.as_deref(),
         Some("proposal-1234")
     );
-    assert!(
-        std::fs::read_to_string(omniproj_core::next_path(record.id.as_str()))
-            .unwrap()
-            .contains("proposal:proposal-1234")
+    let state = ProjectStateDoc::load(&record.id).unwrap();
+    assert_eq!(
+        state.work_items[0].adopted_from_proposal_id.as_deref(),
+        Some("proposal-1234")
     );
     let _ = std::fs::remove_dir_all(repo);
 }

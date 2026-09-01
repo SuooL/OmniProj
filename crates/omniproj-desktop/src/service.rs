@@ -92,6 +92,7 @@ impl<C: Clock> DesktopService<C> {
     /// Index read from trying to deserialize legacy project records as the current schema.
     pub fn initialize(clock: C) -> CommandResult<Self> {
         ensure_home()?;
+        crate::mvp::migrate_legacy_tasks()?;
         Ok(Self::new(clock))
     }
 

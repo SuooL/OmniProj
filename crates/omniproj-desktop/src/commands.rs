@@ -454,20 +454,17 @@ pub fn promote_task_to_commitment(
     service: State<'_, Service>,
     input: PromoteTaskInput,
 ) -> CommandResult<ProjectOverviewDto> {
-    let task = crate::mvp::task_for_commitment(
+    if input.expected_task_revision != input.expected_project_revision.to_string() {
+        return Err(crate::error::CommandError::invalid_input(
+            "task and project revisions must match",
+        ));
+    }
+    crate::mvp::promote_work_item_to_commitment(
         &input.project_id,
         &input.task_id,
         &input.expected_task_revision,
     )?;
-    service.apply_project_mutation(ProjectMutationInput {
-        project_id: input.project_id,
-        expected_revision: input.expected_project_revision,
-        command: MutationCommand::SetCommitmentFromTask {
-            text: task.text,
-            source_task_id: task.id,
-            adopted_from_proposal_id: task.adopted_from_proposal_id,
-        },
-    })
+    service.get_project_overview(input.project_id)
 }
 
 #[derive(Debug, Deserialize)]

@@ -37,6 +37,7 @@ import { queryKeys } from "../queryKeys";
 import { NotFoundPage } from "../routes/NotFoundPage";
 import { ProjectOverviewPage } from "../routes/ProjectOverviewPage";
 import { ProjectsIndexPage } from "../routes/ProjectsIndexPage";
+import { SettingsPage } from "../routes/SettingsPage";
 import { AddProjectDialog } from "./AddProjectDialog";
 import {
   ChevronLeftIcon,
@@ -325,6 +326,14 @@ export function AppShell() {
               )}
             </nav>
             <div className="app-shell__sidebar-footer">
+              <button
+                type="button"
+                className="app-shell__settings-link"
+                aria-current={location.pathname === ROUTES.settings ? "page" : undefined}
+                onClick={() => navigate(ROUTES.settings)}
+              >
+                {t("shell.settings")}
+              </button>
               <label className="app-shell__language">
                 <span>{t("language.label")}</span>
                 <select
@@ -360,7 +369,7 @@ export function AppShell() {
                 <SidebarIcon />
               </button>
               <FolderIcon />
-              <strong>{currentProject?.name ?? t("shell.projects")}</strong>
+              <strong>{location.pathname === ROUTES.settings ? t("shell.settings") : currentProject?.name ?? t("shell.projects")}</strong>
             </div>
             <div className="app-shell__actions">
               {refreshProgress && (
@@ -384,6 +393,7 @@ export function AppShell() {
               <Route path={ROUTES.projects} element={<ProjectsIndexPage />} />
               <Route path={ROUTES.projectById} element={<ProjectIdRedirect />} />
               <Route path={ROUTES.projectOverview} element={<ProjectOverviewPage />} />
+              <Route path={ROUTES.settings} element={<SettingsPage />} />
               <Route path={ROUTES.notFound} element={<NotFoundPage />} />
             </Routes>
           </div>
