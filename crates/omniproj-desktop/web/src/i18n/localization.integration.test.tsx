@@ -18,8 +18,8 @@ const NOW = new Date("2026-08-12T12:00:00Z");
 const POLICY: ReviewPolicy = { commitment_review_days: 7, rule_version: "r0-v1" };
 
 // A long, unique, always-rendered string, so the assertion can't collide with a badge.
-const REVIEW_ORDER_ZH = "审视顺序（先处理需要明确决策的项目）";
-const REVIEW_ORDER_EN = "Review order (projects needing an explicit decision first)";
+const GROUP_LABEL_ZH = "其他项目";
+const GROUP_LABEL_EN = "Other projects";
 
 function renderLocalizedIndex(locale: Locale) {
   return render(
@@ -39,15 +39,15 @@ function renderLocalizedIndex(locale: Locale) {
 describe("localized rendering of a real component tree", () => {
   it("renders the Chinese catalog under the zh-CN default", () => {
     renderLocalizedIndex("zh-CN");
-    expect(screen.getByText(REVIEW_ORDER_ZH)).toBeInTheDocument();
+    expect(screen.getByText(GROUP_LABEL_ZH)).toBeInTheDocument();
     expect(screen.getByText("全部")).toBeInTheDocument();
-    expect(screen.queryByText(REVIEW_ORDER_EN)).not.toBeInTheDocument();
+    expect(screen.queryByText(GROUP_LABEL_EN)).not.toBeInTheDocument();
   });
 
   it("renders the English catalog under en", () => {
     renderLocalizedIndex("en");
-    expect(screen.getByText(REVIEW_ORDER_EN)).toBeInTheDocument();
+    expect(screen.getByText(GROUP_LABEL_EN)).toBeInTheDocument();
     expect(screen.getByText("All")).toBeInTheDocument();
-    expect(screen.queryByText(REVIEW_ORDER_ZH)).not.toBeInTheDocument();
+    expect(screen.queryByText(GROUP_LABEL_ZH)).not.toBeInTheDocument();
   });
 });

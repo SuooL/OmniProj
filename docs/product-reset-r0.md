@@ -13,11 +13,14 @@ not establish this outcome.
 
 ```text
 Projects
-  -> see current commitment + why review + what changed
+  -> see which projects need a decision
   -> open one project
-  -> confirm, revise, or complete the commitment; move the project to wait/park when needed
-  -> continue work in the real repository or research tool
+  -> recover direction and observed change around one current next step
+  -> keep, revise, or complete that step; move the project to wait/park when needed
 ```
+
+The loop ends inside OmniProj. Opening a repository, terminal, editor, Finder, or another app is
+not part of the product contract and must not become the primary call to action.
 
 The default path must not require reading a full commit history, editing project metadata,
 configuring an Agent, or maintaining manual task-to-commit links.
@@ -36,19 +39,24 @@ Each row answers only:
 The default order follows deterministic review reasons. Repository silence is supporting
 evidence, not a priority or value proxy. Activity strips are not shown by default.
 
+Search belongs to this surface rather than permanent application chrome. The default view
+separates projects needing a decision from the rest; lifecycle filters and alternative sorting
+are progressively disclosed.
+
 ### Project Re-entry
 
-The first screen contains:
+The first screen has one visual endpoint: the current next step. It contains:
 
-- objective and desired outcome as framing, not editable form chrome;
-- the current commitment and its lifecycle actions;
+- the current commitment and only its currently relevant lifecycle actions;
+- objective and desired outcome as compact framing, not editable form chrome;
 - a compact factual delta since that commitment;
 - the primary review reason or blocker;
-- explicit commitment dispositions: confirm, revise, complete, or clear;
-- a direct Project settings path for less-frequent lifecycle moves such as wait and park.
+- explicit commitment dispositions when relevant: keep, revise, or complete;
+- progressively disclosed project controls for less-frequent lifecycle moves such as wait and park.
 
-Planning, full activity, decisions, and settings are secondary views. The product-validation
-recorder is instrumentation and is never a primary user feature.
+Zero-value state such as “no review required” is omitted. Planning, full activity, decisions,
+and project settings are secondary disclosures on the same page, not equal-weight tabs. The
+product-validation recorder is instrumentation and is never a primary user feature.
 
 ## Canonical work model
 

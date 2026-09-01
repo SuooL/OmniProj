@@ -85,16 +85,15 @@ beforeEach(() => {
 afterEach(() => invokeMock.mockReset());
 
 describe("content order and source", () => {
-  it("starts with re-entry context and reveals repository detail only in Activity", async () => {
+  it("starts with the current next step and reveals repository detail only on demand", async () => {
     const user = userEvent.setup();
     renderOverview(overview({ source: projectSource({ location: "/Users/dev/omni" }) }));
     await screen.findByTestId("project-overview");
 
     const order = [
       "overview-identity",
-      "reentry-context",
-      "review-reasons",
       "current-commitment",
+      "reentry-context",
     ].map((id) => screen.getByTestId(id));
 
     for (let i = 1; i < order.length; i++) {
@@ -105,10 +104,10 @@ describe("content order and source", () => {
     expect(screen.queryByTestId("source-path")).not.toBeInTheDocument();
     expect(screen.queryByTestId("observed-actual")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Plan" }));
+    await user.click(screen.getByText("Planning and tasks"));
     expect(screen.queryByTestId("source-path")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Observed change" }));
+    await user.click(screen.getByText("View observed change"));
     expect(await screen.findByTestId("observed-actual")).toBeInTheDocument();
     expect(screen.getByTestId("source-path")).toHaveTextContent("/Users/dev/omni");
   });
@@ -141,7 +140,7 @@ describe("content order and source", () => {
     expect(screen.queryByTestId("observed-actual")).not.toBeInTheDocument();
     expect(screen.queryByText(/inactiv/i)).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Observed change" }));
+    await user.click(screen.getByText("View observed change"));
     expect(await screen.findByTestId("observed-stale")).toBeInTheDocument();
   });
 });
@@ -332,7 +331,7 @@ describe("lifecycle and source recovery", () => {
       set_project_status: () => overview({ status: "waiting", revision: 2 }),
     });
     await screen.findByTestId("project-overview");
-    await user.click(screen.getByRole("button", { name: "Project settings" }));
+    await user.click(screen.getByText("Project management"));
     const control = within(await screen.findByTestId("lifecycle-control"));
     await user.selectOptions(control.getByLabelText("Set status"), "waiting");
     const save = control.getByRole("button", { name: "Update status" });
@@ -359,7 +358,7 @@ describe("lifecycle and source recovery", () => {
       set_project_status: () => overview({ status: "active", revision: 2 }),
     });
     await screen.findByTestId("project-overview");
-    await user.click(screen.getByRole("button", { name: "Project settings" }));
+    await user.click(screen.getByText("Project management"));
     const control = within(await screen.findByTestId("lifecycle-control"));
 
     await user.selectOptions(control.getByLabelText("Set status"), "archived");

@@ -14,18 +14,7 @@ export interface ReviewReasonsProps {
 export function ReviewReasons({ reasons }: ReviewReasonsProps) {
   const { locale, t } = useI18n();
   if (reasons.length === 0) {
-    return (
-      <section className="op-section op-section--quiet" aria-labelledby="review-reasons-heading" data-testid="review-reasons">
-        <div className="op-section__header">
-          <div>
-            <p className="op-section__kicker">{t("review.noneKicker")}</p>
-            <h3 id="review-reasons-heading">{t("review.noneTitle")}</h3>
-          </div>
-          <span className="op-section__indicator op-section__indicator--clear" aria-hidden="true" />
-        </div>
-        <p className="op-muted">{t("review.noneBody")}</p>
-      </section>
-    );
+    return null;
   }
 
   return (

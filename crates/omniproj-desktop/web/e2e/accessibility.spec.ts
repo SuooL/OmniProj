@@ -95,14 +95,14 @@ test("axe: project navigation and the Add Project dialog have no critical/seriou
   await expect(page.getByTestId("overview-page")).toBeVisible();
   await expectNoSeriousAxe(page, "project-page");
 
-  await page.getByRole("button", { name: "Add Project" }).click();
+  await page.getByRole("button", { name: "New project" }).click();
   await expect(page.getByTestId("add-project-dialog")).toBeVisible();
   await expectNoSeriousAxe(page, "add-project-dialog");
 });
 
 test("Overview text (definition terms, source path) meets >=4.5:1 contrast", async ({ page }) => {
   await page.goto("/projects/p04/overview");
-  await page.getByRole("button", { name: "Observed change" }).click();
+  await page.getByText("View observed change", { exact: true }).click();
   await expect(page.getByTestId("observed-actual")).toBeVisible();
   for (const selector of [".op-dl dt", ".op-source-path"]) {
     if ((await page.locator(selector).count()) === 0) continue;
@@ -136,8 +136,9 @@ test("color-vision deficiency: signals stay legible because colour is redundant 
 
 test("control boundaries meet >=3:1 (filter input border vs surface)", async ({ page }) => {
   await page.goto("/projects");
+  await expect(page.locator(".op-index__search input")).toBeVisible();
   const { border, bg } = await page.evaluate(() => {
-    const el = document.querySelector("input[type='search']")!;
+    const el = document.querySelector(".op-index__search input")!;
     const cs = getComputedStyle(el);
     return { border: cs.borderTopColor, bg: getComputedStyle(document.body).backgroundColor };
   });

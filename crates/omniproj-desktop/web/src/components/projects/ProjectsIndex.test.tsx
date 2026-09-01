@@ -9,7 +9,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { projectId } from "../../domain/project";
 import type { ReviewPolicy } from "../../domain/project";
-import { REVIEW_ORDER_LABEL } from "../../domain/projectPresentation";
 import { indexItem, reviewReason } from "../../test/fixtures";
 import { ProjectsIndex } from "./ProjectsIndex";
 
@@ -42,13 +41,13 @@ function linkOrder(): string[] {
 describe("headers and policy", () => {
   it("shows a semantic Projects list without browser-style table headers", () => {
     const { container } = renderIndex();
-    expect(screen.getByRole("list", { name: "Projects" })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Other projects" })).toBeInTheDocument();
     expect(container.querySelector(".op-index__head")).not.toBeInTheDocument();
   });
 
-  it("labels the order as explicit-decision review order and never as priority", () => {
+  it("keeps sorting secondary and never presents it as priority", () => {
     renderIndex();
-    expect(screen.getByText(REVIEW_ORDER_LABEL)).toBeInTheDocument();
+    expect(screen.getByText("More filters and sorting")).toBeInTheDocument();
     expect(
       screen.getByRole("combobox", { name: /review order/i }),
     ).toBeInTheDocument();
@@ -80,9 +79,7 @@ describe("deterministic order and transparent sort", () => {
     expect(linkOrder()).toEqual(["Alpha", "Bravo", "Charlie"]);
   });
 
-  it("never hoists a high-priority review reason above the received order", () => {
-    // The backend would sort a source_unavailable project first; here it arrives LAST. The
-    // frontend must render it last (it preserves the backend order and never re-ranks by reason).
+  it("groups projects needing a decision first without reordering within either group", () => {
     const outOfOrder = [
       indexItem({ project_id: projectId("x"), name: "Xray", review_reasons: [] }),
       indexItem({ project_id: projectId("y"), name: "Yankee", review_reasons: [] }),
@@ -93,7 +90,7 @@ describe("deterministic order and transparent sort", () => {
       }),
     ];
     renderIndex(outOfOrder);
-    expect(linkOrder()).toEqual(["Xray", "Yankee", "Zulu"]);
+    expect(linkOrder()).toEqual(["Zulu", "Xray", "Yankee"]);
   });
 });
 

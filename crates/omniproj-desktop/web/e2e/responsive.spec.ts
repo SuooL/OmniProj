@@ -24,10 +24,10 @@ async function expectNoHorizontalScroll(page: Page) {
   ).toBeLessThanOrEqual(info.clientWidth);
 }
 
-test("1280x800: the full-height sidebar and continuous project list fit without overflow", async ({ page }) => {
+test("1280x800: the focus-first project queue fits without permanent navigation chrome", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/projects");
-  await expect(page.getByRole("list", { name: "Projects" }).getByRole("listitem")).toHaveCount(12);
+  await expect(page.locator(".op-row")).toHaveCount(12);
 
   const visible = await page.evaluate(() =>
     Array.from(document.querySelectorAll(".op-row")).filter((r) => {
@@ -35,20 +35,21 @@ test("1280x800: the full-height sidebar and continuous project list fit without 
       return b.top < window.innerHeight && b.bottom > 0;
     }).length,
   );
-  expect(visible, `visible rows=${visible}`).toBeGreaterThanOrEqual(7);
+  expect(visible, `visible rows=${visible}`).toBeGreaterThanOrEqual(6);
   expect(visible).toBeLessThanOrEqual(10);
-  await expect(page.locator(".app-shell__sidebar")).toBeVisible();
+  await expect(page.locator(".app-shell__sidebar")).toHaveCount(0);
+  await expect(page.locator(".app-shell__topbar")).toBeVisible();
   await expect(page.locator(".op-index__head")).toHaveCount(0);
   await expectNoHorizontalScroll(page);
 });
 
-test("1100: selecting a project replaces the main content and marks its sidebar node", async ({ page }) => {
+test("1100: selecting a project replaces the queue and keeps its name in context", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 800 });
   await page.goto("/projects");
   await expect(page.locator(".op-row__metadata").first()).toBeVisible();
   await page.getByRole("link", { name: /^billing-worker/ }).click();
   await expect(page.getByTestId("overview-page")).toBeVisible();
-  await expect(page.getByRole("button", { name: "billing-worker" })).toHaveAttribute("data-active", "true");
+  await expect(page.locator(".app-shell__context-name")).toHaveText("billing-worker");
   await expectNoHorizontalScroll(page);
 });
 
@@ -57,17 +58,17 @@ test("1099 and 800: the desktop list compresses without introducing a table or h
     await page.setViewportSize({ width, height: 800 });
     await page.goto("/projects");
     await expect(page.locator(".op-index__head")).toHaveCount(0);
-    await expect(page.locator(".app-shell__sidebar")).toBeVisible();
+    await expect(page.locator(".app-shell__sidebar")).toHaveCount(0);
     await expectNoHorizontalScroll(page);
   }
 });
 
-test("799 and 640: the sidebar can collapse and project detail remains a full page", async ({ page }) => {
+test("799 and 640: compact chrome and project detail remain full-width", async ({ page }) => {
   for (const width of [799, 640]) {
     await page.setViewportSize({ width, height: 800 });
     await page.goto("/projects");
-    await expect(page.locator(".app-shell__sidebar")).toBeHidden();
-    await expect(page.getByRole("button", { name: "Show sidebar" })).toBeVisible();
+    await expect(page.locator(".app-shell__sidebar")).toHaveCount(0);
+    await expect(page.locator(".app-shell__topbar")).toBeVisible();
     await expectNoHorizontalScroll(page);
 
     await page.getByRole("link", { name: /^billing-worker/ }).click();

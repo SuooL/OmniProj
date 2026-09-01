@@ -88,7 +88,6 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
   const primary = primaryReason(item);
   const hidden = hiddenReasons(item);
 
-  const reviewText = primary ? reviewReasonLabel(primary.code, locale) : t("row.noReview");
   const activityText = activityNote(item, now, locale, t);
 
   return (
@@ -140,7 +139,6 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
         </span>
         <span className="op-row__review-text">
           {primary && <ReviewSignalBadge reason={primary} hidden={hidden} />}
-          {!primary && reviewText}
         </span>
         <span className="op-row__chevron"><ChevronRightIcon /></span>
       </Link>

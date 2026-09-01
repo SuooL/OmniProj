@@ -1,9 +1,7 @@
-// The full-page Project Overview content. DOM order is
-// the spec's fixed sequence (9.3): identity + lifecycle -> all review reasons -> current
-// commitment (or the atomic Complete-setup framing in `setup`) -> observed actual -> recent
-// transition rail. The full source path appears ONLY here, never in the Index.
+// The focus-first project page. The current next step is the visual endpoint; direction,
+// review evidence, and low-frequency tools support it without competing as equal tabs.
 
-import type { Ref } from "react";
+import { useState, type ReactNode, type Ref } from "react";
 
 import type { ProjectOverview as ProjectOverviewDto } from "../../domain/project";
 import { ProjectStateTag } from "../semantic/ProjectStateTag";
@@ -21,22 +19,26 @@ import { PlanLog } from "./PlanLog";
 import { GitFlowGraph } from "./GitFlowGraph";
 import { ReentryContext } from "./ReentryContext";
 
-export type ProjectWorkspaceView = "reentry" | "plan" | "activity" | "project";
-
 export interface ProjectOverviewProps {
   overview: ProjectOverviewDto;
   now: Date;
   headingRef?: Ref<HTMLHeadingElement>;
-  view?: ProjectWorkspaceView;
-  onViewChange?: (view: ProjectWorkspaceView) => void;
+}
+
+function WorkspaceDisclosure({ label, testId, children }: { label: string; testId: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="op-workspace-disclosure" data-testid={testId} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>{label}</summary>
+      {open && <div className="op-workspace-disclosure__body">{children}</div>}
+    </details>
+  );
 }
 
 export function ProjectOverview({
   overview,
   now,
   headingRef,
-  view = "reentry",
-  onViewChange = () => {},
 }: ProjectOverviewProps) {
   const { t } = useI18n();
   const isSetup = overview.status === "setup";
@@ -54,62 +56,38 @@ export function ProjectOverview({
             <ProjectStateTag status={overview.status} />
           </div>
         </div>
-        {overview.source && (view === "activity" || view === "project") && (
-          <p data-testid="source-path" className="op-source-path">
-            {overview.source.location}
-          </p>
-        )}
       </header>
 
       {isSetup ? (
         <div className="op-overview__primary"><ProjectFramingForm overview={overview} /></div>
       ) : (
         <>
-          <nav className="op-workspace-tabs" aria-label={t("workspace.label")}>
-            {(["reentry", "plan", "activity", "project"] as const).map((candidate) => (
-              <button
-                key={candidate}
-                type="button"
-                aria-current={view === candidate ? "page" : undefined}
-                onClick={() => onViewChange(candidate)}
-              >
-                {t(`workspace.${candidate}`)}
-              </button>
-            ))}
-          </nav>
+          <div className="op-overview__primary" data-testid="reentry-view">
+            <CurrentCommitment overview={overview} />
+            <ReviewReasons reasons={overview.review_reasons} />
+            <ReentryContext overview={overview} />
+            <SourceRecovery overview={overview} />
+          </div>
 
-          {view === "reentry" && (
-            <div className="op-overview__primary" data-testid="reentry-view">
-              <ReentryContext overview={overview} />
-              <ReviewReasons reasons={overview.review_reasons} />
-              <CurrentCommitment overview={overview} />
-              <SourceRecovery overview={overview} />
-            </div>
-          )}
-
-          {view === "plan" && (
-            <div className="op-overview__secondary" data-testid="plan-view">
+          <div className="op-workspace-disclosures">
+            <WorkspaceDisclosure label={t("workspace.plan")} testId="plan-view">
               <TaskBoard projectId={overview.project_id} hasCurrentCommitment={overview.current_commitment !== null} />
               <PlanLog projectId={overview.project_id} />
               <CommitmentHistory transitions={overview.recent_transitions} now={now} />
-            </div>
-          )}
+            </WorkspaceDisclosure>
 
-          {view === "activity" && (
-            <div className="op-overview__secondary" data-testid="activity-view">
+            <WorkspaceDisclosure label={t("workspace.activity")} testId="activity-view">
+              {overview.source && <p data-testid="source-path" className="op-source-path">{overview.source.location}</p>}
               <ObservedActual observed={overview.observed_actual} source={overview.source} now={now} />
-              <SourceRecovery overview={overview} />
               <CommitTimeline projectId={overview.project_id} />
               <GitFlowGraph projectId={overview.project_id} />
-            </div>
-          )}
+            </WorkspaceDisclosure>
 
-          {view === "project" && (
-            <div className="op-overview__settings" data-testid="project-view">
+            <WorkspaceDisclosure label={t("workspace.project")} testId="project-view">
               <ProjectFramingForm overview={overview} />
               <ProjectLifecycleControl overview={overview} />
-            </div>
-          )}
+            </WorkspaceDisclosure>
+          </div>
         </>
       )}
     </article>

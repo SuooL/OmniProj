@@ -4,10 +4,10 @@
 
 import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 
 import { api, AppError } from "../api";
-import { ProjectOverview, type ProjectWorkspaceView } from "../components/projects/ProjectOverview";
+import { ProjectOverview } from "../components/projects/ProjectOverview";
 import { projectId as brandProjectId } from "../domain/project";
 import { queryKeys } from "../queryKeys";
 import { localizeError, useI18n } from "../i18n/I18nProvider";
@@ -15,12 +15,7 @@ import { localizeError, useI18n } from "../i18n/I18nProvider";
 export function ProjectOverviewPage() {
   const { locale, t } = useI18n();
   const params = useParams();
-  const [searchParams, setSearchParams] = useSearchParams();
   const id = brandProjectId(params.projectId ?? "");
-  const requestedView = searchParams.get("view");
-  const view: ProjectWorkspaceView = requestedView === "plan" || requestedView === "activity" || requestedView === "project"
-    ? requestedView
-    : "reentry";
   const { data, isLoading, isError, error } = useQuery({
     queryKey: queryKeys.projectOverview(id),
     queryFn: () => api.getProjectOverview(id),
@@ -53,13 +48,6 @@ export function ProjectOverviewPage() {
           overview={data}
           now={new Date()}
           headingRef={headingRef}
-          view={view}
-          onViewChange={(nextView) => {
-            const next = new URLSearchParams(searchParams);
-            if (nextView === "reentry") next.delete("view");
-            else next.set("view", nextView);
-            setSearchParams(next, { replace: true });
-          }}
         />
       )}
     </main>
