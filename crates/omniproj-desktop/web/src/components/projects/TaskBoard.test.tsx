@@ -25,6 +25,7 @@ const TASKS = {
     adopted_from_proposal_id: null,
     linked_work_item_id: null,
     is_current_commitment: false,
+    updated_at: "2026-08-12T09:00:00Z",
   }, {
     id: "c3d4",
     text: "Refactor the pipeline",
@@ -37,6 +38,7 @@ const TASKS = {
     adopted_from_proposal_id: null,
     linked_work_item_id: null,
     is_current_commitment: false,
+    updated_at: "2026-08-11T09:00:00Z",
   }],
 };
 
@@ -141,4 +143,61 @@ it("parseTagsInput splits comma variants and trims", async () => {
   const { parseTagsInput } = await import("./TaskBoard");
   expect(parseTagsInput("论文, infra、eval ，  x ")).toEqual(["论文", "infra", "eval", "x"]);
   expect(parseTagsInput("   ")).toEqual([]);
+});
+
+it("board view moves a card via the keyboard-accessible control and locks commitment cards", async () => {
+  window.localStorage.setItem("omniproj.task-view", "board");
+  const boardTasks = {
+    revision: "9",
+    tasks: [
+      { ...TASKS.tasks[0], id: "m1", text: "Movable card", unclear: false, tags: [] },
+      { ...TASKS.tasks[1], id: "l1", text: "Locked card", status: "doing", linked_work_item_id: "l1", tags: [] },
+    ],
+  };
+  invokeMock.mockImplementation(async (command: string, args?: { input?: Record<string, unknown> }) => {
+    if (command === "get_tasks") return boardTasks;
+    if (command === "update_task") {
+      expect(args?.input).toMatchObject({ id: "m1", status: "doing", tags: [] });
+      return boardTasks;
+    }
+    if (command === "list_project_index" || command === "get_project_overview") return {};
+    throw new Error(`unexpected command ${command}`);
+  });
+  const user = userEvent.setup();
+  renderBoard();
+
+  const columns = await screen.findByTestId("task-board-columns");
+  // Locked card exposes guidance instead of a move control.
+  expect(within(columns).getByText(/managed by commitment actions/i)).toBeInTheDocument();
+  expect(within(columns).queryByLabelText(/move to: Locked card/i)).not.toBeInTheDocument();
+  // Keyboard-accessible move on the unlocked card.
+  await user.selectOptions(within(columns).getByLabelText(/move to: Movable card/i), "doing");
+  await waitFor(() => expect(invokeMock.mock.calls.some((call) => call[0] === "update_task")).toBe(true));
+  window.localStorage.removeItem("omniproj.task-view");
+});
+
+it("board view folds the done column beyond five and expands on demand", async () => {
+  window.localStorage.setItem("omniproj.task-view", "board");
+  const done = Array.from({ length: 7 }, (_, index) => ({
+    ...TASKS.tasks[0],
+    id: `done-${index}`,
+    text: `Done item ${index}`,
+    status: "done",
+    tags: [],
+    updated_at: `2026-08-${String(10 + index).padStart(2, "0")}T00:00:00Z`,
+  }));
+  invokeMock.mockImplementation(async (command: string) => {
+    if (command === "get_tasks") return { revision: "9", tasks: done };
+    throw new Error(`unexpected command ${command}`);
+  });
+  const user = userEvent.setup();
+  renderBoard();
+
+  const columns = await screen.findByTestId("task-board-columns");
+  // Newest five shown, oldest two folded.
+  expect(within(columns).getByText("Done item 6", { exact: false })).toBeInTheDocument();
+  expect(within(columns).queryByText("Done item 0", { exact: false })).not.toBeInTheDocument();
+  await user.click(within(columns).getByRole("button", { name: /show all \(7\)/i }));
+  expect(within(columns).getByText("Done item 0", { exact: false })).toBeInTheDocument();
+  window.localStorage.removeItem("omniproj.task-view");
 });

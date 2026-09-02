@@ -28,6 +28,9 @@ pub struct TaskDto {
     pub adopted_from_proposal_id: Option<String>,
     pub linked_work_item_id: Option<String>,
     pub is_current_commitment: bool,
+    /// RFC3339 instant of the last mutation, for deterministic board ordering.
+    #[serde(default)]
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -567,6 +570,7 @@ fn task_list(state: &ProjectStateDoc) -> TaskListDto {
                     .contains(&item.id)
                     .then(|| item.id.as_str().to_owned()),
                 is_current_commitment: state.current_next_action_id.as_ref() == Some(&item.id),
+                updated_at: item.updated_at.clone(),
             })
             .collect(),
     }

@@ -168,6 +168,8 @@ export interface Task {
   adopted_from_proposal_id: string | null;
   linked_work_item_id: string | null;
   is_current_commitment: boolean;
+  /** RFC3339 instant of the last mutation, for deterministic board ordering. */
+  updated_at: string;
 }
 export interface TaskList { revision: string; tasks: Task[]; }
 export interface AdvanceProposal { proposal_id: string; candidates: string[]; }
