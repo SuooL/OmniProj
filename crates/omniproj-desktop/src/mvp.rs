@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use omniproj_capture::git::commit_log;
 use omniproj_core::ids::{ProjectId, WorkItemId};
 use omniproj_core::project_state::{
-    apply_project_command, ProjectCommand, ProjectStateDoc, WorkItemDraft, WorkItemStatus,
+    apply_project_command, ProjectCommand, ProjectStateDoc, ProjectStatus, WorkItemDraft,
+    WorkItemStatus,
 };
 use omniproj_core::{content_hash, load_project, NextDoc, TaskStatus};
 
@@ -272,6 +273,87 @@ pub fn attention_summary_with_threshold(days: u32) -> AttentionSummaryDto {
 
 pub fn attention_count_with_threshold(days: u32) -> usize {
     attention_summary_with_threshold(days).count
+}
+
+// --- Cross-project focus (R1e, FR-A5) --------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FocusItemDto {
+    pub id: String,
+    pub text: String,
+    pub due: String,
+    /// 0 = due today; positive = whole days overdue.
+    pub overdue_days: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FocusProjectDto {
+    pub project_id: ProjectId,
+    pub name: String,
+    pub items: Vec<FocusItemDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FocusAgendaDto {
+    pub total_items: usize,
+    pub projects: Vec<FocusProjectDto>,
+}
+
+/// Read-only aggregate of overdue + due-today tasks across Active projects, grouped by
+/// project (oldest debt first). Waiting/Parked/Archived projects are excluded (suspension
+/// is an explicit deferral) and an unreadable state document skips its project rather than
+/// failing the whole strip. Editing always happens inside the project.
+pub fn focus_agenda() -> CommandResult<FocusAgendaDto> {
+    let today = chrono::Local::now().date_naive();
+    let mut projects: Vec<FocusProjectDto> = Vec::new();
+    for record in omniproj_core::list_project_records()? {
+        let Ok(state) = ProjectStateDoc::load(&record.id) else {
+            continue;
+        };
+        if state.status != ProjectStatus::Active {
+            continue;
+        }
+        let mut items: Vec<FocusItemDto> = state
+            .work_items
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item.status,
+                    WorkItemStatus::Planned | WorkItemStatus::Doing | WorkItemStatus::Blocked
+                )
+            })
+            .filter_map(|item| {
+                let due = chrono::NaiveDate::parse_from_str(item.due.as_deref()?, "%Y-%m-%d")
+                    .ok()
+                    .filter(|due| *due <= today)?;
+                Some(FocusItemDto {
+                    id: item.id.as_str().to_owned(),
+                    text: item.text.clone(),
+                    due: due.to_string(),
+                    overdue_days: (today - due).num_days(),
+                })
+            })
+            .collect();
+        if items.is_empty() {
+            continue;
+        }
+        items.sort_by(|a, b| a.due.cmp(&b.due).then_with(|| a.id.cmp(&b.id)));
+        projects.push(FocusProjectDto {
+            project_id: record.id,
+            name: record.name,
+            items,
+        });
+    }
+    projects.sort_by(|a, b| {
+        a.items[0]
+            .due
+            .cmp(&b.items[0].due)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    Ok(FocusAgendaDto {
+        total_items: projects.iter().map(|project| project.items.len()).sum(),
+        projects,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

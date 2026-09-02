@@ -11,6 +11,7 @@ import type {
   CompleteCommitmentInput,
   CompleteProjectSetupInput,
   ConfirmCommitmentInput,
+  FocusAgenda,
   ProjectId,
   ProjectIndexResponse,
   ProjectOverview,
@@ -98,6 +99,7 @@ export const api = {
 
   getTasks: (project_id: ProjectId) => call<TaskList>("get_tasks", { project_id }),
   getAttentionSummary: () => call<{ count: number; project_ids: ProjectId[] }>("get_attention_summary"),
+  getFocusAgenda: () => call<FocusAgenda>("get_focus_agenda"),
   addTask: (input: { project_id: ProjectId; expected_revision: string; text: string; unclear: boolean }) => call<TaskList>("add_task", input),
   updateTask: (input: { project_id: ProjectId; expected_revision: string; id: string; status: string; due: string | null; note: string | null; tags?: string[] }) => call<TaskList>("update_task", input),
   removeTask: (input: { project_id: ProjectId; expected_revision: string; id: string }) => call<TaskList>("remove_task", input),

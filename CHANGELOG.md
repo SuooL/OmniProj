@@ -12,6 +12,14 @@ projects, ≥20 recorded re-entry events) has **not** been met, so no release is
 
 ### Added
 
+- **R1e cross-project focus strip (FR-A5)** — a collapsible「今日聚焦」strip above the
+  Projects Index aggregates overdue + due-today tasks across Active projects, grouped by
+  project (oldest debt first). Collapsed it is one line ("N 个项目共 M 条任务逾期或今日到
+  期"); expanded, every project name is a jump link into that project — the strip is
+  **read-only** (editing stays inside the project) and renders nothing at all when nothing
+  is due. Waiting/Parked projects are excluded; an unreadable state document skips its
+  project rather than failing the strip. Served by the new read-only `get_focus_agenda`
+  IPC command.
 - **R1d time-grouped task view (FR-R6)** — a third `按时间` task view groups undone tasks
   by due date against the local calendar: 逾期 / 今天 / 本周 / 下周 / 以后 / 未排期
   (ISO weeks, Monday start). Done tasks are hidden — the view answers "what comes due

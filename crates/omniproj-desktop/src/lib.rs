@@ -43,6 +43,7 @@ pub fn r0_invoke_handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sy
         commands::undo_commitment_transition,
         commands::get_tasks,
         commands::get_attention_summary,
+        commands::get_focus_agenda,
         commands::refresh_attention_indicator,
         commands::add_task,
         commands::update_task,

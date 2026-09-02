@@ -1061,6 +1061,7 @@ fn handler_rejects_deferred_commands_and_accepts_the_r0_surface() {
         "undo_commitment_transition",
         "get_tasks",
         "get_attention_summary",
+        "get_focus_agenda",
         "add_task",
         "update_task",
         "remove_task",
@@ -1310,4 +1311,73 @@ fn task_tags_normalize_persist_and_reject_invalid_sets() {
         unchanged.tasks[0].tags,
         vec!["论文".to_owned(), "Infra".to_owned()]
     );
+}
+
+#[test]
+fn focus_agenda_aggregates_overdue_and_today_across_active_projects_only() {
+    let _guard = env_guard();
+    let _home = Home::new("focus");
+    let late = register(&unique_path("focus-late"), "Late project");
+    let clean = register(&unique_path("focus-clean"), "Clean project");
+    let parked = register(&unique_path("focus-parked"), "Parked project");
+
+    let service = service();
+    for id in [&late.id, &clean.id, &parked.id] {
+        service
+            .complete_project_setup(dto::CompleteProjectSetupInput {
+                project_id: id.clone(),
+                expected_revision: 0,
+                objective: "o".into(),
+                desired_outcome: "d".into(),
+                phase: None,
+                first_commitment: "first".into(),
+            })
+            .unwrap();
+    }
+    service
+        .apply_project_mutation(dto::ProjectMutationInput {
+            project_id: parked.id.clone(),
+            expected_revision: 1,
+            command: dto::MutationCommand::SetStatus {
+                status: ProjectStatus::Parked,
+                reason: Some("paused deliberately".into()),
+                review_at: None,
+            },
+        })
+        .unwrap();
+
+    for (project, text) in [(&late.id, "ship it"), (&parked.id, "ignored while parked")] {
+        let tasks = mvp::get_tasks(project.clone()).unwrap();
+        let tasks = mvp::add_task(project.clone(), tasks.revision, text.into(), false).unwrap();
+        let id = tasks
+            .tasks
+            .iter()
+            .find(|task| task.text == text)
+            .unwrap()
+            .id
+            .clone();
+        mvp::update_task(
+            project.clone(),
+            tasks.revision,
+            id,
+            "open".into(),
+            Some("2026-08-01".into()),
+            None,
+            None,
+        )
+        .unwrap();
+    }
+
+    let agenda = mvp::focus_agenda().unwrap();
+    assert_eq!(agenda.total_items, 1);
+    assert_eq!(agenda.projects.len(), 1);
+    let project = &agenda.projects[0];
+    assert_eq!(project.project_id, late.id);
+    assert_eq!(project.name, "Late project");
+    assert_eq!(project.items[0].text, "ship it");
+    assert_eq!(project.items[0].due, "2026-08-01");
+    assert!(project.items[0].overdue_days > 0);
+    // The clean Active project and the parked one never appear.
+    assert!(!agenda.projects.iter().any(|p| p.project_id == clean.id));
+    assert!(!agenda.projects.iter().any(|p| p.project_id == parked.id));
 }

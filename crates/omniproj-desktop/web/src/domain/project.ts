@@ -172,6 +172,11 @@ export interface Task {
   updated_at: string;
 }
 export interface TaskList { revision: string; tasks: Task[]; }
+
+// Cross-project focus strip (R1e): read-only aggregate of overdue + due-today tasks.
+export interface FocusItem { id: string; text: string; due: string; overdue_days: number; }
+export interface FocusProject { project_id: ProjectId; name: string; items: FocusItem[]; }
+export interface FocusAgenda { total_items: number; projects: FocusProject[]; }
 export interface AdvanceProposal { proposal_id: string; candidates: string[]; }
 
 export interface TimelineCommit {

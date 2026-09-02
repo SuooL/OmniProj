@@ -170,6 +170,8 @@ export async function installMockTauri(page: Page): Promise<void> {
           return agentSettings.ready ? Promise.resolve(null) : Promise.reject({ code: "invalid_input", message: "not ready", retryable: false, state_applied: false });
         case "refresh_attention_indicator":
           return Promise.resolve({ count: 0, project_ids: [] });
+        case "get_focus_agenda":
+          return Promise.resolve({ total_items: 0, projects: [] });
         case "get_dogfood_summary":
           return Promise.resolve({ event_count: 0, project_count: 0, median_duration_seconds: null, meets_event_threshold: false, meets_project_threshold: false });
         case "validate_project_source": {
