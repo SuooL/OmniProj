@@ -144,6 +144,33 @@ export async function installMockTauri(page: Page): Promise<void> {
           taskRevision[input.project_id] = (taskRevision[input.project_id] ?? 1) + 1;
           return Promise.resolve({ revision: String(taskRevision[input.project_id]), tasks: list });
         }
+        case "update_task": {
+          const code = checkFail(); if (code) return fail(code);
+          const list = tasksByProject[input.project_id] ?? [];
+          const task = list.find((item: { id: string }) => item.id === input.id);
+          if (!task) return Promise.reject({ code: "invalid_input", message: "task not found", retryable: false, state_applied: false });
+          // Mirrors core: tags are normalized (trim, drop empties, case-insensitive dedupe);
+          // an omitted `tags` leaves the stored value untouched.
+          if (input.tags !== undefined && input.tags !== null) {
+            const seen = new Set<string>();
+            task.tags = (input.tags as string[])
+              .map((tag) => tag.trim())
+              .filter((tag) => tag.length > 0 && !seen.has(tag.toLowerCase()) && seen.add(tag.toLowerCase()) !== undefined);
+          }
+          task.status = input.status;
+          task.due = input.due ?? null;
+          task.note = input.note ?? null;
+          task.updated_at = "2026-08-12T10:00:00Z";
+          taskRevision[input.project_id] = (taskRevision[input.project_id] ?? 1) + 1;
+          return Promise.resolve({ revision: String(taskRevision[input.project_id]), tasks: list });
+        }
+        case "remove_task": {
+          const code = checkFail(); if (code) return fail(code);
+          const list = tasksByProject[input.project_id] ?? [];
+          tasksByProject[input.project_id] = list.filter((item: { id: string }) => item.id !== input.id);
+          taskRevision[input.project_id] = (taskRevision[input.project_id] ?? 1) + 1;
+          return Promise.resolve({ revision: String(taskRevision[input.project_id]), tasks: tasksByProject[input.project_id] });
+        }
         case "advance_task":
           return Promise.resolve({ proposal_id: `${input.id}-proposal`, candidates: ["Inspect the failing path", "Write a regression test", "Implement the smallest fix"] });
         case "adopt_subtasks": {

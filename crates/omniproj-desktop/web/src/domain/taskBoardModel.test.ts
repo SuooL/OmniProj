@@ -121,3 +121,13 @@ describe("timeGroups", () => {
     expect(groups.find((group) => group.key === "later")!.tasks.map((item) => item.id)).toEqual(["beyond"]);
   });
 });
+
+describe("dueSignal for finished work", () => {
+  it("never marks a done task overdue or due-soon, matching core's OverdueWork rule", () => {
+    expect(dueSignal("2026-08-01", TODAY, "done")).toEqual({ kind: "scheduled" });
+    expect(dueSignal("2026-09-02", TODAY, "done")).toEqual({ kind: "scheduled" });
+    // Unfinished work is unaffected.
+    expect(dueSignal("2026-08-01", TODAY, "open")).toEqual({ kind: "overdue", days: 32 });
+    expect(dueSignal("2026-08-01", TODAY, "doing")).toEqual({ kind: "overdue", days: 32 });
+  });
+});

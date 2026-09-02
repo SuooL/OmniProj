@@ -61,6 +61,8 @@ it("selectively adopts Advance candidates and retains the proposal id", async ()
   });
   const user = userEvent.setup();
   renderBoard();
+  // Advance lives in the row's edit panel now, so the row is opened first.
+  await user.click(await screen.findByRole("button", { name: /Validate cohort labels/ }));
   await user.click(await screen.findByRole("button", { name: /ask agent/i }));
   const choices = await screen.findAllByRole("checkbox");
   await user.click(choices.at(-2)!);
@@ -80,6 +82,7 @@ it("promotes a planning task to the current commitment with both revisions", asy
   });
   const user = userEvent.setup();
   renderBoard();
+  await user.click(await screen.findByRole("button", { name: /Validate cohort labels/ }));
   await user.click((await screen.findAllByRole("button", { name: /make current commitment/i }))[0]);
   await waitFor(() => expect(invokeMock.mock.calls.some((call) => call[0] === "promote_task_to_commitment")).toBe(true));
 });
@@ -89,7 +92,9 @@ it("shows an unambiguous empty YYYY-MM-DD due-date field", async () => {
     if (command === "get_tasks") return TASKS;
     throw new Error(`unexpected command ${command}`);
   });
+  const user = userEvent.setup();
   renderBoard();
+  await user.click(await screen.findByRole("button", { name: /Validate cohort labels/ }));
   expect(await screen.findByLabelText(/expected completion date: Validate cohort labels/i)).toHaveAttribute(
     "placeholder",
     "YYYY-MM-DD",
@@ -120,7 +125,7 @@ it("renders tag chips, filters with AND semantics, and clears the filter", async
   expect(screen.getByText("Refactor the pipeline", { exact: false })).toBeInTheDocument();
 });
 
-it("sends parsed tags on save", async () => {
+it("keeps rows read-only until opened, then autosaves the edit on blur", async () => {
   invokeMock.mockImplementation(async (command: string, args?: { input?: Record<string, unknown> }) => {
     if (command === "get_tasks") return TASKS;
     if (command === "update_task") {
@@ -132,11 +137,36 @@ it("sends parsed tags on save", async () => {
   });
   const user = userEvent.setup();
   renderBoard();
+
+  // Collapsed: the row is a single expandable control, with no editing fields on screen.
+  const row = await screen.findByRole("button", { name: /Validate cohort labels/ });
+  expect(row).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByLabelText(/tags: Validate cohort labels/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /save task/i })).not.toBeInTheDocument();
+
+  await user.click(row);
+  expect(row).toHaveAttribute("aria-expanded", "true");
   const input = await screen.findByLabelText(/tags: Validate cohort labels/i);
   await user.clear(input);
   await user.type(input, "论文, eval");
-  await user.click(screen.getAllByRole("button", { name: /save task/i })[0]);
+  // Leaving the panel is what persists: no explicit save control exists.
+  await user.tab();
+  await user.click(screen.getByRole("button", { name: /Refactor the pipeline/ }));
   await waitFor(() => expect(invokeMock.mock.calls.some((call) => call[0] === "update_task")).toBe(true));
+});
+
+it("does not send an update when nothing changed", async () => {
+  invokeMock.mockImplementation(async (command: string) => {
+    if (command === "get_tasks") return TASKS;
+    if (command === "list_project_index" || command === "get_project_overview") return {};
+    throw new Error(`unexpected command ${command}`);
+  });
+  const user = userEvent.setup();
+  renderBoard();
+  const row = await screen.findByRole("button", { name: /Validate cohort labels/ });
+  await user.click(row);
+  await user.click(screen.getByRole("button", { name: /Refactor the pipeline/ }));
+  expect(invokeMock.mock.calls.some((call) => call[0] === "update_task")).toBe(false);
 });
 
 it("parseTagsInput splits comma variants and trims", async () => {

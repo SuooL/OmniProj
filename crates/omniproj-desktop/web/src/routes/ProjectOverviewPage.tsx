@@ -28,7 +28,17 @@ export function ProjectOverviewPage() {
   useEffect(() => {
     if (!data || didFocus.current) return;
     didFocus.current = true;
-    if (data.status !== "setup") headingRef.current?.focus();
+    if (data.status === "setup") return;
+    const heading = headingRef.current;
+    if (!heading) return;
+    // Landing focus here is for AT/keyboard orientation, not a keyboard interaction, so the
+    // focus ring is suppressed for this one programmatic move; a real Tab clears the flag and
+    // restores the normal ring.
+    heading.dataset.programmaticFocus = "true";
+    heading.focus({ preventScroll: true });
+    const clear = () => delete heading.dataset.programmaticFocus;
+    heading.addEventListener("blur", clear, { once: true });
+    heading.addEventListener("keydown", clear, { once: true });
   }, [data]);
 
   return (

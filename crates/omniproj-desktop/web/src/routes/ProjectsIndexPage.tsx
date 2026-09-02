@@ -54,9 +54,9 @@ export function ProjectsIndexPage() {
           </p>
         </div>
         {data && (
-          <p className="op-page-heading__count">
+          <p className="op-page-heading__count" aria-label={t("index.projectCount", { count: data.projects.length })}>
             <strong>{data.projects.length}</strong>
-            <span>{t("index.projectCount", { count: data.projects.length })}</span>
+            <span aria-hidden="true">{t("index.projectCountUnit")}</span>
           </p>
         )}
         {attention && attention.count > 0 && <p className="op-page-heading__attention" role="status">{t("attention.count", { count: attention.count })}</p>}
