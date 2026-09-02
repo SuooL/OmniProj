@@ -1262,7 +1262,7 @@ button {
 .op-overview-page {
   width: min(760px, calc(100% - 2 * var(--op-space-8)));
   margin: 0 auto;
-  padding: var(--op-space-8) 0;
+  padding: var(--op-space-5) 0 var(--op-space-8);
 }
 
 .op-overview {
@@ -1399,6 +1399,12 @@ button {
   outline-offset: 4px;
 }
 
+/* Focus landed programmatically on page entry: orientation for AT, not a keyboard move. */
+.op-overview__name[data-programmatic-focus]:focus,
+.op-overview__name[data-programmatic-focus]:focus-visible {
+  outline: none;
+}
+
 .op-source-path,
 .op-path-box {
   margin: var(--op-space-3) 0 0;
@@ -1436,9 +1442,10 @@ button {
 .op-graph__subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .op-graph__ref { border: 1px solid var(--op-border-strong); border-radius: 999px; padding: 0 .35rem; font-size: .7rem; white-space: nowrap; }
 
-/* Sections. */
+/* Sections. Tightened from space-6: the re-entry page stacks several of these, and the
+   generous rhythm pushed real content below the fold on a 760px-tall window. */
 .op-section {
-  padding: var(--op-space-6) 0;
+  padding: var(--op-space-4) 0;
   border-bottom: 1px solid var(--op-border-subtle);
 }
 
@@ -1447,10 +1454,28 @@ button {
 }
 
 .op-task-add { display:flex; flex-wrap:wrap; gap:var(--op-space-2); align-items:center; margin-bottom:var(--op-space-3); }
-.op-task-add input[type="text"], .op-task-add input:not([type]) { flex:1 1 220px; min-height:32px; }
+/* The new-task field must read as a control, not as body text under the description. */
+.op-task-add input[type="text"], .op-task-add input:not([type]) { flex:1 1 220px; min-height:32px; padding:0 var(--op-space-2); border:1px solid var(--op-border-strong); border-radius:var(--op-radius-sm); background:var(--op-surface-base); }
 .op-task-add label { display:inline-flex; align-items:center; gap:var(--op-space-1); color:var(--op-text-secondary); font-size:var(--op-text-size-necessary); }
 .op-task-list, .op-timeline { list-style:none; margin:0; padding:0; }
-.op-task-item { display:flex; justify-content:space-between; gap:var(--op-space-3); padding:var(--op-space-3) 0; border-top:1px solid var(--op-border-hairline); }
+/* A task row is READ-ONLY until opened: one scannable line, editing on demand. */
+.op-task-item { display:grid; border-top:1px solid var(--op-border-hairline); }
+.op-task-item--open { background:var(--op-surface-raised); }
+.op-task-row { display:flex; align-items:center; gap:var(--op-space-2); }
+.op-task-summary { flex:1 1 auto; min-width:0; display:flex; align-items:center; flex-wrap:wrap; gap:var(--op-space-2); min-height:34px; padding:var(--op-space-2) var(--op-space-2) var(--op-space-2) 0; border:0; background:none; color:inherit; font:inherit; text-align:left; cursor:pointer; border-radius:var(--op-radius-sm); }
+.op-task-summary:hover { background:var(--op-surface-raised); }
+.op-task-summary__text { min-width:0; display:inline-flex; align-items:center; gap:var(--op-space-1); }
+.op-task-summary__meta { display:inline-flex; flex-wrap:wrap; align-items:center; gap:var(--op-space-1); margin-left:auto; }
+.op-task-due { color:var(--op-text-tertiary); font-size:var(--op-text-size-micro); font-family:var(--op-font-mono); }
+.op-task-status { flex:0 0 auto; min-height:28px; }
+/* Edit panel: real labelled fields, two columns, autosaved on blur. */
+.op-task-edit { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:var(--op-space-2) var(--op-space-3); padding:0 0 var(--op-space-3); }
+.op-field { display:grid; gap:2px; min-width:0; }
+.op-field > span { color:var(--op-text-tertiary); font-size:var(--op-text-size-micro); }
+.op-field input { min-height:30px; width:100%; }
+.op-field--wide { grid-column:1 / -1; }
+.op-task-autosave { margin-right:auto; font-size:var(--op-text-size-micro); }
+@media (max-width: 720px) { .op-task-edit { grid-template-columns:1fr; } }
 .op-task-main { min-width:0; display:grid; gap:2px; }
 .op-task-main small, .op-timeline small { color:var(--op-text-tertiary); font-size:var(--op-text-size-micro); }
 .op-task-unclear { color:var(--op-status-warning-fg); }
@@ -1459,8 +1484,10 @@ button {
 .op-task-tag { display:inline-flex; align-items:center; min-height:19px; padding:1px 7px; border:1px solid var(--op-border-strong); border-radius:var(--op-radius-sm); font-size:var(--op-text-size-micro); line-height:var(--op-line-necessary); color:var(--op-text-secondary); background:var(--op-surface-raised); }
 .op-task-tagfilter { display:flex; flex-wrap:wrap; align-items:center; gap:var(--op-space-2); margin-bottom:var(--op-space-3); }
 /* Planning board (R1c): three status columns; stacks below 900px. */
-.op-board { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:var(--op-space-3); align-items:start; }
-.op-board-col { border:1px solid var(--op-border-hairline); border-radius:var(--op-radius-md); padding:var(--op-space-3); background:var(--op-surface-raised); }
+/* Columns stretch to a common height so an empty column never looks broken. */
+.op-board { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:var(--op-space-3); align-items:stretch; }
+.op-board-col { display:flex; flex-direction:column; min-height:140px; border:1px solid var(--op-border-hairline); border-radius:var(--op-radius-md); padding:var(--op-space-3); background:var(--op-surface-raised); }
+.op-board-col__empty { flex:1 1 auto; display:flex; align-items:center; justify-content:center; color:var(--op-text-tertiary); font-size:var(--op-text-size-micro); }
 .op-board-col > h4 { display:flex; align-items:center; gap:var(--op-space-2); margin:0 0 var(--op-space-2); font-size:var(--op-text-size-necessary); }
 .op-board-col > ul { list-style:none; margin:0; padding:0; display:grid; gap:var(--op-space-2); }
 .op-board-card { display:grid; gap:var(--op-space-1); padding:var(--op-space-2); border:1px solid var(--op-border-hairline); border-radius:var(--op-radius-sm); background:var(--op-surface-base); }

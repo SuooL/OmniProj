@@ -166,10 +166,56 @@ test("Agent settings enable the explicit Advance and adopt loop", async ({ page 
   await board.getByLabel("New task").fill("Fix the intermittent retry bug");
   await board.getByLabel("Not yet clear (?)").check();
   await board.getByRole("button", { name: "Add task" }).click();
+  // Advance now lives in the row's edit panel, so the row is opened first.
+  await board.getByRole("button", { name: /Fix the intermittent retry bug/ }).click();
   await board.getByRole("button", { name: "Ask Agent to break down" }).click();
   await expect(board.getByText("Write a regression test")).toBeVisible();
   await board.getByLabel("Write a regression test").check();
   await board.getByLabel("Implement the smallest fix").check();
   await board.getByRole("button", { name: "Adopt selected" }).click();
   await expect(board.getByText("Implement the smallest fix")).toBeVisible();
+});
+
+test("a task row stays read-only until opened, then autosaves due, tags, and status", async ({ page }) => {
+  await page.goto("/projects/p04/overview");
+  await page.getByText("Planning and tasks", { exact: true }).click();
+  const board = page.getByTestId("task-board");
+  await board.getByLabel("New task").fill("Drain the dead-letter queue");
+  await board.getByRole("button", { name: "Add task" }).click();
+
+  // Collapsed: one expandable control per task, no editing fields on screen.
+  const row = board.getByRole("button", { name: /Drain the dead-letter queue/ });
+  await expect(row).toHaveAttribute("aria-expanded", "false");
+  await expect(board.getByLabel(/Tags: Drain the dead-letter queue/)).toHaveCount(0);
+  await expect(board.getByRole("button", { name: "Save task" })).toHaveCount(0);
+
+  // Opening reveals labelled fields; leaving the panel persists them.
+  await row.click();
+  await expect(row).toHaveAttribute("aria-expanded", "true");
+  await board.getByLabel(/Expected completion date: Drain the dead-letter queue/).fill("2026-08-01");
+  await board.getByLabel(/Tags: Drain the dead-letter queue/).fill("infra, retry");
+  await board.getByRole("heading", { name: "Task list" }).click();
+  await expect(board.getByRole("button", { name: /Drain the dead-letter queue.*Overdue/ })).toBeVisible();
+
+  // Status is a single decisive control on the collapsed row and saves immediately.
+  await board.getByLabel(/Task status: Drain the dead-letter queue/).selectOption("doing");
+  await expect(board.getByLabel(/Task status: Drain the dead-letter queue/)).toHaveValue("doing");
+});
+
+test("the board keeps three aligned columns and marks empty ones", async ({ page }) => {
+  await page.goto("/projects/p04/overview");
+  await page.getByText("Planning and tasks", { exact: true }).click();
+  const board = page.getByTestId("task-board");
+  await board.getByLabel("New task").fill("Only open work");
+  await board.getByRole("button", { name: "Add task" }).click();
+  await board.getByRole("button", { name: "Board" }).click();
+
+  const columns = board.getByTestId("task-board-columns");
+  await expect(columns.locator(".op-board-col")).toHaveCount(3);
+  // The two empty columns say so rather than collapsing into hollow bars.
+  await expect(columns.getByText("None", { exact: true })).toHaveCount(2);
+  const heights = await columns.locator(".op-board-col").evaluateAll((els) =>
+    els.map((el) => Math.round(el.getBoundingClientRect().height)),
+  );
+  expect(new Set(heights).size).toBe(1);
 });

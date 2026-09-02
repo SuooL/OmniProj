@@ -10,6 +10,39 @@ Everything below has landed on `dev` since the `v0.0.1` tag and is **not yet rel
 The MVP dogfood threshold in `docs/requirements.md` §6 (2–4 weeks of daily use, ≥5 real
 projects, ≥20 recorded re-entry events) has **not** been met, so no release is cut.
 
+### Changed
+
+- **Task rows are read-only until opened** — the planning list previously kept four
+  borderless inputs, a status select, and Save/Delete on *every* row, so ten tasks meant
+  forty always-live form fields and edits were lost unless Save was clicked. A row is now one
+  scannable line (text, due signal, tags, status) that expands into a labelled two-column
+  edit panel and **autosaves when focus leaves it**; the explicit Save button is gone.
+  Status stays on the collapsed row as a single decisive control that commits immediately.
+  Nothing is sent when the draft matches what is stored.
+
+### Fixed
+
+- **A finished task is no longer shown as overdue** — the list, board, and time views ran
+  the due signal without the task's status, so a completed item with a past date still
+  displayed 「逾期 N 天」, contradicting core, where only Planned/Doing/Blocked work produces
+  the overdue review reason.
+- **Board columns align** — the three status columns now share a height and an empty column
+  says 「暂无」 instead of collapsing into a hollow bar.
+- **The project heading no longer keeps a focus ring** on entry: focus is still moved there
+  for AT/keyboard orientation, but the ring is suppressed for that programmatic move and
+  restored on the first real keyboard interaction.
+- **Backend error strings no longer reach the user** — a failed task write surfaced raw text
+  such as `unhandled update_task`; failures now show the typed, localized message.
+- **The Projects Index no longer prints its count twice** (「12  12 个项目」): the numeral is
+  the visual anchor and the label carries the unit, with the full phrase as the accessible name.
+- **The new-task field reads as a control** (border and padding) instead of blending into the
+  paragraph above it, and the tags placeholder is no longer clipped mid-sentence.
+- **Vertical rhythm** — section padding and the overview page's top padding were tightened so
+  the re-entry page shows real content instead of whitespace on a short window.
+- **E2E coverage gap** — the browser harness had no `update_task`/`remove_task` branch, so
+  editing a task's due date, tags, or status was never exercised end to end. Both are now
+  mocked (with core's tag normalization) and covered by new specs.
+
 ### Added
 
 - **R1e cross-project focus strip (FR-A5)** — a collapsible「今日聚焦」strip above the

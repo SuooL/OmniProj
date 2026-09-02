@@ -23,9 +23,12 @@ export type DueSignal =
   | { kind: "scheduled" }
   | { kind: "none" };
 
-/** Overdue = the due day has fully passed; "soon" = within the next 7 days (visual only). */
-export function dueSignal(due: string | null, today: string): DueSignal {
+/** Overdue = the due day has fully passed; "soon" = within the next 7 days (visual only).
+ * A finished task is never overdue or due-soon — it only carries its date, matching core,
+ * where only Planned/Doing/Blocked items produce the OverdueWork review reason. */
+export function dueSignal(due: string | null, today: string, status?: Task["status"]): DueSignal {
   if (!due) return { kind: "none" };
+  if (status === "done") return { kind: "scheduled" };
   const days = daysBetween(due, today);
   if (days > 0) return { kind: "overdue", days };
   if (days >= -7) return { kind: "soon", days: Math.max(0, -days) };
@@ -37,7 +40,7 @@ export function dueSignal(due: string | null, today: string): DueSignal {
 export function columnOrder(tasks: Task[], today: string): Task[] {
   const rank = (task: Task): number => {
     if (!task.due) return 2;
-    return dueSignal(task.due, today).kind === "overdue" ? 0 : 1;
+    return dueSignal(task.due, today, task.status).kind === "overdue" ? 0 : 1;
   };
   return [...tasks].sort((a, b) => {
     const byRank = rank(a) - rank(b);
