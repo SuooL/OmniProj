@@ -21,13 +21,14 @@ import {
 
 export const reviewPolicy: ReviewPolicy = {
   commitment_review_days: 7,
-  rule_version: "r0-v1",
+  rule_version: "r1-v1",
 };
 
 const REASON_LABELS: Record<ReviewReasonCode, string> = {
   source_unavailable: "Source unavailable",
   complete_setup: "Complete setup",
   needs_commitment: "Needs commitment",
+  overdue_work: "Overdue work",
   review_action: "Review action",
   scheduled_review: "Scheduled review",
 };
@@ -40,7 +41,7 @@ export function reviewReason(
     code,
     label: REASON_LABELS[code],
     evidence,
-    rule_version: "r0-v1",
+    rule_version: "r1-v1",
   };
 }
 

@@ -52,19 +52,23 @@ pub fn review_reason_code_name(code: ReviewReasonCode) -> &'static str {
         ReviewReasonCode::SourceUnavailable => "source_unavailable",
         ReviewReasonCode::CompleteSetup => "complete_setup",
         ReviewReasonCode::NeedsCommitment => "needs_commitment",
+        ReviewReasonCode::OverdueWork => "overdue_work",
         ReviewReasonCode::ReviewAction => "review_action",
         ReviewReasonCode::ScheduledReview => "scheduled_review",
     }
 }
 
-/// Fixed display/sort priority for a review code (lower is more urgent).
+/// Fixed display/sort priority for a review code (lower is more urgent). Overdue work sits
+/// between the missing-commitment gap and routine review cadence: a broken user-set date is
+/// an already-failed expectation, while a review request is merely rhythm.
 fn review_reason_priority(code: ReviewReasonCode) -> u8 {
     match code {
         ReviewReasonCode::SourceUnavailable => 0,
         ReviewReasonCode::CompleteSetup => 1,
         ReviewReasonCode::NeedsCommitment => 2,
-        ReviewReasonCode::ReviewAction => 3,
-        ReviewReasonCode::ScheduledReview => 4,
+        ReviewReasonCode::OverdueWork => 3,
+        ReviewReasonCode::ReviewAction => 4,
+        ReviewReasonCode::ScheduledReview => 5,
     }
 }
 
@@ -499,8 +503,9 @@ pub fn index_sort_key(item: &ProjectIndexItemDto) -> (u8, String, String) {
             "source_unavailable" => 0,
             "complete_setup" => 1,
             "needs_commitment" => 2,
-            "review_action" => 3,
-            "scheduled_review" => 4,
+            "overdue_work" => 3,
+            "review_action" => 4,
+            "scheduled_review" => 5,
             _ => u8::MAX - 1,
         })
         .unwrap_or(u8::MAX);

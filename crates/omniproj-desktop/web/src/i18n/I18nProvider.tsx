@@ -331,10 +331,10 @@ const WORK_STATUS_EN: Record<WorkItemStatus, string> = {
   planned: "Planned", doing: "Doing", blocked: "Blocked", done: "Done", abandoned: "Abandoned",
 };
 const REVIEW_REASON_ZH: Record<ReviewReasonCode, string> = {
-  source_unavailable: "项目源不可用", complete_setup: "完成设置", needs_commitment: "需要承诺", review_action: "审视实际进展", scheduled_review: "定期审视",
+  source_unavailable: "项目源不可用", complete_setup: "完成设置", needs_commitment: "需要承诺", overdue_work: "任务逾期", review_action: "审视实际进展", scheduled_review: "定期审视",
 };
 const REVIEW_REASON_EN: Record<ReviewReasonCode, string> = {
-  source_unavailable: "Source unavailable", complete_setup: "Complete setup", needs_commitment: "Needs commitment", review_action: "Review action", scheduled_review: "Scheduled review",
+  source_unavailable: "Source unavailable", complete_setup: "Complete setup", needs_commitment: "Needs commitment", overdue_work: "Overdue work", review_action: "Review action", scheduled_review: "Scheduled review",
 };
 const TRANSITION_ZH: Record<CommitmentTransitionKind, string> = {
   set: "设定", confirmed: "确认", completed: "完成", replaced: "替换", cleared: "清除", correction: "纠正",
@@ -379,6 +379,12 @@ export function localizeEvidence(line: string, locale: Locale): string {
   }
   const interval = line.match(/^review interval: (\d+) days$/);
   if (interval) return `审视周期：${interval[1]} 天`;
+  const overdueCount = line.match(/^overdue items: (\d+)$/);
+  if (overdueCount) return `逾期任务：${overdueCount[1]} 项`;
+  const overdueItem = line.match(/^due (\d{4}-\d{2}-\d{2}) \((\d+) days? overdue\): (.*)$/);
+  if (overdueItem) return `预期 ${overdueItem[1]}，已逾期 ${overdueItem[2]} 天：${overdueItem[3]}`;
+  const overdueMore = line.match(/^and (\d+) more overdue items?$/);
+  if (overdueMore) return `…另有 ${overdueMore[1]} 项逾期`;
   const prefixes: Array<[string, string]> = [
     ["source status: ", "项目源状态："], ["last successful refresh: ", "最近成功刷新："],
     ["source error category: ", "项目源错误类别："], ["last effective commitment transition: ", "最近有效承诺变更："],

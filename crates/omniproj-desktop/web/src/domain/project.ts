@@ -43,6 +43,7 @@ export type ReviewReasonCode =
   | "source_unavailable"
   | "complete_setup"
   | "needs_commitment"
+  | "overdue_work"
   | "review_action"
   | "scheduled_review";
 

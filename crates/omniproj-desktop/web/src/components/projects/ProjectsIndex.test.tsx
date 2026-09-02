@@ -13,7 +13,7 @@ import { indexItem, reviewReason } from "../../test/fixtures";
 import { ProjectsIndex } from "./ProjectsIndex";
 
 const NOW = new Date("2026-08-12T12:00:00Z");
-const POLICY: ReviewPolicy = { commitment_review_days: 7, rule_version: "r0-v1" };
+const POLICY: ReviewPolicy = { commitment_review_days: 7, rule_version: "r1-v1" };
 
 function renderIndex(
   projects = [indexItem()],
@@ -57,7 +57,7 @@ describe("headers and policy", () => {
   });
 
   it("shows the review interval from the DTO review_policy, not a frontend constant", () => {
-    renderIndex([indexItem()], { policy: { commitment_review_days: 5, rule_version: "r0-v1" } });
+    renderIndex([indexItem()], { policy: { commitment_review_days: 5, rule_version: "r1-v1" } });
     expect(screen.getByText("Commitment review interval: 5 days")).toBeInTheDocument();
   });
 });

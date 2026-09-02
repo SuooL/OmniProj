@@ -2,8 +2,8 @@ use chrono::{DateTime, Utc};
 use omniproj_core::{
     derive_review_reasons, CommitmentTransition, CommitmentTransitionId, CommitmentTransitionKind,
     ProjectId, ProjectSource, ProjectSourceId, ProjectSourceKind, ProjectSourceStatus,
-    ProjectStateDoc, ProjectStatus, ReviewReasonCode, WorkItemId, DEFAULT_COMMITMENT_REVIEW_DAYS,
-    REVIEW_RULE_VERSION,
+    ProjectStateDoc, ProjectStatus, ReviewReasonCode, WorkItem, WorkItemId, WorkItemStatus,
+    DEFAULT_COMMITMENT_REVIEW_DAYS, REVIEW_RULE_VERSION,
 };
 
 const CREATED_AT: &str = "2026-08-01T00:00:00Z";
@@ -70,10 +70,16 @@ fn transition(
 }
 
 fn codes(state: &ProjectStateDoc, source: &ProjectSource, now: &str) -> Vec<ReviewReasonCode> {
-    derive_review_reasons(state, source, at(now), DEFAULT_COMMITMENT_REVIEW_DAYS)
-        .into_iter()
-        .map(|reason| reason.code)
-        .collect()
+    derive_review_reasons(
+        state,
+        source,
+        at(now),
+        at(now).date_naive(),
+        DEFAULT_COMMITMENT_REVIEW_DAYS,
+    )
+    .into_iter()
+    .map(|reason| reason.code)
+    .collect()
 }
 
 #[test]
@@ -86,6 +92,7 @@ fn source_failure_is_first_and_suppresses_setup_review_and_scheduled_reasons() {
         &state,
         &unavailable,
         at("2026-08-10T00:00:00Z"),
+        at("2026-08-10T00:00:00Z").date_naive(),
         DEFAULT_COMMITMENT_REVIEW_DAYS,
     );
 
@@ -205,6 +212,7 @@ fn confirmation_resets_review_age_without_replacing_the_original_set_time() {
         &state,
         &available,
         at("2026-08-12T00:00:00Z"),
+        at("2026-08-12T00:00:00Z").date_naive(),
         DEFAULT_COMMITMENT_REVIEW_DAYS,
     );
     assert_eq!(reasons[0].code, ReviewReasonCode::ReviewAction);
@@ -436,6 +444,7 @@ fn reasons_aggregate_in_fixed_priority_order_and_never_include_actual_changed() 
         &active,
         &source(ProjectSourceStatus::Missing),
         at("2026-08-10T00:00:00Z"),
+        at("2026-08-10T00:00:00Z").date_naive(),
         DEFAULT_COMMITMENT_REVIEW_DAYS,
     );
 
@@ -480,6 +489,7 @@ fn review_interval_is_a_visible_parameter_not_work_item_or_state_update_age() {
         &state,
         &source(ProjectSourceStatus::Available),
         at("2026-08-04T00:00:00Z"),
+        at("2026-08-04T00:00:00Z").date_naive(),
         3,
     );
     assert_eq!(reasons[0].code, ReviewReasonCode::ReviewAction);
@@ -487,4 +497,221 @@ fn review_interval_is_a_visible_parameter_not_work_item_or_state_update_age() {
         .evidence
         .iter()
         .any(|evidence| evidence.contains("3 days")));
+}
+
+// --- R1: overdue work ------------------------------------------------------
+
+fn work_item(id: &str, status: WorkItemStatus, due: Option<&str>) -> WorkItem {
+    WorkItem {
+        id: work_item_id(id),
+        project_id: project_id(),
+        text: format!("task {id}"),
+        status,
+        unclear: false,
+        due: due.map(str::to_owned),
+        note: None,
+        commits: Vec::new(),
+        blocker: None,
+        blocked_at: None,
+        created_at: CREATED_AT.into(),
+        updated_at: CREATED_AT.into(),
+        adopted_from_proposal_id: None,
+        source_task_id: None,
+    }
+}
+
+#[test]
+fn overdue_work_fires_only_after_the_due_day_has_fully_passed() {
+    let mut state = state(ProjectStatus::Active);
+    state.current_next_action_id = Some(work_item_id("work-a"));
+    state.work_items = vec![work_item(
+        "work-a",
+        WorkItemStatus::Planned,
+        Some("2026-08-10"),
+    )];
+    let available = source(ProjectSourceStatus::Available);
+
+    // On the due day itself, nothing fires.
+    assert!(codes(&state, &available, "2026-08-10T23:00:00Z").is_empty());
+    // The morning after, it does.
+    let reasons = derive_review_reasons(
+        &state,
+        &available,
+        at("2026-08-11T08:00:00Z"),
+        at("2026-08-11T08:00:00Z").date_naive(),
+        DEFAULT_COMMITMENT_REVIEW_DAYS,
+    );
+    assert_eq!(reasons[0].code, ReviewReasonCode::OverdueWork);
+    assert_eq!(reasons[0].label, "Overdue work");
+    assert_eq!(reasons[0].rule_version, REVIEW_RULE_VERSION);
+    assert!(reasons[0]
+        .evidence
+        .iter()
+        .any(|line| line == "overdue items: 1"));
+    assert!(reasons[0]
+        .evidence
+        .iter()
+        .any(|line| line.contains("due 2026-08-10 (1 days overdue)")));
+}
+
+#[test]
+fn done_abandoned_and_undated_items_are_never_overdue() {
+    let mut state = state(ProjectStatus::Active);
+    state.current_next_action_id = Some(work_item_id("work-done"));
+    state.work_items = vec![
+        work_item("work-done", WorkItemStatus::Done, Some("2026-08-01")),
+        work_item("work-gone", WorkItemStatus::Abandoned, Some("2026-08-01")),
+        work_item("work-open", WorkItemStatus::Planned, None),
+    ];
+
+    assert!(codes(
+        &state,
+        &source(ProjectSourceStatus::Available),
+        "2026-08-20T00:00:00Z"
+    )
+    .is_empty());
+}
+
+#[test]
+fn waiting_and_parked_projects_suppress_overdue_work() {
+    for status in [ProjectStatus::Waiting, ProjectStatus::Parked] {
+        let mut suspended = state(status);
+        suspended.status_reason = Some("deliberately deferred".into());
+        if status == ProjectStatus::Waiting {
+            suspended.review_at = Some("2026-12-01T00:00:00Z".into());
+        }
+        suspended.work_items = vec![work_item(
+            "work-late",
+            WorkItemStatus::Doing,
+            Some("2026-08-01"),
+        )];
+        assert!(codes(
+            &suspended,
+            &source(ProjectSourceStatus::Available),
+            "2026-08-20T00:00:00Z"
+        )
+        .is_empty());
+    }
+}
+
+#[test]
+fn overdue_evidence_names_the_three_oldest_and_folds_the_rest() {
+    let mut state = state(ProjectStatus::Active);
+    state.current_next_action_id = Some(work_item_id("work-1"));
+    state.work_items = vec![
+        work_item("work-1", WorkItemStatus::Planned, Some("2026-08-05")),
+        work_item("work-2", WorkItemStatus::Doing, Some("2026-08-01")),
+        work_item("work-3", WorkItemStatus::Blocked, Some("2026-08-03")),
+        work_item("work-4", WorkItemStatus::Planned, Some("2026-08-07")),
+        work_item("work-5", WorkItemStatus::Planned, Some("2026-08-06")),
+    ];
+
+    let reasons = derive_review_reasons(
+        &state,
+        &source(ProjectSourceStatus::Available),
+        at("2026-08-10T00:00:00Z"),
+        at("2026-08-10T00:00:00Z").date_naive(),
+        DEFAULT_COMMITMENT_REVIEW_DAYS,
+    );
+    let overdue = reasons
+        .iter()
+        .find(|reason| reason.code == ReviewReasonCode::OverdueWork)
+        .expect("overdue reason");
+    assert_eq!(overdue.evidence[0], "overdue items: 5");
+    // Oldest debt first: 08-01, 08-03, 08-05; the rest folds into a count.
+    assert!(overdue.evidence[1].starts_with("due 2026-08-01 (9 days overdue)"));
+    assert!(overdue.evidence[2].starts_with("due 2026-08-03 (7 days overdue)"));
+    assert!(overdue.evidence[3].starts_with("due 2026-08-05 (5 days overdue)"));
+    assert_eq!(overdue.evidence[4], "and 2 more overdue items");
+}
+
+#[test]
+fn overdue_evidence_truncates_long_task_text_on_a_char_boundary() {
+    let mut state = state(ProjectStatus::Active);
+    state.current_next_action_id = Some(work_item_id("work-long"));
+    let mut long = work_item("work-long", WorkItemStatus::Planned, Some("2026-08-01"));
+    long.text = "长".repeat(80);
+    state.work_items = vec![long];
+
+    let reasons = derive_review_reasons(
+        &state,
+        &source(ProjectSourceStatus::Available),
+        at("2026-08-10T00:00:00Z"),
+        at("2026-08-10T00:00:00Z").date_naive(),
+        DEFAULT_COMMITMENT_REVIEW_DAYS,
+    );
+    let overdue = reasons
+        .iter()
+        .find(|reason| reason.code == ReviewReasonCode::OverdueWork)
+        .expect("overdue reason");
+    let line = &overdue.evidence[1];
+    assert!(line.ends_with('…'));
+    assert_eq!(line.chars().filter(|c| *c == '长').count(), 60);
+}
+
+#[test]
+fn overdue_sits_between_needs_commitment_and_review_action() {
+    // A project with no commitment AND overdue work: NeedsCommitment first, overdue second.
+    let mut state = state(ProjectStatus::Active);
+    state.work_items = vec![work_item(
+        "work-late",
+        WorkItemStatus::Planned,
+        Some("2026-08-01"),
+    )];
+    assert_eq!(
+        codes(
+            &state,
+            &source(ProjectSourceStatus::Available),
+            "2026-08-20T00:00:00Z"
+        ),
+        vec![
+            ReviewReasonCode::NeedsCommitment,
+            ReviewReasonCode::OverdueWork,
+        ]
+    );
+
+    // With a stale commitment AND overdue work: overdue outranks the routine review.
+    let item = work_item_id("work-late");
+    state.current_next_action_id = Some(item.clone());
+    state.commitment_transitions.push(transition(
+        "transition-set-overdue",
+        CommitmentTransitionKind::Set,
+        "2026-08-01T00:00:00Z",
+        None,
+        Some(item),
+        None,
+    ));
+    assert_eq!(
+        codes(
+            &state,
+            &source(ProjectSourceStatus::Available),
+            "2026-08-20T00:00:00Z"
+        ),
+        vec![
+            ReviewReasonCode::OverdueWork,
+            ReviewReasonCode::ReviewAction,
+        ]
+    );
+}
+
+#[test]
+fn overdue_work_survives_source_failure_like_other_human_state_reasons() {
+    let mut state = state(ProjectStatus::Active);
+    state.current_next_action_id = Some(work_item_id("work-late"));
+    state.work_items = vec![work_item(
+        "work-late",
+        WorkItemStatus::Planned,
+        Some("2026-08-01"),
+    )];
+    assert_eq!(
+        codes(
+            &state,
+            &source(ProjectSourceStatus::Missing),
+            "2026-08-20T00:00:00Z"
+        ),
+        vec![
+            ReviewReasonCode::SourceUnavailable,
+            ReviewReasonCode::OverdueWork,
+        ]
+    );
 }

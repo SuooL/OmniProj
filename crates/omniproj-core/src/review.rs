@@ -1,23 +1,30 @@
-//! Deterministic, state-derived review signals for the R0 project index.
+//! Deterministic, state-derived review signals for the project index.
 
 use std::collections::HashSet;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 
 use crate::ids::{CommitmentTransitionId, WorkItemId};
 use crate::project::{ProjectSource, ProjectSourceStatus};
 use crate::project_state::{
-    CommitmentTransition, CommitmentTransitionKind, ProjectStateDoc, ProjectStatus,
+    CommitmentTransition, CommitmentTransitionKind, ProjectStateDoc, ProjectStatus, WorkItem,
+    WorkItemStatus,
 };
 
-pub const REVIEW_RULE_VERSION: &str = "r0-v1";
+pub const REVIEW_RULE_VERSION: &str = "r1-v1";
 pub const DEFAULT_COMMITMENT_REVIEW_DAYS: i64 = 7;
+
+/// How many overdue items are named in evidence before folding into a count.
+const OVERDUE_EVIDENCE_ITEMS: usize = 3;
+/// Character floor for an overdue item's quoted text in evidence.
+const OVERDUE_EVIDENCE_TEXT_CHARS: usize = 60;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ReviewReasonCode {
     SourceUnavailable,
     CompleteSetup,
     NeedsCommitment,
+    OverdueWork,
     ReviewAction,
     ScheduledReview,
 }
@@ -41,14 +48,17 @@ struct EffectiveHistory {
     latest_transition: Option<(CommitmentTransitionKind, String)>,
 }
 
-/// Derives R0 review reasons from human state, source availability, and commitment history.
+/// Derives review reasons from human state, source availability, and commitment history.
 ///
 /// The function intentionally has no repository-observation inputs: activity, dirty files,
-/// cached facts, and `WorkItem::updated_at` cannot change its result.
+/// cached facts, and `WorkItem::updated_at` cannot change its result. `local_today` is the
+/// user's local calendar date (due dates carry day semantics, not instants); the caller owns
+/// the timezone decision so this derivation stays deterministic and testable.
 pub fn derive_review_reasons(
     state: &ProjectStateDoc,
     source: &ProjectSource,
     now: DateTime<Utc>,
+    local_today: NaiveDate,
     commitment_review_days: i64,
 ) -> Vec<ReviewReason> {
     let source_unavailable = source.status != ProjectSourceStatus::Available;
@@ -108,6 +118,20 @@ pub fn derive_review_reasons(
             })
             .unwrap_or_else(|| "no effective commitment transition recorded".into());
         reasons.push(reason(ReviewReasonCode::NeedsCommitment, vec![latest]));
+    }
+
+    // Overdue work is a pure human-state fact (the user's own expected date has passed),
+    // so like NeedsCommitment it is not gated on source availability. Waiting/Parked
+    // projects are excluded: suspending the lifecycle is an explicit deferral, and
+    // ScheduledReview already covers their return.
+    if state.status == ProjectStatus::Active {
+        let overdue = overdue_items(&state.work_items, local_today);
+        if !overdue.is_empty() {
+            reasons.push(reason(
+                ReviewReasonCode::OverdueWork,
+                overdue_evidence(&overdue, local_today),
+            ));
+        }
     }
 
     if state.status == ProjectStatus::Active && !source_unavailable {
@@ -219,6 +243,50 @@ fn effective_history(transitions: &[CommitmentTransition]) -> EffectiveHistory {
     }
 }
 
+/// Work items whose user-set expected date has passed. `due == local_today` is NOT overdue
+/// (the day is not over); Done and Abandoned items never nag. Sorted most-overdue first so
+/// evidence truncation keeps the oldest debt visible.
+fn overdue_items(items: &[WorkItem], local_today: NaiveDate) -> Vec<(&WorkItem, NaiveDate)> {
+    let mut overdue: Vec<(&WorkItem, NaiveDate)> = items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.status,
+                WorkItemStatus::Planned | WorkItemStatus::Doing | WorkItemStatus::Blocked
+            )
+        })
+        .filter_map(|item| {
+            let due = NaiveDate::parse_from_str(item.due.as_deref()?, "%Y-%m-%d").ok()?;
+            (due < local_today).then_some((item, due))
+        })
+        .collect();
+    overdue.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.id.cmp(&b.0.id)));
+    overdue
+}
+
+fn overdue_evidence(overdue: &[(&WorkItem, NaiveDate)], local_today: NaiveDate) -> Vec<String> {
+    let mut evidence = vec![format!("overdue items: {}", overdue.len())];
+    for (item, due) in overdue.iter().take(OVERDUE_EVIDENCE_ITEMS) {
+        let days = (local_today - *due).num_days();
+        let mut text: String = item
+            .text
+            .chars()
+            .take(OVERDUE_EVIDENCE_TEXT_CHARS)
+            .collect();
+        if item.text.chars().count() > OVERDUE_EVIDENCE_TEXT_CHARS {
+            text.push('…');
+        }
+        evidence.push(format!("due {due} ({days} days overdue): {text}"));
+    }
+    if overdue.len() > OVERDUE_EVIDENCE_ITEMS {
+        evidence.push(format!(
+            "and {} more overdue items",
+            overdue.len() - OVERDUE_EVIDENCE_ITEMS
+        ));
+    }
+    evidence
+}
+
 fn review_due(review_at: &str, now: DateTime<Utc>, days: i64) -> bool {
     let Some(review_at) = parse_timestamp(review_at) else {
         return false;
@@ -246,6 +314,7 @@ fn reason(code: ReviewReasonCode, evidence: Vec<String>) -> ReviewReason {
             ReviewReasonCode::SourceUnavailable => "Source unavailable",
             ReviewReasonCode::CompleteSetup => "Complete setup",
             ReviewReasonCode::NeedsCommitment => "Needs commitment",
+            ReviewReasonCode::OverdueWork => "Overdue work",
             ReviewReasonCode::ReviewAction => "Review action",
             ReviewReasonCode::ScheduledReview => "Scheduled review",
         }

@@ -400,7 +400,7 @@ fn error_maps_commitment_mismatch_to_distinct_codes() {
 fn dto_review_policy_is_r0() {
     let value = serde_json::to_value(dto::ReviewPolicyDto::r0()).unwrap();
     assert_eq!(value["commitment_review_days"], json!(7));
-    assert_eq!(value["rule_version"], json!("r0-v1"));
+    assert_eq!(value["rule_version"], json!("r1-v1"));
 }
 
 #[test]
@@ -460,7 +460,7 @@ fn dto_index_row_excludes_source_path_while_overview_includes_it() {
     assert_eq!(overview_value["source"]["location"], json!(stored_location));
     assert_eq!(
         overview_value["review_policy"]["rule_version"],
-        json!("r0-v1")
+        json!("r1-v1")
     );
 }
 
@@ -1095,5 +1095,135 @@ fn handler_rejects_deferred_commands_and_accepts_the_r0_surface() {
     // The read path actually runs and returns a well-formed response.
     let index = invoke("list_project_index", json!({})).expect("list_project_index runs");
     assert!(index["projects"].is_array());
-    assert_eq!(index["review_policy"]["rule_version"], json!("r0-v1"));
+    assert_eq!(index["review_policy"]["rule_version"], json!("r1-v1"));
+}
+
+#[test]
+fn service_index_reports_overdue_work_and_orders_it_into_the_decision_queue() {
+    let _guard = env_guard();
+    let _home = Home::new("overdue");
+    let record = register(&unique_path("overdue-repo"), "Overdue project");
+
+    let service = service();
+    service
+        .complete_project_setup(dto::CompleteProjectSetupInput {
+            project_id: record.id.clone(),
+            expected_revision: 0,
+            objective: "o".into(),
+            desired_outcome: "d".into(),
+            phase: None,
+            first_commitment: "first".into(),
+        })
+        .unwrap();
+
+    // A second task whose user-set expected date is long past (far enough that the
+    // local-timezone day boundary cannot matter to this assertion).
+    let tasks = mvp::get_tasks(record.id.clone()).unwrap();
+    let tasks = mvp::add_task(
+        record.id.clone(),
+        tasks.revision,
+        "Ship the overdue milestone".into(),
+        false,
+    )
+    .unwrap();
+    let late = tasks
+        .tasks
+        .iter()
+        .find(|task| task.text == "Ship the overdue milestone")
+        .unwrap()
+        .id
+        .clone();
+    mvp::update_task(
+        record.id.clone(),
+        tasks.revision,
+        late,
+        "open".into(),
+        Some("2026-08-01".into()),
+        None,
+    )
+    .unwrap();
+
+    let index = service.list_project_index().unwrap();
+    let project = index
+        .projects
+        .iter()
+        .find(|p| p.project_id == record.id)
+        .unwrap();
+    let overdue = project
+        .review_reasons
+        .iter()
+        .find(|reason| reason.code == "overdue_work")
+        .expect("overdue_work reason on the index row");
+    assert_eq!(overdue.label, "Overdue work");
+    assert!(overdue
+        .evidence
+        .iter()
+        .any(|line| line == "overdue items: 1"));
+    assert!(overdue
+        .evidence
+        .iter()
+        .any(|line| line.contains("due 2026-08-01") && line.contains("Ship the overdue")));
+    // Priority: overdue outranks scheduled/review codes in the DTO ordering.
+    let codes: Vec<&str> = project
+        .review_reasons
+        .iter()
+        .map(|reason| reason.code.as_str())
+        .collect();
+    if let Some(review_pos) = codes.iter().position(|code| *code == "review_action") {
+        assert!(
+            codes
+                .iter()
+                .position(|code| *code == "overdue_work")
+                .unwrap()
+                < review_pos
+        );
+    }
+}
+
+#[test]
+fn attention_summary_counts_projects_with_overdue_work() {
+    let _guard = env_guard();
+    let _home = Home::new("overdue-attention");
+    let record = register(&unique_path("overdue-attention-repo"), "Late project");
+    let quiet = register(&unique_path("overdue-attention-quiet"), "Quiet project");
+
+    let service = service();
+    for (id, revision) in [(&record.id, 0), (&quiet.id, 0)] {
+        service
+            .complete_project_setup(dto::CompleteProjectSetupInput {
+                project_id: id.clone(),
+                expected_revision: revision,
+                objective: "o".into(),
+                desired_outcome: "d".into(),
+                phase: None,
+                first_commitment: "first".into(),
+            })
+            .unwrap();
+    }
+
+    let tasks = mvp::get_tasks(record.id.clone()).unwrap();
+    let tasks = mvp::add_task(record.id.clone(), tasks.revision, "late".into(), false).unwrap();
+    let late = tasks
+        .tasks
+        .iter()
+        .find(|t| t.text == "late")
+        .unwrap()
+        .id
+        .clone();
+    mvp::update_task(
+        record.id.clone(),
+        tasks.revision,
+        late,
+        "open".into(),
+        // A frozen past date: relative to any real wall clock this stays overdue.
+        Some("2026-08-01".into()),
+        None,
+    )
+    .unwrap();
+
+    // A huge silence threshold isolates the overdue condition: neither project has any
+    // commit, so only the overdue task can pull one into the summary.
+    let summary = mvp::attention_summary_with_threshold(36500);
+    assert!(summary.project_ids.contains(&record.id));
+    assert!(!summary.project_ids.contains(&quiet.id));
 }
