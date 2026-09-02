@@ -1,7 +1,8 @@
 // The single primary review signal for a row. Tone is fixed per deterministic reason code:
 // danger = unavailable source; info = observed change (review_action); warning = an action the
-// Human still owes (complete_setup, needs_commitment, scheduled_review). Extra reasons are a
-// PLAIN, uncontained `+N` whose accessible name enumerates them — never a second enclosed badge.
+// Human still owes (complete_setup, needs_commitment, overdue_work, scheduled_review). Extra
+// reasons are a PLAIN, uncontained `+N` whose accessible name enumerates them — never a second
+// enclosed badge.
 
 import type { ReviewReasonCode } from "../../domain/project";
 import { toneStyle, type StatusTone } from "./tone";
@@ -11,6 +12,7 @@ const REASON_TONE: Record<ReviewReasonCode, StatusTone> = {
   source_unavailable: "danger",
   complete_setup: "warning",
   needs_commitment: "warning",
+  overdue_work: "warning",
   review_action: "info",
   scheduled_review: "warning",
 };

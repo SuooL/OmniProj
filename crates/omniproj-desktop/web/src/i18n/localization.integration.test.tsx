@@ -15,7 +15,7 @@ import { I18nProvider } from "./I18nProvider";
 import type { Locale } from "./I18nProvider";
 
 const NOW = new Date("2026-08-12T12:00:00Z");
-const POLICY: ReviewPolicy = { commitment_review_days: 7, rule_version: "r0-v1" };
+const POLICY: ReviewPolicy = { commitment_review_days: 7, rule_version: "r1-v1" };
 
 // A long, unique, always-rendered string, so the assertion can't collide with a badge.
 const GROUP_LABEL_ZH = "其他项目";

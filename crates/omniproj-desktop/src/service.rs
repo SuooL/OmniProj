@@ -131,7 +131,16 @@ impl<C: Clock> DesktopService<C> {
         let source = record.primary_git_source();
         let reasons = match source {
             Some(source) => {
-                derive_review_reasons(state, source, now, DEFAULT_COMMITMENT_REVIEW_DAYS)
+                // Due dates carry day semantics in the user's own calendar, so overdue is
+                // judged against the local date of the same instant, not the UTC date.
+                let local_today = now.with_timezone(&chrono::Local).date_naive();
+                derive_review_reasons(
+                    state,
+                    source,
+                    now,
+                    local_today,
+                    DEFAULT_COMMITMENT_REVIEW_DAYS,
+                )
             }
             None => Vec::new(),
         };

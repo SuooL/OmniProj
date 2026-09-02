@@ -40,11 +40,12 @@ export async function installMockTauri(page: Page): Promise<void> {
     if (window.localStorage.getItem("omniproj.locale") === null) {
       window.localStorage.setItem("omniproj.locale", "en");
     }
-    const REVIEW_POLICY = { commitment_review_days: 7, rule_version: "r0-v1" };
+    const REVIEW_POLICY = { commitment_review_days: 7, rule_version: "r1-v1" };
     const REASON_LABEL: Record<string, string> = {
       source_unavailable: "Source unavailable",
       complete_setup: "Complete setup",
       needs_commitment: "Needs commitment",
+      overdue_work: "Overdue work",
       review_action: "Review action",
       scheduled_review: "Scheduled review",
     };
@@ -56,7 +57,7 @@ export async function installMockTauri(page: Page): Promise<void> {
     w.__mock = { pick: "/valid/repo", failNext: null, failStateApplied: false, refreshFail: [] };
 
     function reasons(codes: string[]) {
-      return codes.map((code) => ({ code, label: REASON_LABEL[code], evidence: code === "review_action" ? ["Commitment review interval: 7 days", "Last confirmed 2026-08-01T00:00:00Z"] : [], rule_version: "r0-v1" }));
+      return codes.map((code) => ({ code, label: REASON_LABEL[code], evidence: code === "review_action" ? ["Commitment review interval: 7 days", "Last confirmed 2026-08-01T00:00:00Z"] : [], rule_version: "r1-v1" }));
     }
     function observed(seedId: string) {
       return {

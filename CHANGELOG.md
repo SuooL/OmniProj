@@ -12,6 +12,14 @@ projects, ≥20 recorded re-entry events) has **not** been met, so no release is
 
 ### Added
 
+- **R1a overdue→Attend (FR-A4)** — a work item whose user-set expected date has passed
+  (judged against the user's **local** calendar date; `due == today` is not yet overdue) now
+  produces the deterministic review reason `overdue_work` on Active projects, entering the
+  needs-decision group, the menu-bar attention count, and the daily reminder. Priority sits
+  between `needs_commitment` and `review_action`; evidence names the three oldest overdue
+  items (60-char truncation) and folds the rest into a count. Waiting/Parked projects are
+  excluded (suspension is an explicit deferral; `scheduled_review` covers their return).
+  `REVIEW_RULE_VERSION` is now `r1-v1`. Design: `docs/superpowers/specs/2026-09-02-r1-project-management.md`.
 - **M1 menu-bar attention (FR-A3)** — a Tauri tray icon carries the native title
   「N 个待关注」 (hidden at zero) plus a matching tooltip, synced at startup and on a periodic
   refresh as well as after the actions that change the count.

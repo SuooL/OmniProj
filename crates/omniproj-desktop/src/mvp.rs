@@ -213,6 +213,9 @@ fn write_checked_document(
 
 pub fn attention_summary_with_threshold(days: u32) -> AttentionSummaryDto {
     let cutoff = Utc::now() - chrono::Duration::days(days as i64);
+    // Overdue uses the user's local calendar date: a due date means "by the end of that
+    // day where I live", so `due == today` is not yet overdue (FR-A4).
+    let local_today = chrono::Local::now().date_naive();
     let project_ids = omniproj_core::list_project_records()
         .ok()
         .map(|records| {
@@ -232,13 +235,26 @@ pub fn attention_summary_with_threshold(days: u32) -> AttentionSummaryDto {
                         .as_ref()
                         .and_then(|id| state.work_items.iter().find(|item| &item.id == id))
                         .is_some_and(|item| item.status == WorkItemStatus::Blocked);
+                    let overdue = state.work_items.iter().any(|item| {
+                        matches!(
+                            item.status,
+                            WorkItemStatus::Planned
+                                | WorkItemStatus::Doing
+                                | WorkItemStatus::Blocked
+                        ) && item
+                            .due
+                            .as_deref()
+                            .and_then(|due| chrono::NaiveDate::parse_from_str(due, "%Y-%m-%d").ok())
+                            .is_some_and(|due| due < local_today)
+                    });
                     let latest = commit_log(Path::new(&source.location), 1)
                         .first()
                         .and_then(|commit| {
                             chrono::DateTime::parse_from_rfc3339(&commit.committed_at).ok()
                         })
                         .map(|dt| dt.with_timezone(&Utc));
-                    (blocked || latest.is_some_and(|at| at < cutoff)).then_some(record.id)
+                    (blocked || overdue || latest.is_some_and(|at| at < cutoff))
+                        .then_some(record.id)
                 })
                 .collect::<Vec<_>>()
         })

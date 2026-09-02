@@ -45,3 +45,24 @@ describe("Chinese-first locale", () => {
     expect(screen.getByText("Projects")).toBeInTheDocument();
   });
 });
+
+describe("overdue review reason localization", () => {
+  it("labels overdue_work in both locales", async () => {
+    const { reviewReasonLabel } = await import("./I18nProvider");
+    expect(reviewReasonLabel("overdue_work", "zh-CN")).toBe("任务逾期");
+    expect(reviewReasonLabel("overdue_work", "en")).toBe("Overdue work");
+  });
+
+  it("localizes overdue evidence lines to Chinese and passes English through", async () => {
+    const { localizeEvidence } = await import("./I18nProvider");
+    expect(localizeEvidence("overdue items: 5", "zh-CN")).toBe("逾期任务：5 项");
+    expect(localizeEvidence("due 2026-08-01 (9 days overdue): fix the parser", "zh-CN")).toBe(
+      "预期 2026-08-01，已逾期 9 天：fix the parser",
+    );
+    expect(localizeEvidence("due 2026-08-10 (1 days overdue): 收尾", "zh-CN")).toBe(
+      "预期 2026-08-10，已逾期 1 天：收尾",
+    );
+    expect(localizeEvidence("and 2 more overdue items", "zh-CN")).toBe("…另有 2 项逾期");
+    expect(localizeEvidence("overdue items: 5", "en")).toBe("overdue items: 5");
+  });
+});
