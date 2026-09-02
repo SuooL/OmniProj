@@ -5,6 +5,94 @@ Pre-1.0: the public surface (CLI commands, `~/.omniproj` layout) may still chang
 
 ## [Unreleased]
 
+Everything below has landed on `dev` since the `v0.0.1` tag and is **not yet released**:
+`main` still points at the initial public release and the workspace version is still `0.0.1`.
+The MVP dogfood threshold in `docs/requirements.md` §6 (2–4 weeks of daily use, ≥5 real
+projects, ≥20 recorded re-entry events) has **not** been met, so no release is cut.
+
+### Added
+
+- **M1 menu-bar attention (FR-A3)** — a Tauri tray icon carries the native title
+  「N 个待关注」 (hidden at zero) plus a matching tooltip, synced at startup and on a periodic
+  refresh as well as after the actions that change the count.
+- **M2 human-led task model (FR-R1)** — tasks with tri-state status (`open`/`doing`/`done`),
+  an `?`-unformed marker, an expected completion date, and a free-text problem note
+  (问题备注); one task can be explicitly promoted to the project's single Current Commitment,
+  after which its effective state derives from the commitment lifecycle.
+- **M2 git reconciliation (FR-R2)** — a commit timeline in the project page, with one or more
+  commits attributable to a single task (many-to-one), plus unbind/rebind.
+- **M3 Advance breakdown (FR-V1)** — an agent turns one task or idea into 3–6 concrete
+  candidate subtasks that the human adopts item by item; provider/model are configured in-app,
+  the API key lives only in the system keychain (service `app.omniproj.desktop.llm`), a remote
+  call requires explicit send consent, and a malformed response gets exactly one bounded retry
+  before erroring **without** writing a proposal.
+- **M4 record deepening** — a branch-aware git flow graph (a compact reconciliation canvas,
+  not a full gitk-style history browser) and `plan.md`, a per-project append-only decision log
+  that can record 「决定不做」 as `abandoned` rather than deleting it (charter §7).
+- **M5 Advance extensions** — `clarify` (FR-V3) and refine-to-spec (FR-V2) wired into the
+  desktop Advance layer.
+- **R0 project re-entry** (`docs/superpowers/plans/2026-08-11-r0-project-reentry.md`) — the
+  bulk of this cycle:
+  - **Core** — typed ids and atomic store writes; projects separated from their repository
+    sources; an auditable commitment state machine with undo receipts; deterministic project
+    review reasons (no health score, no priority ranking).
+  - **Capture** — typed repository observations with canonicalized paths and validated
+    `git status --porcelain` states.
+  - **Desktop** — a typed R0 IPC service over stable project ids, with an observation cache
+    invalidated on relink.
+  - **Web** — canonical project routes and an AppShell; the dense semantic Projects Index;
+    Project Peek and Overview with commitment interactions and focus recovery; project
+    registration and moved-source recovery.
+- **R0 product reset** (`docs/product-reset-r0.md`) — the re-entry surface rebuilt around the
+  actual job: `WorkItem` becomes the canonical task/commitment object (with a one-time
+  `notes/next.md` import), the Projects queue splits into "needs a decision" and the rest,
+  the project page has one visual endpoint (the current next step) with planning, observed
+  change, and project management as progressive disclosures, and language / reminder / Agent
+  configuration moves to global Settings. The loop ends inside OmniProj: no editor, terminal,
+  Finder, or Codex jump action is a primary call to action.
+- **Chinese-first interface** — `zh-CN` is the default locale with English available and the
+  choice persisted; status, review-reason, transition, and error labels are all localized.
+- **Configurable daily reminders (FR-A2)** — a daily digest by default, adjustable and
+  switchable off, with delivery state in `cache/reminder-delivery.toml` so a day fires once.
+- **Dogfood instrumentation** — the re-entry timer appends events to
+  `~/.omniproj/dogfood/reentry-events.jsonl` as store commits; interpretation in
+  `docs/dogfood.md`. This is instrumentation, never a primary user feature.
+- **Desktop delivery** — `release.yml` builds and publishes macOS `.dmg` bundles with SHA-256
+  sums. Signing, notarization, auto-update, and Homebrew distribution are still out of scope.
+- **CI + a pre-PR gate** — three CI jobs (Rust workspace, Frontend unit + build, Frontend e2e)
+  and `scripts/pre-pr-check.sh`, an 8-step local gate (fmt → clippy `-D warnings` → build →
+  test → npm ci → frontend build → unit tests → Playwright E2E) that must pass before a PR.
+- **Interaction and accessibility gates** — Playwright coverage for the core loop plus axe
+  (no critical/serious violations), ≥4.5:1 text and ≥3:1 control-boundary contrast in both
+  themes, grayscale/forced-colors survival, reduced-motion actually collapsing transitions,
+  200% text without horizontal overflow, and responsive behaviour from 1280px down to 640px.
+
+### Changed
+
+- **Desktop design system** — the interface visual system, shell, and navigation were
+  reworked several times and finally consolidated into a single "instrument identity"; the
+  project workspace was flattened and the permanent project sidebar removed (search moved back
+  onto the Projects surface).
+- **App icon and situation board** — a dedicated app icon plus the situation-board overview
+  redesign.
+- **Store recovery and migration** — `~/.omniproj` initialization, migration, and recovery were
+  hardened across many rounds: recoverable project mutations, a validated recovery journal with
+  legacy-format compatibility, recovery writes checked against trusted paths, preserved legacy
+  canonical human state with persisted proofs, a derived migration state-provenance partition,
+  and fail-closed behaviour when provenance has no snapshot.
+
+### Fixed
+
+- **Core** — root paths are rejected as audit targets; concurrent in-process store writers are
+  serialized, which removes the spurious multi-project refresh failures.
+- **Capture** — invalid deleted-status pairs in porcelain output are rejected; the read-only
+  proof is scoped to the working tree instead of `.git`, which was the CI-only flaky diff.
+- **Desktop** — repository state now refreshes reliably; startup migration no longer breaks the
+  first launch; native window dragging works again.
+- **Web** — project navigation is trustworthy again (route builder, Escape pop, filter state,
+  Index-background Peek, re-entrancy, Peek focus steal); a reserved scrollbar gutter stops
+  CI's classic scrollbars from tripping the horizontal-overflow gate.
+
 ## [0.0.1] — 2026-08-10
 
 **Desktop-pivot baseline.** OmniProj **resets its version to `0.0.1`** to mark the fresh
