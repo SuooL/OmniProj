@@ -12,8 +12,15 @@ use crate::store::{
     finish_pending_audit, mark_pending_audit_applied, StoreError,
 };
 
-const DOCUMENT_SCHEMA_VERSION: u32 = 1;
+/// v2 (R1) adds optional `tags` to work items. v1 documents load unchanged (tags default
+/// to empty) and are upgraded in memory; every save writes the current version.
+const DOCUMENT_SCHEMA_VERSION: u32 = 2;
+const MIN_DOCUMENT_SCHEMA_VERSION: u32 = 1;
 const DEFAULT_MARKDOWN_BODY: &str = "\n# Project notes\n";
+
+/// Tag invariants (FR-R5): a pure classification dimension, deliberately small.
+const MAX_TAGS_PER_ITEM: usize = 8;
+const MAX_TAG_CHARS: usize = 24;
 
 #[derive(Debug)]
 pub enum ProjectStateError {
@@ -164,6 +171,10 @@ pub struct WorkItem {
     pub due: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// User classification labels (schema v2). Normalized on write: trimmed, non-empty,
+    /// case-insensitively unique, at most `MAX_TAGS_PER_ITEM` of `MAX_TAG_CHARS` chars.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commits: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -189,6 +200,7 @@ pub struct WorkItemDraft {
     pub unclear: bool,
     pub due: Option<String>,
     pub note: Option<String>,
+    pub tags: Vec<String>,
     pub commits: Vec<String>,
     pub adopted_from_proposal_id: Option<String>,
     pub source_task_id: Option<String>,
@@ -276,6 +288,8 @@ pub enum ProjectCommand {
         unclear: bool,
         due: Option<String>,
         note: Option<String>,
+        /// `None` leaves the stored tags unchanged; `Some` replaces them (normalized).
+        tags: Option<Vec<String>>,
     },
     RemoveWorkItem {
         work_item_id: WorkItemId,
@@ -348,13 +362,27 @@ impl ProjectStateDoc {
         })?;
         let toml_text = &front_matter[..close];
         let markdown_body = &front_matter[close + delimiter.len()..];
+        // Check the version BEFORE the typed (deny_unknown_fields) deserialization, so a
+        // document from a newer OmniProj is refused with a clear version error instead of
+        // an incidental unknown-field parse error.
+        let probe: toml::Value = toml::from_str(toml_text)
+            .map_err(|error| ProjectStateError::InvalidDocument(error.to_string()))?;
+        let version = probe
+            .get("schema_version")
+            .and_then(toml::Value::as_integer)
+            .ok_or_else(|| {
+                ProjectStateError::InvalidDocument("missing or non-integer schema_version".into())
+            })?;
+        let version =
+            u32::try_from(version).map_err(|_| ProjectStateError::UnsupportedSchema(u32::MAX))?;
+        if !(MIN_DOCUMENT_SCHEMA_VERSION..=DOCUMENT_SCHEMA_VERSION).contains(&version) {
+            return Err(ProjectStateError::UnsupportedSchema(version));
+        }
         let mut document: Self = toml::from_str(toml_text)
             .map_err(|error| ProjectStateError::InvalidDocument(error.to_string()))?;
-        if document.schema_version != DOCUMENT_SCHEMA_VERSION {
-            return Err(ProjectStateError::UnsupportedSchema(
-                document.schema_version,
-            ));
-        }
+        // A v1 document is upgraded in memory (v2 only adds defaulted fields); the next
+        // save persists the current version.
+        document.schema_version = DOCUMENT_SCHEMA_VERSION;
         document.markdown_body = markdown_body.to_owned();
         document.validate()?;
         Ok(document)
@@ -463,6 +491,9 @@ impl ProjectStateDoc {
                 .any(|sha| sha.trim().is_empty() || !commit_ids.insert(sha))
             {
                 return invalid(format!("work item {} has invalid commits", item.id));
+            }
+            if let Err(error) = validate_tags(&item.tags) {
+                return invalid(format!("work item {} has invalid tags: {error}", item.id));
             }
             validate_timestamp("work item created_at", &item.created_at)?;
             validate_timestamp("work item updated_at", &item.updated_at)?;
@@ -833,8 +864,10 @@ fn apply_command_in_memory(
             unclear,
             due,
             note,
+            tags,
         } => {
             validate_due(due.as_deref())?;
+            let tags = tags.map(normalize_tags).transpose()?;
             let referenced = work_item_is_referenced(state, &work_item_id);
             let item = require_item_mut(state, &work_item_id)?;
             if referenced && item.status != status {
@@ -846,6 +879,9 @@ fn apply_command_in_memory(
             item.unclear = unclear;
             item.due = normalize_optional(due);
             item.note = normalize_optional(note);
+            if let Some(tags) = tags {
+                item.tags = tags;
+            }
             item.updated_at = occurred_at.to_owned();
         }
         ProjectCommand::RemoveWorkItem { work_item_id } => {
@@ -1187,6 +1223,7 @@ fn new_work_item(project_id: &ProjectId, text: String, occurred_at: &str) -> Wor
         unclear: false,
         due: None,
         note: None,
+        tags: Vec::new(),
         commits: Vec::new(),
         blocker: None,
         blocked_at: None,
@@ -1210,6 +1247,8 @@ fn work_item_from_draft(
         unclear: draft.unclear,
         due: normalize_optional(draft.due),
         note: normalize_optional(draft.note),
+        // Draft tags were validated by `validate_work_item_draft`; this cannot fail.
+        tags: normalize_tags(draft.tags).unwrap_or_default(),
         commits: deduplicated(draft.commits),
         blocker: None,
         blocked_at: None,
@@ -1223,6 +1262,68 @@ fn work_item_from_draft(
 fn validate_work_item_draft(draft: &WorkItemDraft) -> Result<(), ProjectStateError> {
     require_field("text", &draft.text)?;
     validate_due(draft.due.as_deref())?;
+    normalize_tags(draft.tags.clone())?;
+    Ok(())
+}
+
+/// Every canonical byte rendering a pristine setup document has ever had, oldest first.
+/// Store-migration provenance checks compare on-disk/history bytes against ALL of these,
+/// because a state file may have been created by any past OmniProj version (doc schema v1
+/// rendered `schema_version = 1`; v2 only adds defaulted fields, so the bodies are equal).
+pub fn canonical_setup_renderings(created_at: &str) -> Result<Vec<String>, ProjectStateError> {
+    let current = ProjectStateDoc::new_setup(created_at)?.render()?;
+    let v1 = current.replacen("schema_version = 2", "schema_version = 1", 1);
+    Ok(vec![v1, current])
+}
+
+/// Normalize user-entered tags for writing (FR-R5): trim each tag, reject empty or
+/// over-long entries, drop case-insensitive duplicates preserving first-seen order and
+/// the user's original casing, and cap the count. Chinese has no case; English tags keep
+/// their original spelling and compare case-insensitively.
+pub fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, ProjectStateError> {
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+    for tag in tags {
+        let tag = tag.trim();
+        if tag.is_empty() {
+            return Err(ProjectStateError::InvalidCommand(
+                "tags must not be empty".into(),
+            ));
+        }
+        if tag.chars().count() > MAX_TAG_CHARS {
+            return Err(ProjectStateError::InvalidCommand(format!(
+                "tag {tag:?} exceeds {MAX_TAG_CHARS} characters"
+            )));
+        }
+        if seen.insert(tag.to_lowercase()) {
+            normalized.push(tag.to_owned());
+        }
+    }
+    if normalized.len() > MAX_TAGS_PER_ITEM {
+        return Err(ProjectStateError::InvalidCommand(format!(
+            "at most {MAX_TAGS_PER_ITEM} tags per work item"
+        )));
+    }
+    Ok(normalized)
+}
+
+/// Invariants over already-persisted tags (checked on load and save).
+fn validate_tags(tags: &[String]) -> Result<(), &'static str> {
+    if tags.len() > MAX_TAGS_PER_ITEM {
+        return Err("too many tags");
+    }
+    let mut seen = HashSet::new();
+    for tag in tags {
+        if tag.trim().is_empty() || tag.trim() != tag {
+            return Err("tags must be trimmed and non-empty");
+        }
+        if tag.chars().count() > MAX_TAG_CHARS {
+            return Err("tag too long");
+        }
+        if !seen.insert(tag.to_lowercase()) {
+            return Err("duplicate tag");
+        }
+    }
     Ok(())
 }
 
@@ -1668,7 +1769,11 @@ mod tests {
 
     const CREATED_AT: &str = "2026-08-10T12:00:00Z";
 
+    /// A legacy v1 document: still accepted as input (upgraded in memory on parse).
     const SETUP: &str = "+++\nschema_version = 1\nrevision = 0\nstatus = \"setup\"\nstatus_changed_at = \"2026-08-10T12:00:00Z\"\ncreated_at = \"2026-08-10T12:00:00Z\"\nupdated_at = \"2026-08-10T12:00:00Z\"\nwork_items = []\ncommitment_transitions = []\n+++\n\n# Project notes\n";
+
+    /// The canonical current-version render of the same setup document.
+    const SETUP_V2: &str = "+++\nschema_version = 2\nrevision = 0\nstatus = \"setup\"\nstatus_changed_at = \"2026-08-10T12:00:00Z\"\ncreated_at = \"2026-08-10T12:00:00Z\"\nupdated_at = \"2026-08-10T12:00:00Z\"\nwork_items = []\ncommitment_transitions = []\n+++\n\n# Project notes\n";
 
     fn valid_with(front_matter_suffix: &str, body: &str) -> String {
         format!(
@@ -1679,7 +1784,7 @@ mod tests {
     #[test]
     fn new_setup_renders_the_canonical_fixture() {
         let document = ProjectStateDoc::new_setup(CREATED_AT).unwrap();
-        assert_eq!(document.render().unwrap(), SETUP);
+        assert_eq!(document.render().unwrap(), SETUP_V2);
     }
 
     #[test]
@@ -1715,11 +1820,53 @@ mod tests {
 
     #[test]
     fn parser_rejects_unsupported_document_schema() {
-        let input = SETUP.replacen("schema_version = 1", "schema_version = 2", 1);
+        let input = SETUP.replacen("schema_version = 1", "schema_version = 3", 1);
         assert!(matches!(
             ProjectStateDoc::parse(&input),
-            Err(ProjectStateError::UnsupportedSchema(2))
+            Err(ProjectStateError::UnsupportedSchema(3))
         ));
+    }
+
+    #[test]
+    fn v1_documents_parse_and_upgrade_in_memory_to_v2() {
+        let document = ProjectStateDoc::parse(SETUP).unwrap();
+        assert_eq!(document.schema_version, 2);
+        assert!(document.work_items.iter().all(|item| item.tags.is_empty()));
+        // The next render persists the current version.
+        assert!(document.render().unwrap().contains("schema_version = 2"));
+    }
+
+    #[test]
+    fn newer_schema_reports_version_not_unknown_field_noise() {
+        // A v3 document with a field this build does not know must fail on the version,
+        // not on deny_unknown_fields.
+        let input = SETUP.replacen(
+            "schema_version = 1",
+            "schema_version = 3\nfuture_field = true",
+            1,
+        );
+        assert!(matches!(
+            ProjectStateDoc::parse(&input),
+            Err(ProjectStateError::UnsupportedSchema(3))
+        ));
+    }
+
+    #[test]
+    fn normalize_tags_trims_dedupes_case_insensitively_and_bounds() {
+        assert_eq!(
+            normalize_tags(vec![" 论文 ".into(), "infra".into(), "Infra".into()]).unwrap(),
+            vec!["论文".to_owned(), "infra".to_owned()]
+        );
+        assert!(normalize_tags(vec!["".into()]).is_err());
+        assert!(normalize_tags(vec!["   ".into()]).is_err());
+        assert!(normalize_tags(vec!["长".repeat(25)]).is_err());
+        let too_many: Vec<String> = (0..9).map(|i| format!("tag-{i}")).collect();
+        assert!(normalize_tags(too_many).is_err());
+        let exactly_eight: Vec<String> = (0..8).map(|i| format!("tag-{i}")).collect();
+        assert_eq!(
+            normalize_tags(exactly_eight.clone()).unwrap(),
+            exactly_eight
+        );
     }
 
     #[test]
@@ -1870,6 +2017,7 @@ mod tests {
                     unclear: false,
                     due: Some("2026-08-12".into()),
                     note: Some("Use a project untouched for 24 hours".into()),
+                    tags: Vec::new(),
                     commits: Vec::new(),
                     adopted_from_proposal_id: None,
                     source_task_id: None,
@@ -1913,6 +2061,7 @@ mod tests {
             unclear: true,
             due: Some("2026-08-20".into()),
             note: Some("Imported context".into()),
+            tags: Vec::new(),
             commits: vec!["abc123".into(), "abc123".into()],
             adopted_from_proposal_id: None,
             source_task_id: Some("legacy-task".into()),

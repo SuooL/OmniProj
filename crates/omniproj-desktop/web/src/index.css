@@ -1454,6 +1454,10 @@ button {
 .op-task-main { min-width:0; display:grid; gap:2px; }
 .op-task-main small, .op-timeline small { color:var(--op-text-tertiary); font-size:var(--op-text-size-micro); }
 .op-task-unclear { color:var(--op-status-warning-fg); }
+/* User classification tags: keep the user's original casing (unlike .op-tag). */
+.op-task-tags { display:inline-flex; flex-wrap:wrap; gap:var(--op-space-1); }
+.op-task-tag { display:inline-flex; align-items:center; min-height:19px; padding:1px 7px; border:1px solid var(--op-border-strong); border-radius:var(--op-radius-sm); font-size:var(--op-text-size-micro); line-height:var(--op-line-necessary); color:var(--op-text-secondary); background:var(--op-surface-raised); }
+.op-task-tagfilter { display:flex; flex-wrap:wrap; align-items:center; gap:var(--op-space-2); margin-bottom:var(--op-space-3); }
 .op-task-actions { display:flex; align-items:center; gap:var(--op-space-2); flex-shrink:0; }
 .op-task-actions select { min-height:28px; }
 .op-proposal { display:grid; gap:var(--op-space-2); margin:var(--op-space-3) 0; padding:var(--op-space-3); border:1px solid var(--op-border-strong); border-radius:var(--op-radius-md); background:var(--op-surface-raised); }

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -20,6 +20,19 @@ const TASKS = {
     unclear: true,
     due: null,
     note: null,
+    tags: ["论文", "infra"],
+    commits: [],
+    adopted_from_proposal_id: null,
+    linked_work_item_id: null,
+    is_current_commitment: false,
+  }, {
+    id: "c3d4",
+    text: "Refactor the pipeline",
+    status: "doing",
+    unclear: false,
+    due: null,
+    note: null,
+    tags: ["infra"],
     commits: [],
     adopted_from_proposal_id: null,
     linked_work_item_id: null,
@@ -65,7 +78,7 @@ it("promotes a planning task to the current commitment with both revisions", asy
   });
   const user = userEvent.setup();
   renderBoard();
-  await user.click(await screen.findByRole("button", { name: /make current commitment/i }));
+  await user.click((await screen.findAllByRole("button", { name: /make current commitment/i }))[0]);
   await waitFor(() => expect(invokeMock.mock.calls.some((call) => call[0] === "promote_task_to_commitment")).toBe(true));
 });
 
@@ -79,4 +92,53 @@ it("shows an unambiguous empty YYYY-MM-DD due-date field", async () => {
     "placeholder",
     "YYYY-MM-DD",
   );
+});
+
+it("renders tag chips, filters with AND semantics, and clears the filter", async () => {
+  invokeMock.mockImplementation(async (command: string) => {
+    if (command === "get_tasks") return TASKS;
+    throw new Error(`unexpected command ${command}`);
+  });
+  const user = userEvent.setup();
+  renderBoard();
+
+  // Both tasks visible, chips rendered with the user's casing.
+  expect(await screen.findByText("Validate cohort labels", { exact: false })).toBeInTheDocument();
+  expect(screen.getByText("Refactor the pipeline", { exact: false })).toBeInTheDocument();
+
+  // AND filter: 论文 + infra keeps only the first task.
+  const group = screen.getByRole("group", { name: /filter by tag/i });
+  await user.click(within(group).getByRole("button", { name: "论文" }));
+  await user.click(within(group).getByRole("button", { name: "infra" }));
+  expect(screen.getByText("Validate cohort labels", { exact: false })).toBeInTheDocument();
+  expect(screen.queryByText("Refactor the pipeline", { exact: false })).not.toBeInTheDocument();
+
+  // Clear restores everything.
+  await user.click(screen.getByRole("button", { name: /clear tag filter/i }));
+  expect(screen.getByText("Refactor the pipeline", { exact: false })).toBeInTheDocument();
+});
+
+it("sends parsed tags on save", async () => {
+  invokeMock.mockImplementation(async (command: string, args?: { input?: Record<string, unknown> }) => {
+    if (command === "get_tasks") return TASKS;
+    if (command === "update_task") {
+      expect(args?.input).toMatchObject({ id: "a1b2", tags: ["论文", "eval"] });
+      return TASKS;
+    }
+    if (command === "list_project_index" || command === "get_project_overview") return {};
+    throw new Error(`unexpected command ${command}`);
+  });
+  const user = userEvent.setup();
+  renderBoard();
+  const input = await screen.findByLabelText(/tags: Validate cohort labels/i);
+  await user.clear(input);
+  await user.type(input, "论文, eval");
+  await user.click(screen.getAllByRole("button", { name: /save task/i })[0]);
+  await waitFor(() => expect(invokeMock.mock.calls.some((call) => call[0] === "update_task")).toBe(true));
+});
+
+it("parseTagsInput splits comma variants and trims", async () => {
+  const { parseTagsInput } = await import("./TaskBoard");
+  expect(parseTagsInput("论文, infra、eval ，  x ")).toEqual(["论文", "infra", "eval", "x"]);
+  expect(parseTagsInput("   ")).toEqual([]);
 });

@@ -12,6 +12,8 @@ const LEGACY_PATH: &str = "/Users/research/legacy-project";
 const LEGACY_NEXT: &str = "# Next\n\n- [ ] Preserve this Human note.\n";
 const LEGACY_PLAN: &str = "# Plan\n\nA hand-authored plan.\n";
 const LEGACY_BRIEFING: &str = "# Briefing\n\nAgent-authored legacy briefing.\n";
+/// What THIS binary's migration writes when it creates a state (doc schema v2).
+const SETUP_STATE_V2: &str = "+++\nschema_version = 2\nrevision = 0\nstatus = \"setup\"\nstatus_changed_at = \"2026-08-10T12:00:00Z\"\ncreated_at = \"2026-08-10T12:00:00Z\"\nupdated_at = \"2026-08-10T12:00:00Z\"\nwork_items = []\ncommitment_transitions = []\n+++\n\n# Project notes\n";
 const SETUP_STATE: &str = "+++\nschema_version = 1\nrevision = 0\nstatus = \"setup\"\nstatus_changed_at = \"2026-08-10T12:00:00Z\"\ncreated_at = \"2026-08-10T12:00:00Z\"\nupdated_at = \"2026-08-10T12:00:00Z\"\nwork_items = []\ncommitment_transitions = []\n+++\n\n# Project notes\n";
 const SCHEMA_V2_SHA256: &str = "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3";
 
@@ -296,7 +298,7 @@ fn migrates_v1_store_to_v2_without_rewriting_legacy_documents() {
     );
     assert_eq!(
         std::fs::read_to_string(project.join("notes/project.md")).unwrap(),
-        SETUP_STATE
+        SETUP_STATE_V2
     );
 
     let before = managed_bytes(&home);
@@ -1350,7 +1352,7 @@ fn round1_ignore_audited_with_missing_created_state_still_recovers() {
                 .join("notes/project.md")
         )
         .unwrap(),
-        SETUP_STATE.as_bytes()
+        SETUP_STATE_V2.as_bytes()
     );
     assert!(!home.join(".migration-v2").exists());
     std::env::remove_var("OMNIPROJ_HOME");
@@ -1933,7 +1935,7 @@ fn genuine_migration_created_state_still_recovers_and_is_audited() {
     assert!(!home.join(".migration-v2").exists());
     assert_eq!(
         std::fs::read(home.join(&relative_state)).unwrap(),
-        SETUP_STATE.as_bytes()
+        SETUP_STATE_V2.as_bytes()
     );
     assert!(git_names(&home, "HEAD^").contains(&relative_state));
     std::env::remove_var("OMNIPROJ_HOME");

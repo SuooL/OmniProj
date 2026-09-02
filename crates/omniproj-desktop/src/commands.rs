@@ -345,6 +345,9 @@ pub struct UpdateTaskInput {
     pub status: String,
     pub due: Option<String>,
     pub note: Option<String>,
+    /// Omitted/null leaves stored tags unchanged; a list replaces them.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
 }
 #[tauri::command]
 pub fn update_task(input: UpdateTaskInput) -> CommandResult<TaskListDto> {
@@ -355,6 +358,7 @@ pub fn update_task(input: UpdateTaskInput) -> CommandResult<TaskListDto> {
         input.status,
         input.due,
         input.note,
+        input.tags,
     )
 }
 

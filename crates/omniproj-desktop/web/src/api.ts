@@ -99,7 +99,7 @@ export const api = {
   getTasks: (project_id: ProjectId) => call<TaskList>("get_tasks", { project_id }),
   getAttentionSummary: () => call<{ count: number; project_ids: ProjectId[] }>("get_attention_summary"),
   addTask: (input: { project_id: ProjectId; expected_revision: string; text: string; unclear: boolean }) => call<TaskList>("add_task", input),
-  updateTask: (input: { project_id: ProjectId; expected_revision: string; id: string; status: string; due: string | null; note: string | null }) => call<TaskList>("update_task", input),
+  updateTask: (input: { project_id: ProjectId; expected_revision: string; id: string; status: string; due: string | null; note: string | null; tags?: string[] }) => call<TaskList>("update_task", input),
   removeTask: (input: { project_id: ProjectId; expected_revision: string; id: string }) => call<TaskList>("remove_task", input),
   getCommitTimeline: (project_id: ProjectId, limit = 50) => call<TimelineCommit[]>("get_commit_timeline", { project_id, limit }),
   getGitGraph: (project_id: ProjectId, limit = 40) => call<GraphCommit[]>("get_git_graph", { project_id, limit }),

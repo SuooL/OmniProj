@@ -510,6 +510,7 @@ fn work_item(id: &str, status: WorkItemStatus, due: Option<&str>) -> WorkItem {
         unclear: false,
         due: due.map(str::to_owned),
         note: None,
+        tags: Vec::new(),
         commits: Vec::new(),
         blocker: None,
         blocked_at: None,

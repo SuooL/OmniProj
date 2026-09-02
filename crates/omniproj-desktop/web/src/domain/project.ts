@@ -163,6 +163,7 @@ export interface Task {
   unclear: boolean;
   due: string | null;
   note: string | null;
+  tags: string[];
   commits: string[];
   adopted_from_proposal_id: string | null;
   linked_work_item_id: string | null;

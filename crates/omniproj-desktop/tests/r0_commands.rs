@@ -1140,6 +1140,7 @@ fn service_index_reports_overdue_work_and_orders_it_into_the_decision_queue() {
         "open".into(),
         Some("2026-08-01".into()),
         None,
+        None,
     )
     .unwrap();
 
@@ -1218,6 +1219,7 @@ fn attention_summary_counts_projects_with_overdue_work() {
         // A frozen past date: relative to any real wall clock this stays overdue.
         Some("2026-08-01".into()),
         None,
+        None,
     )
     .unwrap();
 
@@ -1226,4 +1228,86 @@ fn attention_summary_counts_projects_with_overdue_work() {
     let summary = mvp::attention_summary_with_threshold(36500);
     assert!(summary.project_ids.contains(&record.id));
     assert!(!summary.project_ids.contains(&quiet.id));
+}
+
+#[test]
+fn task_tags_normalize_persist_and_reject_invalid_sets() {
+    let _guard = env_guard();
+    let home = Home::new("tags");
+    let record = register(&unique_path("tags-repo"), "Tagged project");
+
+    let tasks = mvp::get_tasks(record.id.clone()).unwrap();
+    let tasks = mvp::add_task(
+        record.id.clone(),
+        tasks.revision,
+        "write eval".into(),
+        false,
+    )
+    .unwrap();
+    let id = tasks.tasks[0].id.clone();
+
+    // Normalization: trim, case-insensitive dedupe keeping first casing, order preserved.
+    let updated = mvp::update_task(
+        record.id.clone(),
+        tasks.revision,
+        id.clone(),
+        "open".into(),
+        None,
+        None,
+        Some(vec![" 论文 ".into(), "Infra".into(), "infra".into()]),
+    )
+    .unwrap();
+    assert_eq!(
+        updated.tasks[0].tags,
+        vec!["论文".to_owned(), "Infra".to_owned()]
+    );
+
+    // Persisted as doc schema v2 and reloadable.
+    let state_path = home
+        .path
+        .join("projects")
+        .join(record.id.as_str())
+        .join("notes/project.md");
+    let raw = std::fs::read_to_string(state_path).unwrap();
+    assert!(raw.contains("schema_version = 2"));
+    assert!(raw.contains("论文"));
+    let reloaded = mvp::get_tasks(record.id.clone()).unwrap();
+    assert_eq!(
+        reloaded.tasks[0].tags,
+        vec!["论文".to_owned(), "Infra".to_owned()]
+    );
+
+    // Nine tags are rejected and nothing changes.
+    let too_many: Vec<String> = (0..9).map(|i| format!("t{i}")).collect();
+    let error = mvp::update_task(
+        record.id.clone(),
+        reloaded.revision.clone(),
+        id.clone(),
+        "open".into(),
+        None,
+        None,
+        Some(too_many),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidInput);
+    assert_eq!(
+        mvp::get_tasks(record.id.clone()).unwrap().tasks[0].tags,
+        vec!["论文".to_owned(), "Infra".to_owned()]
+    );
+
+    // Omitting tags leaves them unchanged.
+    let unchanged = mvp::update_task(
+        record.id,
+        reloaded.revision,
+        id,
+        "doing".into(),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        unchanged.tasks[0].tags,
+        vec!["论文".to_owned(), "Infra".to_owned()]
+    );
 }

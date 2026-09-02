@@ -22,6 +22,8 @@ pub struct TaskDto {
     pub unclear: bool,
     pub due: Option<String>,
     pub note: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub commits: Vec<String>,
     pub adopted_from_proposal_id: Option<String>,
     pub linked_work_item_id: Option<String>,
@@ -558,6 +560,7 @@ fn task_list(state: &ProjectStateDoc) -> TaskListDto {
                 unclear: item.unclear,
                 due: item.due.clone(),
                 note: item.note.clone(),
+                tags: item.tags.clone(),
                 commits: item.commits.clone(),
                 adopted_from_proposal_id: item.adopted_from_proposal_id.clone(),
                 linked_work_item_id: referenced
@@ -630,6 +633,7 @@ pub fn migrate_legacy_tasks() -> CommandResult<()> {
                     unclear: item.unclear,
                     due: item.due.clone(),
                     note: item.note.clone(),
+                    tags: Vec::new(),
                     commits: item.commits.clone(),
                     adopted_from_proposal_id: item.adopted_from_proposal_id.clone(),
                     source_task_id: Some(source_task_id),
@@ -668,6 +672,7 @@ pub fn add_task(
                 unclear,
                 due: None,
                 note: None,
+                tags: Vec::new(),
                 commits: Vec::new(),
                 adopted_from_proposal_id: None,
                 source_task_id: None,
@@ -683,6 +688,7 @@ pub fn update_task(
     status: String,
     due: Option<String>,
     note: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> CommandResult<TaskListDto> {
     let parsed = TaskStatus::parse(&status)
         .ok_or_else(|| CommandError::invalid_input("invalid task status"))?;
@@ -706,6 +712,7 @@ pub fn update_task(
             unclear: item.unclear,
             due,
             note,
+            tags,
         },
     )
 }
@@ -899,6 +906,7 @@ pub fn adopt_subtasks(
             unclear: false,
             due: None,
             note: None,
+            tags: Vec::new(),
             commits: Vec::new(),
             adopted_from_proposal_id: Some(proposal_id.clone()),
             source_task_id: None,
