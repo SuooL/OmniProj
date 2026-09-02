@@ -5,6 +5,10 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
+
+pub const ACTIVITY_WEEK_COUNT: usize = 16;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepositoryReadErrorKind {
     PathMissing,
@@ -65,6 +69,9 @@ pub struct RepositoryObservation {
     pub unstaged_files: usize,
     pub untracked_files: usize,
     pub status_digest: String,
+    /// Commit counts for sixteen UTC calendar weeks, oldest to newest. The final
+    /// bucket is the (possibly partial) week containing `observed_at`.
+    pub commit_activity_weeks: [u32; ACTIVITY_WEEK_COUNT],
 }
 
 fn read_error(kind: RepositoryReadErrorKind, message: impl Into<String>) -> RepositoryReadError {
@@ -288,6 +295,55 @@ fn last_commit(
     }))
 }
 
+fn activity_week_start(observed_at: DateTime<Utc>) -> DateTime<Utc> {
+    let day_start = observed_at
+        .with_hour(0)
+        .and_then(|value| value.with_minute(0))
+        .and_then(|value| value.with_second(0))
+        .and_then(|value| value.with_nanosecond(0))
+        .expect("valid UTC day start");
+    day_start - Duration::days(day_start.weekday().num_days_from_monday() as i64)
+}
+
+fn commit_activity_weeks(
+    path: &Path,
+    observed_at: DateTime<Utc>,
+    head_sha: Option<&str>,
+) -> Result<[u32; ACTIVITY_WEEK_COUNT], RepositoryReadError> {
+    let mut weeks = [0_u32; ACTIVITY_WEEK_COUNT];
+    if head_sha.is_none() {
+        return Ok(weeks);
+    }
+    let current_week = activity_week_start(observed_at);
+    let first_week = current_week - Duration::weeks((ACTIVITY_WEEK_COUNT - 1) as i64);
+    let since = format!("--since={}", first_week.to_rfc3339());
+    let output = read_git(path, &["log", &since, "--pretty=format:%cI", "HEAD"])?;
+    if !output.status.success() {
+        return Err(command_error(&output, "reading commit activity"));
+    }
+    for line in output_text(&output, "reading commit activity")?.lines() {
+        let committed_at = DateTime::parse_from_rfc3339(line)
+            .map_err(|_| {
+                read_error(
+                    RepositoryReadErrorKind::InvalidOutput,
+                    "Git returned an invalid commit timestamp",
+                )
+            })?
+            .with_timezone(&Utc);
+        if committed_at > observed_at || committed_at < first_week {
+            continue;
+        }
+        let commit_week = activity_week_start(committed_at);
+        let index = (commit_week - first_week).num_weeks();
+        if let Ok(index) = usize::try_from(index) {
+            if let Some(bucket) = weeks.get_mut(index) {
+                *bucket = bucket.saturating_add(1);
+            }
+        }
+    }
+    Ok(weeks)
+}
+
 struct ParsedStatus {
     changed_files: usize,
     staged_files: usize,
@@ -447,6 +503,9 @@ pub fn observe_repository(
     observed_at: &str,
 ) -> Result<RepositoryObservation, RepositoryReadError> {
     validate_rfc3339_input(observed_at, "observed_at")?;
+    let observed_instant = DateTime::parse_from_rfc3339(observed_at)
+        .expect("validated RFC3339 timestamp")
+        .with_timezone(&Utc);
     ensure_readable_repository(path)?;
     let (head_state, head_sha) = inspect_head(path)?;
     let last_commit = last_commit(path, head_sha.as_deref())?;
@@ -458,6 +517,7 @@ pub fn observe_repository(
         return Err(command_error(&output, "reading repository status"));
     }
     let status = parse_status(&output.stdout)?;
+    let commit_activity_weeks = commit_activity_weeks(path, observed_instant, head_sha.as_deref())?;
 
     Ok(RepositoryObservation {
         observed_at: observed_at.to_string(),
@@ -469,6 +529,7 @@ pub fn observe_repository(
         unstaged_files: status.unstaged_files,
         untracked_files: status.untracked_files,
         status_digest: omniproj_core::content_hash(&status.canonical),
+        commit_activity_weeks,
     })
 }
 

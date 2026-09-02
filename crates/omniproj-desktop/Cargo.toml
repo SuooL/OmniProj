@@ -20,13 +20,18 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+toml = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
 omniproj-core = { workspace = true }
 omniproj-capture = { workspace = true }
+omniproj-distill = { workspace = true }
+keyring = { workspace = true }
+toml_edit = { workspace = true }
 
 [dev-dependencies]
 tauri = { version = "2", features = ["tray-icon", "test"] }

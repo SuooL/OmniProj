@@ -15,6 +15,13 @@ import { ProjectLifecycleControl } from "./ProjectLifecycleControl";
 import { ReviewReasons } from "./ReviewReasons";
 import { SourceRecovery } from "./SourceRecovery";
 import { useI18n } from "../../i18n/I18nProvider";
+import { TaskBoard } from "./TaskBoard";
+import { CommitTimeline } from "./CommitTimeline";
+import { PlanLog } from "./PlanLog";
+import { ReminderSettings } from "../ReminderSettings";
+import { GitFlowGraph } from "./GitFlowGraph";
+import { DogfoodRecorder } from "./DogfoodRecorder";
+import { AgentSettings } from "../AgentSettings";
 
 export interface ProjectOverviewProps {
   overview: ProjectOverviewDto;
@@ -63,6 +70,7 @@ export function ProjectOverview({
       </div>
 
       <div className="op-overview__secondary">
+        {!isSetup && <><DogfoodRecorder projectId={overview.project_id} /><TaskBoard projectId={overview.project_id} projectRevision={overview.revision} hasCurrentCommitment={overview.current_commitment !== null} /><CommitTimeline projectId={overview.project_id} /><GitFlowGraph projectId={overview.project_id} /><PlanLog projectId={overview.project_id} /><ReminderSettings /><AgentSettings /></>}
         {/* 4. Observed actual + source recovery */}
         <ObservedActual observed={overview.observed_actual} source={overview.source} now={now} />
         <SourceRecovery overview={overview} />

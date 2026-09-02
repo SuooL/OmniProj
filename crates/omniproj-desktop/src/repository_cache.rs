@@ -8,6 +8,7 @@
 //! On a successful refresh the whole file is replaced. On a failed refresh the cache is
 //! left byte-for-byte untouched, so the UI keeps showing the last good facts.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use omniproj_capture::git::{HeadState, RepositoryObservation};
@@ -44,6 +45,8 @@ pub struct CachedObservation {
     pub commitment_work_item_id: Option<WorkItemId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commits_since_commitment: Option<u32>,
+    #[serde(default)]
+    pub commit_activity_weeks: Vec<u32>,
 }
 
 impl CachedObservation {
@@ -77,17 +80,30 @@ impl CachedObservation {
             status_digest: observation.status_digest.clone(),
             commitment_work_item_id,
             commits_since_commitment,
+            commit_activity_weeks: observation.commit_activity_weeks.to_vec(),
         }
     }
 
     /// Render the observed-actual for display. `current_commitment` gates the
     /// commitment-relative count: it is shown only when the cache was computed against
     /// exactly that commitment.
-    pub fn to_observed_actual(&self, current_commitment: Option<&WorkItemId>) -> ObservedActualDto {
+    pub fn to_observed_actual(
+        &self,
+        current_commitment: Option<&WorkItemId>,
+        now: DateTime<Utc>,
+    ) -> ObservedActualDto {
         let commits_since_commitment = match (current_commitment, &self.commitment_work_item_id) {
             (Some(current), Some(cached)) if current == cached => self.commits_since_commitment,
             _ => None,
         };
+        let silent_days = self.last_commit.as_ref().and_then(|commit| {
+            DateTime::parse_from_rfc3339(&commit.committed_at)
+                .ok()
+                .map(|committed| (now - committed.with_timezone(&Utc)).num_days().max(0) as u32)
+        });
+        let mut commit_activity_weeks = self.commit_activity_weeks.clone();
+        commit_activity_weeks.resize(omniproj_capture::git::ACTIVITY_WEEK_COUNT, 0);
+        commit_activity_weeks.truncate(omniproj_capture::git::ACTIVITY_WEEK_COUNT);
         ObservedActualDto {
             observed_at: self.observed_at.clone(),
             head: self.head.clone(),
@@ -98,6 +114,8 @@ impl CachedObservation {
             untracked_files: self.untracked_files,
             status_digest: self.status_digest.clone(),
             commits_since_commitment,
+            commit_activity_weeks,
+            silent_days,
         }
     }
 }

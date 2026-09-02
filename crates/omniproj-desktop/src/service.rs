@@ -136,7 +136,7 @@ impl<C: Clock> DesktopService<C> {
         };
         let observed_actual = source
             .and_then(repository_cache::load)
-            .map(|cache| cache.to_observed_actual(state.current_next_action_id.as_ref()));
+            .map(|cache| cache.to_observed_actual(state.current_next_action_id.as_ref(), now));
         (source, reasons, observed_actual)
     }
 
@@ -616,6 +616,15 @@ impl<C: Clock> R0Service for DesktopService<C> {
                 review_at,
             },
             MutationCommand::SetCommitment { text } => ProjectCommand::SetCommitment { text },
+            MutationCommand::SetCommitmentFromTask {
+                text,
+                source_task_id,
+                adopted_from_proposal_id,
+            } => ProjectCommand::SetCommitmentFromTask {
+                text,
+                source_task_id,
+                adopted_from_proposal_id,
+            },
             MutationCommand::ConfirmCommitment { work_item_id } => {
                 ProjectCommand::ConfirmCommitment { work_item_id }
             }

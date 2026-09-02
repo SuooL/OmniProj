@@ -133,3 +133,32 @@ test("completing a commitment leaves no replacement", async ({ page }) => {
   await expect(page.getByTestId("set-form")).toBeVisible(); // now shows the empty set form
   await expect(page.getByText("Idempotent retries")).toHaveCount(0);
 });
+
+test("planning task creation is revisioned and appears without a page reload", async ({ page }) => {
+  await page.goto("/projects/p04/overview");
+  const board = page.getByTestId("task-board");
+  await board.getByLabel("New task").fill("Validate retry behavior under failover");
+  await board.getByRole("button", { name: "Add task" }).click();
+  await expect(board.getByText("Validate retry behavior under failover")).toBeVisible();
+});
+
+test("Agent settings enable the explicit Advance and adopt loop", async ({ page }) => {
+  await page.goto("/projects/p04/overview");
+  const settings = page.getByTestId("agent-settings");
+  await settings.getByRole("combobox", { name: /^Provider$/ }).selectOption("deepseek");
+  await settings.getByRole("textbox", { name: /^Model$/ }).fill("deepseek-chat");
+  await settings.getByLabel(/I agree to send task text/i).check();
+  await settings.getByRole("button", { name: "Save Agent settings" }).click();
+  await expect(settings.getByText("Agent settings saved.")).toBeVisible();
+  await settings.getByRole("button", { name: "Test connection" }).click();
+  await expect(settings.getByText("Agent connection is ready.")).toBeVisible();
+
+  const board = page.getByTestId("task-board");
+  await board.getByLabel("New task").fill("Fix the intermittent retry bug");
+  await board.getByLabel("Not yet clear (?)").check();
+  await board.getByRole("button", { name: "Add task" }).click();
+  await board.getByRole("button", { name: "Ask Agent to break down" }).click();
+  await expect(board.getByText("Write a regression test")).toBeVisible();
+  await board.getByRole("button", { name: "Adopt selected" }).click();
+  await expect(board.getByText("Implement the smallest fix")).toBeVisible();
+});

@@ -166,6 +166,10 @@ pub struct WorkItem {
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adopted_from_proposal_id: Option<String>,
+    /// Optional stable id of the Human planning task that was explicitly promoted to
+    /// this project-level commitment. This is provenance, not a second pointer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -235,6 +239,11 @@ pub enum ProjectCommand {
     },
     SetCommitment {
         text: String,
+    },
+    SetCommitmentFromTask {
+        text: String,
+        source_task_id: String,
+        adopted_from_proposal_id: Option<String>,
     },
     ConfirmCommitment {
         work_item_id: WorkItemId,
@@ -712,6 +721,34 @@ fn apply_command_in_memory(
             }
             set_commitment_in_memory(state, project_id, text, occurred_at, accepted_revision)?;
         }
+        ProjectCommand::SetCommitmentFromTask {
+            text,
+            source_task_id,
+            adopted_from_proposal_id,
+        } => {
+            require_field("text", &text)?;
+            require_field("source_task_id", &source_task_id)?;
+            if let Some(work_item_id) = state.current_next_action_id.clone() {
+                return Err(ProjectStateError::CurrentCommitmentExists { work_item_id });
+            }
+            let mut item = new_work_item(project_id, text, occurred_at);
+            item.source_task_id = Some(source_task_id);
+            item.adopted_from_proposal_id = adopted_from_proposal_id;
+            let item_id = item.id.clone();
+            state.work_items.push(item);
+            state.current_next_action_id = Some(item_id.clone());
+            push_transition(
+                state,
+                project_id,
+                CommitmentTransitionKind::Set,
+                None,
+                Some(item_id),
+                None,
+                occurred_at,
+                accepted_revision,
+                None,
+            );
+        }
         ProjectCommand::ConfirmCommitment { work_item_id } => {
             require_current(state, &work_item_id)?;
             require_item(state, &work_item_id)?;
@@ -960,6 +997,7 @@ fn new_work_item(project_id: &ProjectId, text: String, occurred_at: &str) -> Wor
         created_at: occurred_at.to_owned(),
         updated_at: occurred_at.to_owned(),
         adopted_from_proposal_id: None,
+        source_task_id: None,
     }
 }
 

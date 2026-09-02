@@ -18,6 +18,7 @@ use omniproj_core::{ensure_home, ProjectId, ProjectRecord};
 
 use omniproj_desktop::dto;
 use omniproj_desktop::error::{CommandError, ErrorCode};
+use omniproj_desktop::mvp;
 use omniproj_desktop::repository_cache;
 use omniproj_desktop::service::{Clock, DesktopService, R0Service};
 
@@ -168,6 +169,112 @@ fn register(location: &Path, name: &str) -> ProjectRecord {
         RegisterOutcome::Created(record) => record,
         RegisterOutcome::Existing(id) => panic!("unexpected existing {id}"),
     }
+}
+
+#[test]
+fn mvp_task_writes_are_revision_checked_atomic_and_path_scoped() {
+    let _guard = env_guard();
+    let home = Home::new("mvp-task-write");
+    let repo = repo_with_commit("mvp-task-write-repo");
+    let record = register(&repo, "Task project");
+
+    let initial = mvp::get_tasks(record.id.clone()).unwrap();
+    assert!(initial.tasks.is_empty());
+    let first = mvp::add_task(
+        record.id.clone(),
+        initial.revision.clone(),
+        "Validate cohort labels".into(),
+        true,
+    )
+    .unwrap();
+    assert_eq!(first.tasks.len(), 1);
+    assert!(first.tasks[0].unclear);
+    assert_ne!(first.revision, initial.revision);
+
+    let stale = mvp::add_task(
+        record.id.clone(),
+        initial.revision,
+        "This must not overwrite".into(),
+        false,
+    )
+    .unwrap_err();
+    assert_eq!(stale.code, ErrorCode::RevisionConflict);
+    assert_eq!(mvp::get_tasks(record.id.clone()).unwrap().tasks.len(), 1);
+
+    let relative = format!("projects/{}/notes/next.md", record.id.as_str());
+    let committed = Command::new("git")
+        .arg("-C")
+        .arg(&home.path)
+        .args(["show", "--name-only", "--format=", "HEAD"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&committed.stdout).trim(), relative);
+    let _ = std::fs::remove_dir_all(repo);
+}
+
+#[test]
+fn mvp_plan_link_and_advance_adoption_preserve_provenance() {
+    let _guard = env_guard();
+    let _home = Home::new("mvp-plan-provenance");
+    let repo = repo_with_commit("mvp-plan-provenance-repo");
+    let record = register(&repo, "Plan project");
+
+    let plan = mvp::get_plan(record.id.clone()).unwrap();
+    let plan = mvp::add_plan_entry(
+        record.id.clone(),
+        plan.revision,
+        "Use external validation".into(),
+        "Avoid optimistic internal-only claims".into(),
+    )
+    .unwrap();
+    let entry_id = plan.entries[0].id.clone().unwrap();
+    let plan = mvp::set_plan_commit(
+        record.id.clone(),
+        plan.revision,
+        entry_id,
+        Some("deadbeef".into()),
+    )
+    .unwrap();
+    assert_eq!(plan.entries[0].commit.as_deref(), Some("deadbeef"));
+
+    let tasks = mvp::get_tasks(record.id.clone()).unwrap();
+    let adopted = mvp::adopt_subtasks(
+        record.id.clone(),
+        tasks.revision,
+        "proposal-1234".into(),
+        vec!["Define the external cohort".into()],
+    )
+    .unwrap();
+    assert_eq!(
+        adopted.tasks[0].adopted_from_proposal_id.as_deref(),
+        Some("proposal-1234")
+    );
+    assert!(
+        std::fs::read_to_string(omniproj_core::next_path(record.id.as_str()))
+            .unwrap()
+            .contains("proposal:proposal-1234")
+    );
+    let _ = std::fs::remove_dir_all(repo);
+}
+
+#[test]
+fn dogfood_events_are_audited_and_summarized_across_projects() {
+    let _guard = env_guard();
+    let _home = Home::new("dogfood-events");
+    let repo_a = repo_with_commit("dogfood-events-a");
+    let repo_b = repo_with_commit("dogfood-events-b");
+    let a = register(&repo_a, "A");
+    let b = register(&repo_b, "B");
+    let first = mvp::record_reentry_event(a.id, 90).unwrap();
+    assert_eq!(first.event_count, 1);
+    assert_eq!(first.project_count, 1);
+    let second = mvp::record_reentry_event(b.id, 30).unwrap();
+    assert_eq!(second.event_count, 2);
+    assert_eq!(second.project_count, 2);
+    assert_eq!(second.median_duration_seconds, Some(60));
+    assert!(!second.meets_event_threshold && !second.meets_project_threshold);
+    let _ = std::fs::remove_dir_all(repo_a);
+    let _ = std::fs::remove_dir_all(repo_b);
 }
 
 // ---------------------------------------------------------------------------
@@ -922,14 +1029,8 @@ fn handler_rejects_deferred_commands_and_accepts_the_r0_surface() {
         .map(|response| response.deserialize::<Value>().unwrap())
     };
 
-    // Deferred commands are rejected as unregistered.
-    for deferred in [
-        "advance_task",
-        "get_graph",
-        "get_plan",
-        "get_attention",
-        "test_reminder",
-    ] {
+    // Commands outside the reviewed surface remain rejected as unregistered.
+    for deferred in ["get_graph", "get_attention"] {
         let error = invoke(deferred, json!({})).expect_err("deferred command must be rejected");
         assert!(
             error
@@ -939,8 +1040,9 @@ fn handler_rejects_deferred_commands_and_accepts_the_r0_surface() {
         );
     }
 
-    // Every R0 command is accepted by the handler boundary (it may still error on args,
-    // but never with the unregistered-command sentinel).
+    // Every shipped data command is accepted by the handler boundary (it may still error on
+    // args, but never with the unregistered-command sentinel). `test_reminder` is exercised in
+    // a real app runtime because the mock builder does not install the notification plugin.
     let r0_commands = [
         "list_project_index",
         "get_project_overview",
@@ -957,6 +1059,26 @@ fn handler_rejects_deferred_commands_and_accepts_the_r0_surface() {
         "replace_commitment",
         "clear_commitment",
         "undo_commitment_transition",
+        "get_tasks",
+        "get_attention_summary",
+        "add_task",
+        "update_task",
+        "remove_task",
+        "attribute_commit",
+        "unattribute_commit",
+        "get_commit_timeline",
+        "get_git_graph",
+        "advance_task",
+        "adopt_subtasks",
+        "promote_task_to_commitment",
+        "get_plan",
+        "add_plan_entry",
+        "set_plan_status",
+        "set_plan_commit",
+        "get_reminder_settings",
+        "set_reminder_settings",
+        "get_dogfood_summary",
+        "record_reentry_event",
     ];
     for command in r0_commands {
         let response = invoke(command, json!({}));

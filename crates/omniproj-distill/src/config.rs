@@ -294,6 +294,15 @@ pub fn default_model_string() -> String {
 /// `default_model`, then built-in `anthropic/claude-sonnet-4-6`. Uses the global token
 /// cap and no reasoning effort — the historical distill behavior.
 pub fn resolve(model_override: Option<&str>) -> Result<Resolved> {
+    resolve_with_api_key(model_override, None)
+}
+
+/// Resolve a provider while allowing a desktop secret store to supply the API key.
+/// The override is never persisted and takes precedence over the configured env var.
+pub fn resolve_with_api_key(
+    model_override: Option<&str>,
+    api_key_override: Option<&str>,
+) -> Result<Resolved> {
     let cfg = load();
     let model_str = model_override
         .map(str::to_string)
@@ -304,7 +313,7 @@ pub fn resolve(model_override: Option<&str>) -> Result<Resolved> {
         effort: None,
         max_output_tokens: cfg.max_output_tokens.unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS),
     };
-    resolve_tuned(&cfg, &model_str, tuning)
+    resolve_tuned(&cfg, &model_str, tuning, api_key_override)
 }
 
 /// Resolve the `[clarify]` provider (cockpit). Model = `[clarify] model` else
@@ -326,13 +335,18 @@ pub fn resolve_clarify() -> Result<Resolved> {
             .max_output_tokens
             .unwrap_or(CLARIFY_DEFAULT_MAX_OUTPUT_TOKENS),
     };
-    resolve_tuned(&cfg, &model_str, tuning)
+    resolve_tuned(&cfg, &model_str, tuning, None)
 }
 
 /// Core resolver: `provider/model` + explicit [`Tuning`] → a ready provider. Warns
 /// (once, to stderr) and drops effort when the resolved kind doesn't support it, so a
 /// misconfigured effort degrades gracefully rather than erroring or silently vanishing.
-fn resolve_tuned(cfg: &Config, model_str: &str, tuning: Tuning) -> Result<Resolved> {
+fn resolve_tuned(
+    cfg: &Config,
+    model_str: &str,
+    tuning: Tuning,
+    api_key_override: Option<&str>,
+) -> Result<Resolved> {
     let (pname, model) = model_str.split_once('/').ok_or_else(|| {
         anyhow!(
             "model must be 'provider/model' (e.g. anthropic/claude-sonnet-4-6), got '{model_str}'"
@@ -346,7 +360,10 @@ fn resolve_tuned(cfg: &Config, model_str: &str, tuning: Tuning) -> Result<Resolv
 
     let base = resolve_base(pname, d)?;
     let api_key = match &d.api_key_env {
-        Some(env) => std::env::var(env).unwrap_or_default(),
+        Some(env) => api_key_override
+            .map(str::to_owned)
+            .or_else(|| std::env::var(env).ok())
+            .unwrap_or_default(),
         None => String::new(),
     };
     let is_local = base.contains("localhost") || base.contains("127.0.0.1");

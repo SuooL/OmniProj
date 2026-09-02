@@ -20,6 +20,8 @@ export function ProjectsIndexPage() {
     queryKey: queryKeys.projectIndex,
     queryFn: api.listProjectIndex,
   });
+  const { data: attention } = useQuery({ queryKey: ["attention-summary"], queryFn: api.getAttentionSummary });
+  const { data: reminderSettings } = useQuery({ queryKey: ["reminder-settings"], queryFn: api.getReminderSettings });
 
   const now = new Date();
 
@@ -57,6 +59,7 @@ export function ProjectsIndexPage() {
             <span>{t("index.projectCount", { count: data.projects.length })}</span>
           </p>
         )}
+        {attention && attention.count > 0 && <p className="op-page-heading__attention" role="status">{t("attention.count", { count: attention.count })}</p>}
       </header>
 
       {isLoading && (
@@ -88,6 +91,7 @@ export function ProjectsIndexPage() {
           reviewPolicy={data.review_policy}
           now={now}
           onAddProject={openAddProject}
+          silentDaysThreshold={reminderSettings?.silent_days_threshold}
         />
       )}
     </main>

@@ -2,7 +2,7 @@
 // budget (<=1 ProjectStateTag, <=1 ReviewSignalBadge, <=3 FactLabels, and NO CommitmentStateTag
 // — that tag is history-only, so the row stays within <=2 enclosed badges). It renders no
 // full path, sparkline, health/priority, Git graph, Agent control, full task list, or any
-// activity-derived ranking.
+// health/priority score. The activity strip is a neutral repository fact.
 
 import { Link } from "react-router-dom";
 
@@ -18,6 +18,7 @@ import { FactLabel } from "../semantic/FactLabel";
 import { ChevronRightIcon, FolderIcon } from "../Icons";
 import { ProjectStateTag } from "../semantic/ProjectStateTag";
 import { ReviewSignalBadge } from "../semantic/ReviewSignalBadge";
+import { ActivitySparkline } from "./ActivitySparkline";
 import {
   projectStatusLabel,
   reviewReasonLabel,
@@ -44,7 +45,7 @@ function headText(head: HeadState, locale: Locale): string {
  * assistive-tech user hears only the project name. This composes the four fields into one
  * spoken summary; the visible cells and their field labels remain for sighted users.
  */
-function rowAccessibleName(item: ProjectIndexItem, locale: Locale, t: Translate): string {
+function rowAccessibleName(item: ProjectIndexItem, locale: Locale, t: Translate, now: Date): string {
   const parts = [item.name];
   const state = item.status === "active" ? null : projectStatusLabel(item.status, locale);
   if (state) parts.push(state);
@@ -54,6 +55,8 @@ function rowAccessibleName(item: ProjectIndexItem, locale: Locale, t: Translate)
       : t("row.noCommitment"),
   );
   parts.push(item.observed_actual ? t("row.observed", { head: headText(item.observed_actual.head, locale) }) : t("row.notObserved"));
+  const activity = activityNote(item, now, locale, t);
+  if (activity) parts.push(activity);
   const primary = item.review_reasons[0];
   if (primary) {
     const more = item.review_reasons.length - 1;
@@ -65,27 +68,27 @@ function rowAccessibleName(item: ProjectIndexItem, locale: Locale, t: Translate)
   return `${parts.join(". ")}.`;
 }
 
-/** A short natural-language note about working-tree changes; empty when the tree is clean. */
-function changeNote(item: ProjectIndexItem, t: Translate): string | null {
-  const o = item.observed_actual;
-  if (!o) return null;
-  const dirty = o.changed_files + o.untracked_files;
-  return dirty > 0 ? t("row.changed", { count: dirty }) : t("row.clean");
+function activityNote(item: ProjectIndexItem, now: Date, locale: Locale, t: Translate): string | null {
+  const committed = item.observed_actual?.last_commit?.committed_at;
+  if (!committed) return null;
+  const time = formatRelativeTime(committed, now, locale);
+  if (!time) return null;
+  const days = Math.max(0, Math.floor((now.getTime() - Date.parse(committed)) / 86_400_000));
+  return days > 0 ? t("row.silentDays", { days }) : t("row.lastActivity", { time: time.text });
 }
 
 export interface ProjectRowProps {
   item: ProjectIndexItem;
   now: Date;
+  silentDaysThreshold?: number;
 }
 
-export function ProjectRow({ item, now }: ProjectRowProps) {
+export function ProjectRow({ item, now, silentDaysThreshold = 7 }: ProjectRowProps) {
   const { locale, t } = useI18n();
   const observed = item.observed_actual;
   const commitment = item.current_commitment;
   const primary = primaryReason(item);
   const hidden = hiddenReasons(item);
-  const observedTime = observed ? formatRelativeTime(observed.observed_at, now, locale) : null;
-  const sinceCommitment = observed?.commits_since_commitment ?? null;
 
   const reviewText = primary ? reviewReasonLabel(primary.code, locale) : t("row.noReview");
 
@@ -93,7 +96,7 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
     <li className="op-row">
       <Link
         className="op-row__link"
-        aria-label={rowAccessibleName(item, locale, t)}
+        aria-label={rowAccessibleName(item, locale, t, now)}
         to={projectOverviewPath(item.project_id)}
         data-focus-id={item.project_id}
         onClick={() =>
@@ -114,7 +117,7 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
           <span className="op-row__commitment op-row__commitment--none">
             {commitment ? commitment.text : t("row.noCommitment")}
           </span>
-          <span className="op-row__metadata">
+          <span className="op-row__metadata" title={observed?.observed_at}>
             {observed ? (
               <>
                 <FactLabel value={headText(observed.head, locale)} />
@@ -130,13 +133,10 @@ export function ProjectRow({ item, now }: ProjectRowProps) {
             ) : (
               <span>{t("row.notObserved")}</span>
             )}
-            {observedTime && <FactLabel value={observedTime.text} title={observedTime.title} />}
-            {sinceCommitment !== null && sinceCommitment > 0 && (
-              <span>{locale === "en"
-                ? `${sinceCommitment} commit${sinceCommitment === 1 ? "" : "s"} since`
-                : t("row.commitsSince", { count: sinceCommitment })}</span>
-            )}
-            {observed && <span>{changeNote(item, t)}</span>}
+            {observed && <ActivitySparkline weeks={observed.commit_activity_weeks} />}
+            {observed && <span>{observed.silent_days === null
+              ? t("activity.unknown")
+              : t("activity.silenceWithThreshold", { days: observed.silent_days, threshold: silentDaysThreshold })}</span>}
           </span>
         </span>
         <span className="op-row__review-text">

@@ -243,6 +243,29 @@ fn observe_without_source_writes(repo: &Path) -> omniproj_capture::git::Reposito
     observation
 }
 
+#[test]
+fn observation_buckets_sixteen_utc_calendar_weeks_oldest_to_newest() {
+    let fixture = Fixture::new("activity-weeks");
+    fixture.init();
+    for (index, at) in [
+        "2026-07-27T08:00:00Z",
+        "2026-08-03T08:00:00Z",
+        "2026-08-10T08:00:00Z",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        fixture.write("activity.txt", &format!("{index}\n"));
+        fixture.git(&["add", "activity.txt"]);
+        fixture.commit_at(&format!("activity {index}"), at);
+    }
+
+    let observed = observe_repository(&fixture.path, "2026-08-11T12:00:00Z").unwrap();
+    assert_eq!(observed.commit_activity_weeks.len(), 16);
+    assert_eq!(&observed.commit_activity_weeks[13..], &[1, 1, 1]);
+    assert_eq!(observed.commit_activity_weeks[..13].iter().sum::<u32>(), 0);
+}
+
 fn assert_error_kind(path: &Path, expected: RepositoryReadErrorKind) {
     let error = observe_repository(path, "2026-08-11T12:00:00Z")
         .expect_err("repository inspection must fail");

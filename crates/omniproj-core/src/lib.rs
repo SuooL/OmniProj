@@ -45,8 +45,9 @@ pub use review::{
 };
 #[allow(deprecated)]
 pub use store::{
-    atomic_write, commit_all, commit_paths_checked, ensure_home, store_txn, with_store_txn,
-    worktree_diff, StoreError, CURRENT_SCHEMA_VERSION, SCHEMA_VERSION_FILE,
+    atomic_write, commit_all, commit_paths_checked, ensure_home, ensure_home_then_write, store_txn,
+    with_store_txn, with_store_write_gate, worktree_diff, StoreError, CURRENT_SCHEMA_VERSION,
+    SCHEMA_VERSION_FILE,
 };
 pub use user_model::{
     user_model_path, Dimension, UserModel, DIMENSIONS, USER_MODEL_DIM_CAP_CHARS,

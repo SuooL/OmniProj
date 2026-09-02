@@ -81,6 +81,8 @@ export interface ObservedActual {
   untracked_files: number;
   status_digest: string;
   commits_since_commitment: number | null;
+  commit_activity_weeks: number[];
+  silent_days: number | null;
 }
 
 export interface CurrentCommitment {
@@ -152,6 +154,39 @@ export interface ProjectOverview {
   review_policy: ReviewPolicy;
   revision: number;
 }
+
+export interface Task {
+  id: string;
+  text: string;
+  status: "open" | "doing" | "done";
+  unclear: boolean;
+  due: string | null;
+  note: string | null;
+  commits: string[];
+  adopted_from_proposal_id: string | null;
+  linked_work_item_id: string | null;
+  is_current_commitment: boolean;
+}
+export interface TaskList { revision: string; tasks: Task[]; }
+export interface AdvanceProposal { proposal_id: string; candidates: string[]; }
+
+export interface TimelineCommit {
+  sha: string;
+  short_sha: string;
+  committed_at: string;
+  author: string;
+  subject: string;
+  attributed_task_ids: string[];
+}
+export interface GraphCommit { sha: string; short_sha: string; parents: string[]; refs: string[]; committed_at: string; author: string; subject: string; }
+
+export type PlanStatus = "planned" | "doing" | "done" | "abandoned";
+export interface PlanEntry { id: string | null; date: string; title: string; status: PlanStatus; commit: string | null; body: string; }
+export interface PlanList { revision: string; entries: PlanEntry[]; }
+export interface ReminderSettings { enabled: boolean; cadence: "daily" | "off"; silent_days_threshold: number; revision: string; }
+export interface DogfoodSummary { event_count: number; project_count: number; median_duration_seconds: number | null; meets_event_threshold: boolean; meets_project_threshold: boolean; }
+export interface AgentProvider { name: string; kind: string; local: boolean; key_required: boolean; key_present: boolean; }
+export interface AgentSettings { default_model: string; selected_provider: string; selected_model: string; remote_consent: boolean; ready: boolean; providers: AgentProvider[]; }
 
 // --- Source validation ------------------------------------------------------
 // `validate_project_source` returns a typed state for BOTH the valid preview (`ok`) and

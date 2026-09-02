@@ -10,7 +10,7 @@ tools.
 > audibly, with the human keeping judgment.* OmniProj never writes to your source repositories; it
 > only reads them, and it records its own state in a local store you control.
 
-The first proven loop (this is R0):
+The current desktop loop (MVP foundation):
 
 ```text
 Projects Index  →  re-enter one project  →  see the current commitment and the observed actual
@@ -18,9 +18,14 @@ Projects Index  →  re-enter one project  →  see the current commitment and t
                 →  observed activity flows back on the next refresh
 ```
 
-R0 deliberately ships **only** the Projects surface. There is no Agent chat, notifications,
-Attention inbox, Git graph, decisions log, settings screen, or activity sparkline in R0 — those
-are deferred until the re-entry loop is proven in daily use (see [Dogfood gate](#dogfood-gate)).
+The current development desktop includes a Human planning task list (`notes/next.md`) whose items
+can be explicitly promoted to the single project-level Current Commitment, a read-only Git commit
+timeline with task attribution, selective Advance proposal adoption with retained provenance, an
+append-only decision log (`plan.md`), deduplicated configurable reminders, and a local re-entry
+timer for the dogfood gate. The Index shows a neutral sixteen-week commit activity strip and is
+ordered by factual silence; the menu-bar icon carries the current non-zero attention count. Advance
+has an in-app provider/model setup, explicit remote-transmission consent, and stores API keys only
+in the operating-system credential store. The source repository remains read-only throughout.
 
 ---
 
@@ -29,7 +34,9 @@ are deferred until the re-entry loop is proven in daily use (see [Dogfood gate](
 - **Platform:** the Tauri desktop app targets **macOS** as the R0 acceptance platform (Linux is
   used for CI). Rust + React inside a native webview.
 - **Local by default:** all persistent state lives under `~/.omniproj` (override with the
-  `OMNIPROJ_HOME` environment variable). Nothing about your projects leaves the machine in R0.
+  `OMNIPROJ_HOME` environment variable). Advance sends only the selected task text and problem
+  note, and only after explicit consent when a remote provider is selected. API keys stay in the
+  operating-system credential store and are never written to `~/.omniproj`.
 - **Source repositories are read-only.** OmniProj runs read-only Git commands against your repos
   and writes only to its own store. A move/rename never corrupts a project — you relink it.
 
@@ -45,15 +52,20 @@ Each project gets a stable, permanent `ProjectId` and its own directory:
     notes/project.md               # your single human-state document: TOML front matter +
                                    #   a byte-preserved Markdown body. OmniProj never rewrites
                                    #   your prose; it only edits the front matter atomically.
+    notes/next.md                  # Human planning tasks; content-revision protected
+    plan.md                        # Human plan/decision log with optional commit anchors
+    auto/advance/                  # Agent proposals; Human adoption retains provenance
     cache/r0-observation.json      # last successful repository observation (derived, regenerable)
-    auto/  learned.md              # legacy pre-R0 documents — preserved untouched, not used by R0
+    learned.md                     # legacy pre-R0 document — preserved untouched
+  dogfood/reentry-events.jsonl     # local append-only product-validation events
 ```
 
 - **`ProjectId` is permanent.** Relinking a moved repository changes only
   `ProjectSource.location`, never the identity — every cache and index entry stays keyed by
   `ProjectId`, so history and search survive a move.
-- Every store mutation is **atomic** and **audited** with the exact paths it touched. A human
-  mutation uses an expected revision and appends to an immutable transition history.
+- Replaceable Human documents are written **atomically**, audited with the exact paths touched,
+  and protected by an expected revision. Append-only dogfood events are serialized under the
+  store lock. Commitment mutations additionally append to an immutable transition history.
 
 ## Migration & recovery
 
@@ -90,12 +102,17 @@ On restart, OmniProj returns you to the last canonical URL; an explicit deep lin
 | `Esc` | close the Add Project modal, or close the sidebar drawer on a narrow window |
 | `Tab` / `Shift+Tab` | standard control navigation |
 
-### The Index and the seven-day review rule
+### The Index, activity, and the seven-day review rule
 
-The Index is ordered in a **deterministic review order** — source unavailable, setup incomplete,
-needs commitment, review action, scheduled review — explicitly **not** a priority or health
-ranking. A transparent, opt-in sort (name, recent commit) is available; the default is always
-the review order.
+The default Index order is a factual **attention order**: operating projects with readable Git
+observations are ordered by whole silent days, most silent first. A repository with no commits is
+shown explicitly; an unavailable source is marked unknown rather than assigned fabricated
+inactivity. Waiting/parked/archived projects remain available through filters. This is explicitly
+not a priority or health ranking, and transparent opt-in sorts (name, recent commit) remain.
+
+Every observed row carries exactly sixteen UTC calendar-week commit counts, oldest to newest,
+rendered as a compact activity strip with an accessible text summary. The silence text states the
+current reminder threshold beside the observed fact.
 
 The default operating view omits archived projects, but the **Archived** filter and sidebar
 section keep them discoverable so they can be opened and restored. OmniProj renders the persisted
@@ -147,6 +164,11 @@ capabilities, deeper surfaces) stays blocked until the re-entry loop earns it in
 - **2–4 weeks** of daily use,
 - across **at least five real projects**,
 - producing **at least twenty re-entry events**, with the agreed re-entry metrics recorded.
+
+Use the Overview's **Re-entry timer**: start it when opening a project and finish when the next
+action is clear enough to begin real work. Events are stored locally in
+`~/.omniproj/dogfood/reentry-events.jsonl`; the UI reports event count, distinct projects, and
+median re-entry time. See [`docs/dogfood.md`](docs/dogfood.md) for the interpretation rules.
 
 These are **product-learning thresholds to force honest evaluation — not scientific universals.**
 Navigation and features are earned by a repeated, durable workflow, not added speculatively.

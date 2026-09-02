@@ -1,7 +1,7 @@
 // Pure, immutable presentation helpers for the dense Index. Everything here is a
 // deterministic function of already-loaded state. Crucially, NONE of these functions take
-// commit counts (or any observed activity) as a health, priority, or ordering input — the
-// review order and reasons are computed and sorted in core; the browser only reads them.
+// observed activity into a health or importance score. The factual attention order and
+// review reasons are computed in the backend; the browser only reads them.
 
 import type { ProjectIndexItem, ReviewReason } from "./project";
 
@@ -9,7 +9,7 @@ import type { ProjectIndexItem, ReviewReason } from "./project";
 export type ReviewFilter = "all" | "needs_review" | "waiting" | "parked" | "archived";
 
 /** A transparent label for the default order — it is a review order, not a ranking. */
-export const REVIEW_ORDER_LABEL = "Review order (deterministic, not priority or health)";
+export const REVIEW_ORDER_LABEL = "Attention order (factual silence, not priority or health)";
 
 /** Case-insensitive substring match on the project name. */
 export function matchesQuery(item: ProjectIndexItem, query: string): boolean {

@@ -26,6 +26,8 @@ fs2 = "0.4"
 futures = "0.3"
 rusqlite = { version = "0.37", features = ["bundled"] }
 uuid = { version = "1", features = ["v7", "serde"] }
+keyring = "4.2"
+toml_edit = "0.22"
 
 # internal crates
 omniproj-core = { path = "crates/omniproj-core" }

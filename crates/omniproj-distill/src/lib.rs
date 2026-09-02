@@ -18,8 +18,8 @@ pub use breakdown::{breakdown, parse_steps};
 pub use clarify::{clarify_round, count_rounds_within, render_round};
 pub use config::{
     config_path, default_model_string, is_local_provider, list, resolve, resolve_clarify,
-    resolve_depth, resolve_privacy, Depth, PrivacyConfig, ProviderKind, ProviderStatus, Resolved,
-    CONFIG_TEMPLATE,
+    resolve_depth, resolve_privacy, resolve_with_api_key, Depth, PrivacyConfig, ProviderKind,
+    ProviderStatus, Resolved, CONFIG_TEMPLATE,
 };
 pub use provider::{AnyProvider, LlmProvider};
 pub use refine::refine;
