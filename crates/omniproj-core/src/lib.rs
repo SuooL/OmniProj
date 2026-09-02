@@ -36,9 +36,9 @@ pub use project::{
     RelinkSourceInput, SourceObservationOutcome,
 };
 pub use project_state::{
-    apply_project_command, CommitmentTransition, CommitmentTransitionKind, ProjectCommand,
-    ProjectMutation, ProjectStateDoc, ProjectStateError, ProjectStatus, WorkItem, WorkItemDraft,
-    WorkItemStatus,
+    apply_project_command, normalize_tags, CommitmentTransition, CommitmentTransitionKind,
+    ProjectCommand, ProjectMutation, ProjectStateDoc, ProjectStateError, ProjectStatus, WorkItem,
+    WorkItemDraft, WorkItemStatus,
 };
 pub use review::{
     derive_review_reasons, ReviewReason, ReviewReasonCode, DEFAULT_COMMITMENT_REVIEW_DAYS,

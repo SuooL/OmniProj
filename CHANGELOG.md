@@ -12,6 +12,17 @@ projects, ≥20 recorded re-entry events) has **not** been met, so no release is
 
 ### Added
 
+- **R1b task tags (FR-R5)** — work items carry 0..8 user classification tags (each ≤24
+  chars; trimmed, case-insensitively unique keeping the user's casing and order). Entry is a
+  comma-separated field with in-project datalist autocomplete; saved tags render as chips
+  and an AND-semantics tag filter joins the task list. The project state document schema is
+  now **v2**: v1 documents load unchanged (tags default empty, upgraded in memory) and are
+  rewritten as v2 only when next saved; a newer-versioned document is refused with a clear
+  version error (checked before field-level parsing). Store-migration provenance checks now
+  compare historical state bytes against every canonical rendering (v1 and v2), so stores
+  migrated by older versions keep recovering byte-for-byte. Verified against a copy of the
+  real `~/.omniproj` store: both v1 projects load, a tagged write persists v2, untouched
+  documents stay v1.
 - **R1a overdue→Attend (FR-A4)** — a work item whose user-set expected date has passed
   (judged against the user's **local** calendar date; `due == today` is not yet overdue) now
   produces the deterministic review reason `overdue_work` on Active projects, entering the

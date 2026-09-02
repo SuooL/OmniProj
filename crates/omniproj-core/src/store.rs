@@ -788,9 +788,10 @@ fn preserved_state_proof_for_provenance(
     project_id: &ProjectId,
     provenance: StateProvenance,
 ) -> Result<PreservedStateProof, StoreError> {
-    let (_, setup) = migration_record_and_setup(home, project_id)?;
-    let canonical = setup
-        .render()
+    let (record, setup) = migration_record_and_setup(home, project_id)?;
+    // A pristine setup state may have been written by any past version, so it is proven
+    // against every canonical rendering; the proof then records the ACTUAL bytes.
+    let renderings = crate::project_state::canonical_setup_renderings(&record.created_at)
         .map_err(|error| StoreError::InvalidData(error.to_string()))?;
     let relative = PathBuf::from(format!("projects/{project_id}/notes/project.md"));
     let state_path = home.join(&relative);
@@ -800,7 +801,7 @@ fn preserved_state_proof_for_provenance(
             path: state_path.clone(),
         })?;
     if ProjectStateDoc::parse(&existing).ok().as_ref() != Some(&setup)
-        || existing.as_bytes() != canonical.as_bytes()
+        || !renderings.iter().any(|canonical| canonical == &existing)
     {
         return Err(StoreError::MigrationConflict { path: state_path });
     }
@@ -811,12 +812,12 @@ fn preserved_state_proof_for_provenance(
             return Err(StoreError::MigrationConflict { path: state_path });
         }
     };
-    if head_required && git_head_bytes(home, &relative)?.as_deref() != Some(canonical.as_bytes()) {
+    if head_required && git_head_bytes(home, &relative)?.as_deref() != Some(existing.as_bytes()) {
         return Err(StoreError::MigrationConflict { path: state_path });
     }
     Ok(PreservedStateProof {
         project_id: project_id.clone(),
-        expected: regular_identity(canonical.as_bytes()),
+        expected: regular_identity(existing.as_bytes()),
         head_required,
     })
 }
@@ -1434,10 +1435,15 @@ fn state_history_provenance(
     home: &Path,
     project_id: &ProjectId,
 ) -> Result<StateProvenance, StoreError> {
-    let (record, setup) = migration_record_and_setup(home, project_id)?;
-    let canonical = setup
-        .render()
+    let (record, _setup) = migration_record_and_setup(home, project_id)?;
+    // Historical revisions may hold a setup state rendered by any past version.
+    let renderings = crate::project_state::canonical_setup_renderings(&record.created_at)
         .map_err(|error| StoreError::InvalidData(error.to_string()))?;
+    let is_canonical = |bytes: &[u8]| {
+        renderings
+            .iter()
+            .any(|canonical| canonical.as_bytes() == bytes)
+    };
     let relative_state = PathBuf::from(format!("projects/{project_id}/notes/project.md"));
     let relative_meta = PathBuf::from(format!("projects/{project_id}/meta.toml"));
     let boundary = migration_history_boundary(home)?;
@@ -1467,10 +1473,13 @@ fn state_history_provenance(
                 .ok_or_else(|| StoreError::MigrationConflict {
                     path: home.join(&relative_state),
                 })?;
-            let historical_setup = ProjectStateDoc::new_setup(&legacy.added_at)
-                .and_then(|state| state.render())
-                .map_err(|error| StoreError::InvalidData(error.to_string()))?;
-            if state_bytes != historical_setup.as_bytes() || state_bytes != canonical.as_bytes() {
+            let historical_renderings =
+                crate::project_state::canonical_setup_renderings(&legacy.added_at)
+                    .map_err(|error| StoreError::InvalidData(error.to_string()))?;
+            let matches_added_at = historical_renderings
+                .iter()
+                .any(|canonical| canonical.as_bytes() == state_bytes.as_slice());
+            if !matches_added_at || !is_canonical(&state_bytes) {
                 return Err(StoreError::MigrationConflict {
                     path: home.join(&relative_state),
                 });
@@ -1479,7 +1488,7 @@ fn state_history_provenance(
             continue;
         }
 
-        if state_bytes != canonical.as_bytes() || meta_bytes != expected_meta.as_bytes() {
+        if !is_canonical(&state_bytes) || meta_bytes != expected_meta.as_bytes() {
             continue;
         }
         let parents = git_revision_parents(home, &revision)?;
