@@ -125,3 +125,27 @@ Everything else in this contract stands unchanged: one visual endpoint per proje
 progressive disclosure, no new top-level navigation, zero-value states omitted, proposals at
 zero selected, and the acceptance evaluation above — which now begins after R1 lands and gates
 R2 (FR-V2/V3, cross-project editing, further visualization).
+
+## R2 amendment — desktop idiom (2026-09-02)
+
+Two clauses of this contract are **withdrawn**: "removes the permanent project sidebar" and
+the accordion form of progressive disclosure. Reviewing the built app in a real window showed
+they had produced a responsive web page inside a native window — content locked to a 760px
+centered column in an 1100px window, project switching as a full page transition, and the task
+list (the surface daily use lives in) costing a click on every entry because the disclosure
+defaulted closed and reset on navigation.
+
+The reasoning that produced those clauses was sound about *density of meaning* and wrong about
+*idiom*. The object the user manipulates is a **collection** of parallel projects, not a
+document, so the collection stays on screen:
+
+- a permanent, searchable, keyboard-navigable project rail (master) beside the detail pane;
+- the detail pane fills the window it was given;
+- workspace sections are a segmented control that remembers the chosen pane, not accordions;
+- every form control carries a visible affordance — the control style was previously scoped to
+  three containers, so fields elsewhere rendered as bare text.
+
+What the original clauses were protecting still holds and is unchanged: the project page has
+one visual endpoint (the current next step), the rail is navigation only and carries no
+portfolio reasoning, zero-value states stay omitted, and no new top-level destination was
+added. Search moved *into* the rail rather than being duplicated.

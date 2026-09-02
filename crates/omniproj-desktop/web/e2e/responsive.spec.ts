@@ -24,7 +24,7 @@ async function expectNoHorizontalScroll(page: Page) {
   ).toBeLessThanOrEqual(info.clientWidth);
 }
 
-test("1280x800: the focus-first project queue fits without permanent navigation chrome", async ({ page }) => {
+test("1280x800: the project queue fits beside the permanent rail", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/projects");
   await expect(page.locator(".op-row")).toHaveCount(12);
@@ -37,9 +37,26 @@ test("1280x800: the focus-first project queue fits without permanent navigation 
   );
   expect(visible, `visible rows=${visible}`).toBeGreaterThanOrEqual(6);
   expect(visible).toBeLessThanOrEqual(10);
-  await expect(page.locator(".app-shell__sidebar")).toHaveCount(0);
+  // The rail is permanent by design (R2): the user manipulates a collection, so the
+  // collection stays on screen. It must not push the queue into a horizontal scroll.
+  await expect(page.getByTestId("project-rail")).toBeVisible();
   await expect(page.locator(".app-shell__topbar")).toBeVisible();
   await expect(page.locator(".op-index__head")).toHaveCount(0);
+  await expectNoHorizontalScroll(page);
+});
+
+test("the rail keeps the collection reachable while a project is open", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/projects");
+  await page.getByRole("link", { name: /^billing-worker/ }).click();
+  await expect(page.getByTestId("overview-page")).toBeVisible();
+
+  // Switching projects is one click in the rail, with no return trip through the Index.
+  const rail = page.getByTestId("project-rail");
+  await expect(rail).toBeVisible();
+  await rail.getByRole("button", { name: "docs-site" }).click();
+  await expect(page.getByTestId("overview-heading")).toHaveText("docs-site");
+  await expect(rail).toBeVisible();
   await expectNoHorizontalScroll(page);
 });
 
