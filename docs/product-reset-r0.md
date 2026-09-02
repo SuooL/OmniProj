@@ -111,3 +111,17 @@ Evaluate:
 
 If these fail, improve the Index, re-entry view, commitment semantics, or maintenance cost. Do not
 add more Agent, visualization, notification, or planning surface to compensate.
+
+## R1 amendment (2026-09-02)
+
+The product owner ruled that four project-management capabilities ship **before** the dogfood
+gate starts: overdue-work review reasons, task tags, board/time task views, and a read-only
+cross-project focus strip. Rationale: the gate requires real daily use, and the owner's daily
+use is multi-project planning, scheduling, and tracking — these capabilities are a precondition
+of the gate, not compensation for its failure. Design and boundaries:
+`docs/superpowers/specs/2026-09-02-r1-project-management.md`.
+
+Everything else in this contract stands unchanged: one visual endpoint per project page,
+progressive disclosure, no new top-level navigation, zero-value states omitted, proposals at
+zero selected, and the acceptance evaluation above — which now begins after R1 lands and gates
+R2 (FR-V2/V3, cross-project editing, further visualization).
