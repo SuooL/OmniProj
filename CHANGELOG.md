@@ -12,6 +12,11 @@ projects, ≥20 recorded re-entry events) has **not** been met, so no release is
 
 ### Added
 
+- **R1d time-grouped task view (FR-R6)** — a third `按时间` task view groups undone tasks
+  by due date against the local calendar: 逾期 / 今天 / 本周 / 下周 / 以后 / 未排期
+  (ISO weeks, Monday start). Done tasks are hidden — the view answers "what comes due
+  next", not a retrospective — and empty groups are omitted. Pure derivation, zero new
+  data; cards reuse the board renderer including the move control and commitment lock.
 - **R1c planning board view (FR-R6)** — the task list gains a `list / board` toggle
   (persisted locally) inside the Planning disclosure. The board shows three status columns
   (open/doing/done) with deterministic ordering — oldest overdue first, then dated ascending,

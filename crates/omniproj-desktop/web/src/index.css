@@ -1468,6 +1468,8 @@ button {
 .op-board-card__locked { font-size:var(--op-text-size-micro); }
 .op-board-card select { min-height:28px; justify-self:start; max-width:100%; }
 @media (max-width: 900px) { .op-board { grid-template-columns:1fr; } }
+/* Time-grouped view (R1d): stacked due groups reusing the board column shell. */
+.op-time-groups { display:grid; gap:var(--op-space-3); }
 .op-task-actions { display:flex; align-items:center; gap:var(--op-space-2); flex-shrink:0; }
 .op-task-actions select { min-height:28px; }
 .op-proposal { display:grid; gap:var(--op-space-2); margin:var(--op-space-3) 0; padding:var(--op-space-3); border:1px solid var(--op-border-strong); border-radius:var(--op-radius-md); background:var(--op-surface-raised); }

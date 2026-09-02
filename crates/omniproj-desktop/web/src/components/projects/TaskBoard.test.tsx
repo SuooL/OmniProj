@@ -201,3 +201,27 @@ it("board view folds the done column beyond five and expands on demand", async (
   expect(within(columns).getByText("Done item 0", { exact: false })).toBeInTheDocument();
   window.localStorage.removeItem("omniproj.task-view");
 });
+
+it("time view groups tasks by due and hides done", async () => {
+  window.localStorage.setItem("omniproj.task-view", "time");
+  const timeTasks = {
+    revision: "9",
+    tasks: [
+      { ...TASKS.tasks[0], id: "t-over", text: "Overdue thing", unclear: false, tags: [], due: "2000-01-01" },
+      { ...TASKS.tasks[1], id: "t-none", text: "Unscheduled thing", tags: [], due: null },
+      { ...TASKS.tasks[1], id: "t-done", text: "Finished thing", status: "done", tags: [], due: "2000-01-01" },
+    ],
+  };
+  invokeMock.mockImplementation(async (command: string) => {
+    if (command === "get_tasks") return timeTasks;
+    throw new Error(`unexpected command ${command}`);
+  });
+  renderBoard();
+  const groups = await screen.findByTestId("task-time-groups");
+  expect(within(groups).getByText("Overdue thing", { exact: false })).toBeInTheDocument();
+  expect(within(groups).getByText("Unscheduled thing", { exact: false })).toBeInTheDocument();
+  expect(within(groups).queryByText("Finished thing", { exact: false })).not.toBeInTheDocument();
+  expect(within(groups).getByRole("heading", { name: /overdue/i })).toBeInTheDocument();
+  expect(within(groups).getByRole("heading", { name: /unscheduled/i })).toBeInTheDocument();
+  window.localStorage.removeItem("omniproj.task-view");
+});

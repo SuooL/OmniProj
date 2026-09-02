@@ -4,7 +4,7 @@
 
 import type { Task } from "./project";
 
-export type TaskViewMode = "list" | "board";
+export type TaskViewMode = "list" | "board" | "time";
 export const TASK_VIEW_STORAGE_KEY = "omniproj.task-view";
 
 /** The user's local calendar date as YYYY-MM-DD (en-CA formats ISO-style). */
@@ -68,3 +68,55 @@ export function boardColumns(tasks: Task[], today: string): BoardColumns {
 
 /** How many done cards show before the column folds into a count. */
 export const DONE_PREVIEW_COUNT = 5;
+
+// --- Time-grouped view (R1d) ----------------------------------------------
+
+export type TimeGroupKey = "overdue" | "today" | "thisWeek" | "nextWeek" | "later" | "unscheduled";
+
+/** Fixed rendering order of the time groups. */
+export const TIME_GROUP_ORDER: readonly TimeGroupKey[] = [
+  "overdue",
+  "today",
+  "thisWeek",
+  "nextWeek",
+  "later",
+  "unscheduled",
+];
+
+function addDays(date: string, days: number): string {
+  const shifted = new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000);
+  return shifted.toISOString().slice(0, 10);
+}
+
+/** The Monday of `today`'s ISO week (weeks run Monday–Sunday). */
+export function isoWeekStart(today: string): string {
+  const day = new Date(`${today}T00:00:00Z`).getUTCDay(); // 0 = Sunday
+  return addDays(today, -((day + 6) % 7));
+}
+
+/** Group by due against the local calendar: overdue / today / rest of this ISO week /
+ * next ISO week / later / unscheduled. Done tasks are excluded — this view answers
+ * "what comes due next", not a retrospective. Empty groups are omitted. */
+export function timeGroups(tasks: Task[], today: string): Array<{ key: TimeGroupKey; tasks: Task[] }> {
+  const weekEnd = addDays(isoWeekStart(today), 6);
+  const nextWeekEnd = addDays(weekEnd, 7);
+  const keyed = new Map<TimeGroupKey, Task[]>(TIME_GROUP_ORDER.map((key) => [key, []]));
+  for (const task of tasks) {
+    if (task.status === "done") continue;
+    const key: TimeGroupKey = !task.due
+      ? "unscheduled"
+      : task.due < today
+        ? "overdue"
+        : task.due === today
+          ? "today"
+          : task.due <= weekEnd
+            ? "thisWeek"
+            : task.due <= nextWeekEnd
+              ? "nextWeek"
+              : "later";
+    keyed.get(key)!.push(task);
+  }
+  return TIME_GROUP_ORDER.map((key) => ({ key, tasks: columnOrder(keyed.get(key)!, today) })).filter(
+    (group) => group.tasks.length > 0,
+  );
+}
