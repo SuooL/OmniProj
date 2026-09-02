@@ -104,12 +104,13 @@ describe("native window chrome", () => {
 });
 
 describe("keyboard shortcuts", () => {
-  it("Cmd/Ctrl+F focuses the local filter", async () => {
+  it("Cmd/Ctrl+F focuses the rail's project search from any screen", async () => {
     const user = userEvent.setup();
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await screen.findByTestId("projects-index");
     await user.keyboard("{Control>}f{/Control}");
-    expect(screen.getByLabelText(/filter projects/i)).toHaveFocus();
+    // The rail is permanent, so the shortcut has one target regardless of route.
+    expect(screen.getByLabelText(/search projects/i)).toHaveFocus();
   });
 
   it("Cmd/Ctrl+N opens Add Project, even while a text input is focused", async () => {

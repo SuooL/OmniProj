@@ -110,7 +110,6 @@ export function ProjectsIndex({
       <div className="op-index__toolbar">
         <div className="op-index__search" role="search">
           <input
-            data-project-filter
             type="search"
             aria-label={t("shell.filterProjects")}
             placeholder={t("shell.searchProjects")}

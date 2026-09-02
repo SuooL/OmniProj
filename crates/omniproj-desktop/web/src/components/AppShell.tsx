@@ -1,6 +1,10 @@
-// The desktop interaction frame: compact native chrome, the route surface, global actions,
-// the Add Project modal, shortcuts, and persistent announcement regions. Project navigation
-// lives on the Projects route rather than in permanent chrome.
+// The desktop interaction frame: a persistent project rail (master) beside the route surface
+// (detail), plus compact native chrome, global actions, the Add Project modal, shortcuts, and
+// persistent announcement regions.
+//
+// The rail is permanent on purpose. The user manipulates a COLLECTION of parallel projects,
+// so the collection stays on screen and switching costs one click or one arrow key instead of
+// a full page transition.
 
 import {
   createContext,
@@ -39,6 +43,7 @@ import { ProjectOverviewPage } from "../routes/ProjectOverviewPage";
 import { ProjectsIndexPage } from "../routes/ProjectsIndexPage";
 import { SettingsPage } from "../routes/SettingsPage";
 import { AddProjectDialog } from "./AddProjectDialog";
+import { ProjectRail } from "./ProjectRail";
 import {
   ChevronLeftIcon,
   GearIcon,
@@ -210,6 +215,8 @@ export function AppShell() {
   }, []);
 
   useAppShortcuts({
+    // The permanent rail is the project filter on every screen, so the shortcut has one
+    // unambiguous target instead of depending on which route is open.
     onFocusFilter: () => document.querySelector<HTMLInputElement>("[data-project-filter]")?.focus(),
     onOpenAddProject: openAddProject,
     onRefresh,
@@ -248,7 +255,9 @@ export function AppShell() {
               <button type="button" onClick={() => navigate(ROUTES.settings)} aria-label={t("shell.settings")} aria-current={location.pathname === ROUTES.settings ? "page" : undefined}><GearIcon /></button>
             </div>
           </header>
-          <div className="app-shell__content">
+          <div className="app-shell__body">
+            <ProjectRail projects={projectItems} activeId={currentProject?.project_id ?? null} />
+            <div className="app-shell__content">
             <Routes>
               <Route path={ROUTES.root} element={<Navigate to={projectsPath()} replace />} />
               <Route path={ROUTES.projects} element={<ProjectsIndexPage />} />
@@ -257,6 +266,7 @@ export function AppShell() {
               <Route path={ROUTES.settings} element={<SettingsPage />} />
               <Route path={ROUTES.notFound} element={<NotFoundPage />} />
             </Routes>
+            </div>
           </div>
         </section>
 

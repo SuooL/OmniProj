@@ -12,6 +12,24 @@ projects, ≥20 recorded re-entry events) has **not** been met, so no release is
 
 ### Changed
 
+- **The shell is a two-pane desktop layout, not a centered web column** — reviewing the built
+  app in a real window showed it behaved like a responsive web page inside a native frame:
+  content was locked to a 760px centered column in an 1100px window, switching projects was a
+  full page transition, and the task list cost a click on every entry because its accordion
+  defaulted closed and reset on navigation. A permanent, searchable, keyboard-navigable
+  **project rail** (↑/↓/Home/End, resizable and collapsible with the width remembered) now sits
+  beside a detail pane that fills the window. `⌘F` targets the rail from every screen, so the
+  shortcut has one unambiguous target instead of depending on the open route. The contract
+  clauses this withdraws are recorded in `docs/product-reset-r0.md` §R2 amendment; the project
+  page still has exactly one visual endpoint and the rail carries navigation only.
+- **Workspace sections are tabs, not accordions** — planning / observed change / project
+  management are a segmented control that remembers the chosen pane per session and still
+  mounts only the selected panel.
+- **Every form control looks like a control** — the control style (border, background, height,
+  focus ring) was scoped to `.op-field` / `.op-form-section` / `.op-dialog`, so fields outside
+  those containers — new task, decision title, decision rationale, rail search — rendered as
+  bare text on the page background and read as body copy. The affordance is now the default for
+  every input, select, and textarea; toggles keep their native appearance.
 - **Task rows are read-only until opened** — the planning list previously kept four
   borderless inputs, a status select, and Save/Delete on *every* row, so ten tasks meant
   forty always-live form fields and edits were lost unless Save was clicked. A row is now one

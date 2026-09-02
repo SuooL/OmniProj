@@ -269,6 +269,56 @@ button {
   color: inherit;
 }
 
+/* A control must LOOK like a control. This used to be scoped to .op-field /
+   .op-form-section / .op-dialog, so every field outside those containers (new task, plan
+   log, rail search) rendered as bare text on the page background and read as body copy.
+   The affordance is now the default; toggles keep their native appearance. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+select,
+textarea {
+  box-sizing: border-box;
+  min-height: var(--op-control-min);
+  padding: 4px var(--op-space-2);
+  border: 1px solid var(--op-border-strong);
+  border-radius: var(--op-radius-sm);
+  background: var(--op-bg-canvas);
+  color: var(--op-text-primary);
+  transition: border-color var(--op-transition) var(--op-ease),
+    box-shadow var(--op-transition) var(--op-ease);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--op-interactive-fg);
+  outline: 2px solid var(--op-focus-ring);
+  outline-offset: 1px;
+}
+
+input::placeholder,
+textarea::placeholder { color: var(--op-text-tertiary); }
+
+input:disabled,
+select:disabled,
+textarea:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Available to any control that wants the shared look explicitly. */
+.op-control { width: 100%; }
+
+/* Screen-reader-only text: carries meaning that a dot or colour conveys visually. */
+.op-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 ::selection {
   background: color-mix(in srgb, var(--op-interactive-fg) 24%, transparent);
 }
@@ -466,7 +516,7 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template: minmax(0, 1fr) / 252px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
 }
@@ -820,12 +870,19 @@ button {
 /* ---- Main surface -------------------------------------------------------- */
 
 .app-shell__main {
-  grid-column: 2;
   display: grid;
   grid-template-rows: 52px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   background: var(--op-bg-surface);
+}
+
+/* Master (rail) beside detail (route surface). */
+.app-shell__body {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .app-shell__context-bar {
@@ -917,6 +974,7 @@ button {
 }
 
 .app-shell__content {
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow: auto;
@@ -950,7 +1008,7 @@ button {
 
 .op-index-page {
   display: block;
-  width: min(880px, calc(100% - 2 * var(--op-space-8)));
+  width: min(1280px, calc(100% - 2 * var(--op-space-5)));
   margin: 0 auto;
   padding: var(--op-space-7) 0 var(--op-space-8);
 }
@@ -1260,7 +1318,7 @@ button {
    ========================================================================== */
 
 .op-overview-page {
-  width: min(760px, calc(100% - 2 * var(--op-space-8)));
+  width: min(1080px, calc(100% - 2 * var(--op-space-5)));
   margin: 0 auto;
   padding: var(--op-space-5) 0 var(--op-space-8);
 }
@@ -1455,7 +1513,7 @@ button {
 
 .op-task-add { display:flex; flex-wrap:wrap; gap:var(--op-space-2); align-items:center; margin-bottom:var(--op-space-3); }
 /* The new-task field must read as a control, not as body text under the description. */
-.op-task-add input[type="text"], .op-task-add input:not([type]) { flex:1 1 220px; min-height:32px; padding:0 var(--op-space-2); border:1px solid var(--op-border-strong); border-radius:var(--op-radius-sm); background:var(--op-surface-base); }
+.op-task-add input[type="text"], .op-task-add input:not([type]) { flex:1 1 220px; }
 .op-task-add label { display:inline-flex; align-items:center; gap:var(--op-space-1); color:var(--op-text-secondary); font-size:var(--op-text-size-necessary); }
 .op-task-list, .op-timeline { list-style:none; margin:0; padding:0; }
 /* A task row is READ-ONLY until opened: one scannable line, editing on demand. */
@@ -2276,7 +2334,7 @@ button {
 }
 
 .op-index-page {
-  width: min(920px, calc(100% - 2 * var(--op-space-8)));
+  width: min(1280px, calc(100% - 2 * var(--op-space-5)));
   padding-top: var(--op-space-7);
 }
 
@@ -2372,8 +2430,8 @@ button {
 }
 
 .op-overview-page {
-  width: min(820px, calc(100% - 2 * var(--op-space-8)));
-  padding-top: var(--op-space-6);
+  width: min(1080px, calc(100% - 2 * var(--op-space-5)));
+  padding-top: var(--op-space-5);
 }
 
 .op-overview__hero {
@@ -2494,4 +2552,146 @@ button {
   .op-workspace-disclosure__body {
     padding-left: var(--op-space-3);
   }
+}
+
+/* ==========================================================================
+   Desktop two-pane shell (R2): a permanent project rail beside the detail pane.
+   ========================================================================== */
+
+.app-rail {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--op-space-2);
+  min-height: 0;
+  padding: var(--op-space-3) 0 var(--op-space-3) var(--op-space-3);
+  border-right: 1px solid var(--op-border-subtle);
+  background: var(--op-bg-app);
+}
+
+.app-rail--collapsed {
+  width: 40px;
+  padding: var(--op-space-3) var(--op-space-2);
+  align-items: center;
+}
+
+.app-rail__head {
+  display: flex;
+  align-items: center;
+  gap: var(--op-space-2);
+  padding-right: var(--op-space-3);
+}
+
+.app-rail__head input { flex: 1 1 auto; min-width: 0; }
+
+.app-rail__all,
+.app-rail__item {
+  display: flex;
+  align-items: center;
+  gap: var(--op-space-2);
+  width: calc(100% - var(--op-space-3));
+  min-height: 30px;
+  padding: 0 var(--op-space-2);
+  border: 0;
+  border-radius: var(--op-radius-sm);
+  background: none;
+  color: var(--op-text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-rail__all { justify-content: space-between; font-weight: 600; }
+
+.app-rail__all:hover,
+.app-rail__item:hover { background: var(--op-surface-raised); }
+
+.app-rail__all.is-active,
+.app-rail__item.is-active {
+  background: var(--op-surface-raised);
+  color: var(--op-text-primary);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--op-interactive-fg);
+}
+
+.app-rail__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0 0 var(--op-space-2);
+}
+
+.app-rail__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A flagged project is dot + accessible text, never color alone. */
+.app-rail__dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--op-border-strong);
+}
+
+.app-rail__dot.is-flagged {
+  background: var(--op-status-warning-fg);
+  border-color: var(--op-status-warning-fg);
+}
+
+.app-rail__empty { padding: var(--op-space-2); }
+
+/* Drag to resize; arrow keys nudge when focused. */
+.app-rail__handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  background: none;
+}
+
+.app-rail__handle:focus-visible {
+  outline: 2px solid var(--op-focus-ring);
+  outline-offset: -2px;
+}
+
+/* The detail pane uses the window it was given. */
+.app-shell__content > * { max-width: none; }
+
+/* ---- Workspace tabs (replacing the accordions) --------------------------- */
+
+.op-workspace { margin-top: var(--op-space-4); }
+
+.op-workspace__tabs {
+  display: flex;
+  gap: var(--op-space-1);
+  border-bottom: 1px solid var(--op-border-subtle);
+}
+
+.op-workspace__tab {
+  min-height: 32px;
+  padding: 0 var(--op-space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--op-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.op-workspace__tab:hover { color: var(--op-text-primary); }
+
+.op-workspace__tab[aria-selected="true"] {
+  color: var(--op-text-primary);
+  font-weight: 600;
+  border-bottom-color: var(--op-interactive-fg);
 }
