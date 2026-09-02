@@ -6,6 +6,7 @@ import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { api, AppError } from "../api";
+import { FocusStrip } from "../components/projects/FocusStrip";
 import { ProjectsIndex } from "../components/projects/ProjectsIndex";
 import { useAppActions } from "../components/AppShell";
 import { loadIndexViewState } from "../domain/navigationSession";
@@ -60,6 +61,8 @@ export function ProjectsIndexPage() {
         )}
         {attention && attention.count > 0 && <p className="op-page-heading__attention" role="status">{t("attention.count", { count: attention.count })}</p>}
       </header>
+
+      <FocusStrip />
 
       {isLoading && (
         <p className="op-state-panel" data-testid="projects-index-loading" role="status">

@@ -305,6 +305,11 @@ pub fn get_tasks(input: ProjectTaskInput) -> CommandResult<TaskListDto> {
 }
 
 #[tauri::command]
+pub fn get_focus_agenda() -> CommandResult<crate::mvp::FocusAgendaDto> {
+    crate::mvp::focus_agenda()
+}
+
+#[tauri::command]
 pub fn get_attention_summary() -> CommandResult<crate::mvp::AttentionSummaryDto> {
     let settings = crate::mvp::load_reminder_settings();
     Ok(crate::mvp::attention_summary_with_threshold(
