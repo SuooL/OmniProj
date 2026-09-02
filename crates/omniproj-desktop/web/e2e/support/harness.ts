@@ -140,7 +140,7 @@ export async function installMockTauri(page: Page): Promise<void> {
           return Promise.resolve({ revision: String(taskRevision[input.project_id] ?? 1), tasks: tasksByProject[input.project_id] ?? [] });
         case "add_task": {
           const list = tasksByProject[input.project_id] ?? (tasksByProject[input.project_id] = []);
-          list.push({ id: `task-${list.length + 1}`, text: input.text, status: "open", unclear: input.unclear, due: null, note: null, tags: [], commits: [], adopted_from_proposal_id: null, linked_work_item_id: null, is_current_commitment: false });
+          list.push({ id: `task-${list.length + 1}`, text: input.text, status: "open", unclear: input.unclear, due: null, note: null, tags: [], commits: [], adopted_from_proposal_id: null, linked_work_item_id: null, is_current_commitment: false, updated_at: "2026-08-12T09:00:00Z" });
           taskRevision[input.project_id] = (taskRevision[input.project_id] ?? 1) + 1;
           return Promise.resolve({ revision: String(taskRevision[input.project_id]), tasks: list });
         }
@@ -148,7 +148,7 @@ export async function installMockTauri(page: Page): Promise<void> {
           return Promise.resolve({ proposal_id: `${input.id}-proposal`, candidates: ["Inspect the failing path", "Write a regression test", "Implement the smallest fix"] });
         case "adopt_subtasks": {
           const list = tasksByProject[input.project_id] ?? (tasksByProject[input.project_id] = []);
-          for (const text of input.texts) list.push({ id: `task-${list.length + 1}`, text, status: "open", unclear: false, due: null, note: null, tags: [], commits: [], adopted_from_proposal_id: input.proposal_id, linked_work_item_id: null, is_current_commitment: false });
+          for (const text of input.texts) list.push({ id: `task-${list.length + 1}`, text, status: "open", unclear: false, due: null, note: null, tags: [], commits: [], adopted_from_proposal_id: input.proposal_id, linked_work_item_id: null, is_current_commitment: false, updated_at: "2026-08-12T09:00:00Z" });
           taskRevision[input.project_id] = (taskRevision[input.project_id] ?? 1) + 1;
           return Promise.resolve({ revision: String(taskRevision[input.project_id]), tasks: list });
         }

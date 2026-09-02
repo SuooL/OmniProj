@@ -1458,6 +1458,16 @@ button {
 .op-task-tags { display:inline-flex; flex-wrap:wrap; gap:var(--op-space-1); }
 .op-task-tag { display:inline-flex; align-items:center; min-height:19px; padding:1px 7px; border:1px solid var(--op-border-strong); border-radius:var(--op-radius-sm); font-size:var(--op-text-size-micro); line-height:var(--op-line-necessary); color:var(--op-text-secondary); background:var(--op-surface-raised); }
 .op-task-tagfilter { display:flex; flex-wrap:wrap; align-items:center; gap:var(--op-space-2); margin-bottom:var(--op-space-3); }
+/* Planning board (R1c): three status columns; stacks below 900px. */
+.op-board { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:var(--op-space-3); align-items:start; }
+.op-board-col { border:1px solid var(--op-border-hairline); border-radius:var(--op-radius-md); padding:var(--op-space-3); background:var(--op-surface-raised); }
+.op-board-col > h4 { display:flex; align-items:center; gap:var(--op-space-2); margin:0 0 var(--op-space-2); font-size:var(--op-text-size-necessary); }
+.op-board-col > ul { list-style:none; margin:0; padding:0; display:grid; gap:var(--op-space-2); }
+.op-board-card { display:grid; gap:var(--op-space-1); padding:var(--op-space-2); border:1px solid var(--op-border-hairline); border-radius:var(--op-radius-sm); background:var(--op-surface-base); }
+.op-board-card__meta { display:inline-flex; flex-wrap:wrap; gap:var(--op-space-1); }
+.op-board-card__locked { font-size:var(--op-text-size-micro); }
+.op-board-card select { min-height:28px; justify-self:start; max-width:100%; }
+@media (max-width: 900px) { .op-board { grid-template-columns:1fr; } }
 .op-task-actions { display:flex; align-items:center; gap:var(--op-space-2); flex-shrink:0; }
 .op-task-actions select { min-height:28px; }
 .op-proposal { display:grid; gap:var(--op-space-2); margin:var(--op-space-3) 0; padding:var(--op-space-3); border:1px solid var(--op-border-strong); border-radius:var(--op-radius-md); background:var(--op-surface-raised); }

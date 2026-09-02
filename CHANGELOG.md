@@ -12,6 +12,15 @@ projects, ≥20 recorded re-entry events) has **not** been met, so no release is
 
 ### Added
 
+- **R1c planning board view (FR-R6)** — the task list gains a `list / board` toggle
+  (persisted locally) inside the Planning disclosure. The board shows three status columns
+  (open/doing/done) with deterministic ordering — oldest overdue first, then dated ascending,
+  then undated by recency; cards carry the `?` marker, tags, a due signal (overdue = danger
+  with "逾期 N 天" text, ≤7 days = warning; never color-only), and the commitment marker.
+  Moves use a keyboard-accessible select — no drag requirement; commitment-bound cards show
+  guidance instead of a control (their lifecycle status belongs to commitment actions). The
+  done column folds to the newest five with an explicit expand. Task rows now expose
+  `updated_at` for the ordering.
 - **R1b task tags (FR-R5)** — work items carry 0..8 user classification tags (each ≤24
   chars; trimmed, case-insensitively unique keeping the user's casing and order). Entry is a
   comma-separated field with in-project datalist autocomplete; saved tags render as chips
