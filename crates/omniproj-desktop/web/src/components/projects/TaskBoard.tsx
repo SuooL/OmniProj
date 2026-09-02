@@ -8,7 +8,6 @@ import { queryKeys } from "../../queryKeys";
 
 interface TaskBoardProps {
   projectId: ProjectId;
-  projectRevision: number;
   hasCurrentCommitment: boolean;
 }
 
@@ -16,7 +15,7 @@ interface ProposalDraft extends AdvanceProposal {
   selected: boolean[];
 }
 
-export function TaskBoard({ projectId, projectRevision, hasCurrentCommitment }: TaskBoardProps) {
+export function TaskBoard({ projectId, hasCurrentCommitment }: TaskBoardProps) {
   const { t } = useI18n();
   const client = useQueryClient();
   const [text, setText] = useState("");
@@ -30,6 +29,8 @@ export function TaskBoard({ projectId, projectRevision, hasCurrentCommitment }: 
 
   function accept(next: TaskList) {
     client.setQueryData(key, next);
+    void client.invalidateQueries({ queryKey: queryKeys.projectOverview(projectId) });
+    void client.invalidateQueries({ queryKey: queryKeys.projectIndex });
     setMessage("");
   }
 
@@ -64,7 +65,7 @@ export function TaskBoard({ projectId, projectRevision, hasCurrentCommitment }: 
     setMessage(t("task.advancing"));
     try {
       const next = await api.advanceTask({ project_id: projectId, id: task.id });
-      setProposal({ ...next, selected: next.candidates.map(() => true) });
+      setProposal({ ...next, selected: next.candidates.map(() => false) });
       setMessage("");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t("task.advanceFailed"));
@@ -84,7 +85,7 @@ export function TaskBoard({ projectId, projectRevision, hasCurrentCommitment }: 
 
   async function promote(task: Task) {
     if (!data) return;
-    await api.promoteTaskToCommitment({ project_id: projectId, task_id: task.id, expected_task_revision: data.revision, expected_project_revision: projectRevision });
+    await api.promoteTaskToCommitment({ project_id: projectId, task_id: task.id, expected_task_revision: data.revision, expected_project_revision: Number(data.revision) });
     await Promise.all([
       client.invalidateQueries({ queryKey: key }),
       client.invalidateQueries({ queryKey: queryKeys.projectOverview(projectId) }),
@@ -103,6 +104,6 @@ export function TaskBoard({ projectId, projectRevision, hasCurrentCommitment }: 
     <div className="op-task-add"><input aria-label={t("task.new")} placeholder={t("task.new")} value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void add(); }} /><label><input type="checkbox" checked={unclear} onChange={(event) => setUnclear(event.target.checked)} /> {t("task.unclear")}</label><button className="op-button op-button--primary" type="button" disabled={!text.trim() || !data} onClick={() => void add()}>{t("task.add")}</button></div>
     {message && <p role="status" className="op-error">{message}</p>}
     {proposal && <div className="op-proposal" role="region" aria-label={t("task.proposal")}><p><strong>{t("task.advanceReady")}</strong></p>{proposal.candidates.map((candidate, index) => <label key={`${proposal.proposal_id}-${index}`}><input type="checkbox" checked={proposal.selected[index]} onChange={(event) => setProposal({ ...proposal, selected: proposal.selected.map((value, itemIndex) => itemIndex === index ? event.target.checked : value) })} />{candidate}</label>)}<div className="op-task-actions"><button className="op-button op-button--primary" type="button" disabled={!proposal.selected.some(Boolean)} onClick={() => void adopt()}>{t("task.adoptSelected")}</button><button className="op-button op-button--ghost" type="button" onClick={() => setProposal(null)}>{t("common.cancel")}</button></div></div>}
-    {isLoading ? <p className="op-muted">{t("task.loading")}</p> : tasks.length === 0 ? <p className="op-muted">{t("task.empty")}</p> : <ul className="op-task-list">{tasks.map((task) => { const value = draft(task); const linked = task.linked_work_item_id !== null; return <li key={task.id} className="op-task-item"><div className="op-task-main"><span className={task.unclear ? "op-task-unclear" : ""}>{task.unclear ? "? " : ""}{task.text}{task.is_current_commitment ? ` · ${t("task.currentCommitment")}` : ""}</span>{task.adopted_from_proposal_id && <small>{t("task.fromProposal", { id: task.adopted_from_proposal_id })}</small>}<input type="date" aria-label={`${t("task.due")}: ${task.text}`} value={value.due} onChange={(event) => setDrafts((all) => ({ ...all, [task.id]: { ...value, due: event.target.value } }))} /><input aria-label={`${t("task.note")}: ${task.text}`} placeholder={t("task.note")} value={value.note} onChange={(event) => setDrafts((all) => ({ ...all, [task.id]: { ...value, note: event.target.value } }))} /></div><div className="op-task-actions"><select disabled={linked} aria-label={`${t("task.status")}: ${task.text}`} value={value.status} onChange={(event) => setDrafts((all) => ({ ...all, [task.id]: { ...value, status: event.target.value } }))}><option value="open">{t("task.open")}</option><option value="doing">{t("task.doing")}</option><option value="done">{t("task.done")}</option></select><button className="op-button op-button--secondary" type="button" onClick={() => void update(task)}>{t("task.save")}</button>{!linked && !hasCurrentCommitment && <button className="op-button op-button--secondary" type="button" onClick={() => void promote(task)}>{t("task.makeCommitment")}</button>}{task.unclear && <button className="op-button op-button--ghost" type="button" onClick={() => void advance(task)}>{t("task.advance")}</button>}<button className="op-button op-button--ghost" type="button" disabled={linked} onClick={() => void remove(task)}>{t("task.remove")}</button></div></li>; })}</ul>}
+    {isLoading ? <p className="op-muted">{t("task.loading")}</p> : tasks.length === 0 ? <p className="op-muted">{t("task.empty")}</p> : <ul className="op-task-list">{tasks.map((task) => { const value = draft(task); const linked = task.linked_work_item_id !== null; return <li key={task.id} className="op-task-item"><div className="op-task-main"><span className={task.unclear ? "op-task-unclear" : ""}>{task.unclear ? "? " : ""}{task.text}{task.is_current_commitment ? ` · ${t("task.currentCommitment")}` : ""}</span>{task.adopted_from_proposal_id && <small>{t("task.fromProposal", { id: task.adopted_from_proposal_id })}</small>}<input type="text" inputMode="numeric" placeholder="YYYY-MM-DD" aria-label={`${t("task.due")}: ${task.text}`} value={value.due} onChange={(event) => setDrafts((all) => ({ ...all, [task.id]: { ...value, due: event.target.value } }))} /><input aria-label={`${t("task.note")}: ${task.text}`} placeholder={t("task.note")} value={value.note} onChange={(event) => setDrafts((all) => ({ ...all, [task.id]: { ...value, note: event.target.value } }))} /></div><div className="op-task-actions"><select disabled={linked} aria-label={`${t("task.status")}: ${task.text}`} value={value.status} onChange={(event) => setDrafts((all) => ({ ...all, [task.id]: { ...value, status: event.target.value } }))}><option value="open">{t("task.open")}</option><option value="doing">{t("task.doing")}</option><option value="done">{t("task.done")}</option></select><button className="op-button op-button--secondary" type="button" onClick={() => void update(task)}>{t("task.save")}</button>{!linked && !hasCurrentCommitment && <button className="op-button op-button--secondary" type="button" onClick={() => void promote(task)}>{t("task.makeCommitment")}</button>}{task.unclear && <button className="op-button op-button--ghost" type="button" onClick={() => void advance(task)}>{t("task.advance")}</button>}<button className="op-button op-button--ghost" type="button" disabled={linked} onClick={() => void remove(task)}>{t("task.remove")}</button></div></li>; })}</ul>}
   </section>;
 }

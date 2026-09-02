@@ -35,13 +35,14 @@ describe("four fields behind one canonical link", () => {
     expect(link).toHaveAccessibleName(/Atlas\. .*Commitment/);
   });
 
-  it("shows the commitment text and the observed branch, SHA subject, and time", () => {
+  it("shows the commitment and compact delta without leaking raw commit detail", () => {
     renderRow(
       indexItem({
         name: "Atlas",
         current_commitment: currentCommitment({ text: "Wire the service" }),
         observed_actual: observedActual({
           head: { kind: "attached", branch: "feature/x" },
+          commits_since_commitment: 3,
           last_commit: {
             sha: "b".repeat(40),
             short_sha: "bbbbbbb",
@@ -53,7 +54,9 @@ describe("four fields behind one canonical link", () => {
     );
     expect(screen.getByText("Wire the service")).toBeInTheDocument();
     expect(screen.getByText("feature/x")).toBeInTheDocument();
-    expect(screen.getByText(/bbbbbbb add thing/)).toBeInTheDocument();
+    expect(screen.getByText("3 commit(s) since")).toBeInTheDocument();
+    expect(screen.getByText("clean")).toBeInTheDocument();
+    expect(screen.queryByText(/bbbbbbb add thing/)).not.toBeInTheDocument();
   });
 });
 
@@ -132,16 +135,16 @@ describe("commitment states", () => {
 
 });
 
-describe("neutral activity facts", () => {
-  it("renders the 16-week activity strip without source paths or health ranking", () => {
+describe("re-entry signal budget", () => {
+  it("keeps charts, source paths, and health ranking out of the default row", () => {
     const { container } = renderRow(
       indexItem({ name: "Atlas" }),
     );
     // The Index DTO carries no source location; assert none leaked into the row.
     const row = within(container.querySelector("li") as HTMLElement);
     expect(row.queryByText(/\/Users\//)).not.toBeInTheDocument();
-    expect(container.querySelector("[data-testid='activity-sparkline']")).not.toBeNull();
-    expect(screen.getByRole("img", { name: /commits in the last 16 weeks/i })).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='activity-sparkline']")).toBeNull();
+    expect(screen.queryByRole("img", { name: /commits in the last 16 weeks/i })).not.toBeInTheDocument();
     expect(container.querySelector("[data-testid='health']")).toBeNull();
     expect(container.querySelector("[data-testid='git-graph']")).toBeNull();
   });

@@ -44,7 +44,11 @@ export function ProjectOverviewPage() {
         </div>
       )}
       {data && (
-        <ProjectOverview overview={data} now={new Date()} headingRef={headingRef} />
+        <ProjectOverview
+          overview={data}
+          now={new Date()}
+          headingRef={headingRef}
+        />
       )}
     </main>
   );

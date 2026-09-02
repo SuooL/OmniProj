@@ -2,7 +2,7 @@
 // budget (<=1 ProjectStateTag, <=1 ReviewSignalBadge, <=3 FactLabels, and NO CommitmentStateTag
 // — that tag is history-only, so the row stays within <=2 enclosed badges). It renders no
 // full path, sparkline, health/priority, Git graph, Agent control, full task list, or any
-// health/priority score. The activity strip is a neutral repository fact.
+// health/priority score.
 
 import { Link } from "react-router-dom";
 
@@ -18,7 +18,6 @@ import { FactLabel } from "../semantic/FactLabel";
 import { ChevronRightIcon, FolderIcon } from "../Icons";
 import { ProjectStateTag } from "../semantic/ProjectStateTag";
 import { ReviewSignalBadge } from "../semantic/ReviewSignalBadge";
-import { ActivitySparkline } from "./ActivitySparkline";
 import {
   projectStatusLabel,
   reviewReasonLabel,
@@ -80,17 +79,16 @@ function activityNote(item: ProjectIndexItem, now: Date, locale: Locale, t: Tran
 export interface ProjectRowProps {
   item: ProjectIndexItem;
   now: Date;
-  silentDaysThreshold?: number;
 }
 
-export function ProjectRow({ item, now, silentDaysThreshold = 7 }: ProjectRowProps) {
+export function ProjectRow({ item, now }: ProjectRowProps) {
   const { locale, t } = useI18n();
   const observed = item.observed_actual;
   const commitment = item.current_commitment;
   const primary = primaryReason(item);
   const hidden = hiddenReasons(item);
 
-  const reviewText = primary ? reviewReasonLabel(primary.code, locale) : t("row.noReview");
+  const activityText = activityNote(item, now, locale, t);
 
   return (
     <li className="op-row">
@@ -121,27 +119,26 @@ export function ProjectRow({ item, now, silentDaysThreshold = 7 }: ProjectRowPro
             {observed ? (
               <>
                 <FactLabel value={headText(observed.head, locale)} />
-                {observed.last_commit ? (
-                  <FactLabel
-                    value={`${observed.last_commit.short_sha} ${observed.last_commit.subject}`}
-                    title={observed.last_commit.sha}
-                  />
-                ) : (
-                  <span>{t("row.noCommits")}</span>
+                {!observed.last_commit && (
+                  <FactLabel value={t("row.noCommits")} />
                 )}
+                {observed.last_commit && observed.commits_since_commitment !== null && (
+                  <FactLabel value={t("row.commitsSince", { count: observed.commits_since_commitment })} />
+                )}
+                {observed.last_commit && (
+                  <FactLabel value={observed.changed_files > 0
+                    ? t("row.changed", { count: observed.changed_files })
+                    : t("row.clean")} />
+                )}
+                {activityText && <span>{activityText}</span>}
               </>
             ) : (
               <span>{t("row.notObserved")}</span>
             )}
-            {observed && <ActivitySparkline weeks={observed.commit_activity_weeks} />}
-            {observed && <span>{observed.silent_days === null
-              ? t("activity.unknown")
-              : t("activity.silenceWithThreshold", { days: observed.silent_days, threshold: silentDaysThreshold })}</span>}
           </span>
         </span>
         <span className="op-row__review-text">
           {primary && <ReviewSignalBadge reason={primary} hidden={hidden} />}
-          {!primary && reviewText}
         </span>
         <span className="op-row__chevron"><ChevronRightIcon /></span>
       </Link>

@@ -489,29 +489,23 @@ pub fn assemble_overview(
     }
 }
 
-/// Deterministic factual-attention order. Active/setup projects with observable
-/// activity are ordered by silent days (most silent first); an empty repository is
-/// treated as maximally silent. Unobservable sources follow rather than receiving a
-/// fabricated inactivity value. Non-operating lifecycle states remain last.
-pub fn index_sort_key(item: &ProjectIndexItemDto) -> (u8, u32, String, String) {
-    let operating = matches!(item.status, ProjectStatus::Setup | ProjectStatus::Active);
-    let observable =
-        item.source_status == ProjectSourceStatus::Available && item.observed_actual.is_some();
-    let bucket = if operating && observable {
-        0
-    } else if operating {
-        1
-    } else {
-        2
-    };
-    let silent = item
-        .observed_actual
-        .as_ref()
-        .map(|actual| actual.silent_days.unwrap_or(u32::MAX))
-        .unwrap_or(0);
+/// Deterministic review order: an explicit reason outranks repository silence. This keeps the
+/// Index focused on a Human disposition rather than mistaking low Git activity for importance.
+pub fn index_sort_key(item: &ProjectIndexItemDto) -> (u8, String, String) {
+    let priority = item
+        .review_reasons
+        .first()
+        .map(|reason| match reason.code.as_str() {
+            "source_unavailable" => 0,
+            "complete_setup" => 1,
+            "needs_commitment" => 2,
+            "review_action" => 3,
+            "scheduled_review" => 4,
+            _ => u8::MAX - 1,
+        })
+        .unwrap_or(u8::MAX);
     (
-        bucket,
-        u32::MAX - silent,
+        priority,
         item.name.clone(),
         item.project_id.as_str().to_owned(),
     )

@@ -136,12 +136,12 @@ export async function installMockTauri(page: Page): Promise<void> {
         case "get_project_overview":
           return Promise.resolve(overviews[input.project_id]);
         case "get_tasks":
-          return Promise.resolve({ revision: `task-${taskRevision[input.project_id] ?? 1}`, tasks: tasksByProject[input.project_id] ?? [] });
+          return Promise.resolve({ revision: String(taskRevision[input.project_id] ?? 1), tasks: tasksByProject[input.project_id] ?? [] });
         case "add_task": {
           const list = tasksByProject[input.project_id] ?? (tasksByProject[input.project_id] = []);
           list.push({ id: `task-${list.length + 1}`, text: input.text, status: "open", unclear: input.unclear, due: null, note: null, commits: [], adopted_from_proposal_id: null, linked_work_item_id: null, is_current_commitment: false });
           taskRevision[input.project_id] = (taskRevision[input.project_id] ?? 1) + 1;
-          return Promise.resolve({ revision: `task-${taskRevision[input.project_id]}`, tasks: list });
+          return Promise.resolve({ revision: String(taskRevision[input.project_id]), tasks: list });
         }
         case "advance_task":
           return Promise.resolve({ proposal_id: `${input.id}-proposal`, candidates: ["Inspect the failing path", "Write a regression test", "Implement the smallest fix"] });
@@ -149,7 +149,7 @@ export async function installMockTauri(page: Page): Promise<void> {
           const list = tasksByProject[input.project_id] ?? (tasksByProject[input.project_id] = []);
           for (const text of input.texts) list.push({ id: `task-${list.length + 1}`, text, status: "open", unclear: false, due: null, note: null, commits: [], adopted_from_proposal_id: input.proposal_id, linked_work_item_id: null, is_current_commitment: false });
           taskRevision[input.project_id] = (taskRevision[input.project_id] ?? 1) + 1;
-          return Promise.resolve({ revision: `task-${taskRevision[input.project_id]}`, tasks: list });
+          return Promise.resolve({ revision: String(taskRevision[input.project_id]), tasks: list });
         }
         case "get_commit_timeline":
         case "get_git_graph":

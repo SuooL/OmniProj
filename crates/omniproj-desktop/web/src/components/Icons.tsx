@@ -46,3 +46,7 @@ export function PlusIcon(props: IconProps) {
 export function RefreshIcon(props: IconProps) {
   return <Icon {...props}><path d="M15.5 6.25V3.5m0 0h-2.75m2.75 0-2.2 2.2a5.75 5.75 0 1 0 1.5 5.55" /></Icon>;
 }
+
+export function GearIcon(props: IconProps) {
+  return <Icon {...props}><circle cx="10" cy="10" r="2.5" /><path d="M10 2.75v2M10 15.25v2M2.75 10h2M15.25 10h2M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M15.1 4.9l-1.4 1.4M6.3 13.7l-1.4 1.4" /></Icon>;
+}

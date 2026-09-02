@@ -134,9 +134,6 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
             <button className="op-button op-button--secondary" type="button" disabled={interactionBusy} onClick={() => setReplacing(true)}>
               {t("commitment.replace")}
             </button>
-            <button className="op-button op-button--ghost" type="button" disabled={interactionBusy} onClick={doClear}>
-              {t("commitment.clear")}
-            </button>
           </div>
 
           {replacing && (
@@ -175,10 +172,16 @@ export function CurrentCommitment({ overview }: CurrentCommitmentProps) {
         </div>
       )}
 
-      {overview.undoable_transition_id && (
-        <button className="op-button op-button--ghost op-undo-button" type="button" disabled={interactionBusy} onClick={doUndo} data-testid="undo-button">
-          {t("commitment.undo")}
-        </button>
+      {commitment && (overview.undoable_transition_id || !replacing) && (
+        <details className="op-commitment-more">
+          <summary>{t("commitment.moreActions")}</summary>
+          <div className="op-commitment-more__actions">
+            <button className="op-button op-button--ghost" type="button" disabled={interactionBusy} onClick={doClear}>{t("commitment.clear")}</button>
+            {overview.undoable_transition_id && (
+              <button className="op-button op-button--ghost op-undo-button" type="button" disabled={interactionBusy} onClick={doUndo} data-testid="undo-button">{t("commitment.undo")}</button>
+            )}
+          </div>
+        </details>
       )}
 
       {outcome && outcome.status === "durable_audit_failed" && (

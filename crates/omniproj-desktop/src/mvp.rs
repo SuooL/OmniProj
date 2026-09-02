@@ -6,8 +6,10 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use omniproj_capture::git::commit_log;
-use omniproj_core::ids::ProjectId;
-use omniproj_core::project_state::{ProjectStateDoc, WorkItemStatus};
+use omniproj_core::ids::{ProjectId, WorkItemId};
+use omniproj_core::project_state::{
+    apply_project_command, ProjectCommand, ProjectStateDoc, WorkItemDraft, WorkItemStatus,
+};
 use omniproj_core::{content_hash, load_project, NextDoc, TaskStatus};
 
 use crate::error::{CommandError, CommandResult};
@@ -510,81 +512,125 @@ fn mutate_plan(
     Ok(plan_list(rendered.as_bytes()))
 }
 
-fn task_list(project_id: &ProjectId, raw: &[u8]) -> CommandResult<TaskListDto> {
-    let state = ProjectStateDoc::load(project_id)?;
-    let doc = NextDoc::parse(&String::from_utf8_lossy(raw));
-    let tasks = doc
-        .items()
-        .filter_map(|item| {
-            item.id.as_ref().map(|id| {
-                let linked = state
+fn task_list(state: &ProjectStateDoc) -> TaskListDto {
+    let referenced = state
+        .commitment_transitions
+        .iter()
+        .flat_map(|transition| {
+            [
+                transition.previous_work_item_id.as_ref(),
+                transition.next_work_item_id.as_ref(),
+            ]
+        })
+        .flatten()
+        .collect::<std::collections::HashSet<_>>();
+    TaskListDto {
+        revision: state.revision.to_string(),
+        tasks: state
+            .work_items
+            .iter()
+            .filter(|item| item.status != WorkItemStatus::Abandoned)
+            .map(|item| TaskDto {
+                id: item.id.as_str().to_owned(),
+                text: item.text.clone(),
+                status: match item.status {
+                    WorkItemStatus::Planned => "open",
+                    WorkItemStatus::Doing | WorkItemStatus::Blocked => "doing",
+                    WorkItemStatus::Done | WorkItemStatus::Abandoned => "done",
+                }
+                .to_owned(),
+                unclear: item.unclear,
+                due: item.due.clone(),
+                note: item.note.clone(),
+                commits: item.commits.clone(),
+                adopted_from_proposal_id: item.adopted_from_proposal_id.clone(),
+                linked_work_item_id: referenced
+                    .contains(&item.id)
+                    .then(|| item.id.as_str().to_owned()),
+                is_current_commitment: state.current_next_action_id.as_ref() == Some(&item.id),
+            })
+            .collect(),
+    }
+}
+
+fn expected_project_revision(value: &str) -> CommandResult<u64> {
+    value
+        .parse::<u64>()
+        .map_err(|_| CommandError::invalid_input("invalid project revision"))
+}
+
+fn parse_work_item_id(value: &str) -> CommandResult<WorkItemId> {
+    WorkItemId::parse(value).map_err(|error| CommandError::invalid_input(error.to_string()))
+}
+
+fn apply_work_command(
+    project_id: &ProjectId,
+    expected_revision: &str,
+    command: ProjectCommand,
+) -> CommandResult<TaskListDto> {
+    load_project(project_id)?;
+    let mutation = apply_project_command(
+        project_id,
+        expected_project_revision(expected_revision)?,
+        command,
+        &Utc::now().to_rfc3339(),
+    )?;
+    Ok(task_list(&mutation.state))
+}
+
+pub fn get_tasks(project_id: ProjectId) -> CommandResult<TaskListDto> {
+    load_project(&project_id)?;
+    Ok(task_list(&ProjectStateDoc::load(&project_id)?))
+}
+
+/// Import the former `notes/next.md` collection once. The source file is intentionally retained
+/// byte-for-byte for audit/recovery; all new mutations use canonical WorkItems in project.md.
+pub fn migrate_legacy_tasks() -> CommandResult<()> {
+    for record in omniproj_core::list_project_records()? {
+        let raw = read_optional(&omniproj_core::next_path(record.id.as_str()))?;
+        if raw.is_empty() {
+            continue;
+        }
+        let doc = NextDoc::parse(&String::from_utf8_lossy(&raw));
+        let state = ProjectStateDoc::load(&record.id)?;
+        let drafts = doc
+            .items()
+            .filter_map(|item| {
+                let source_task_id = item.id.clone()?;
+                if state
                     .work_items
                     .iter()
-                    .rev()
-                    .find(|work_item| work_item.source_task_id.as_deref() == Some(id.as_str()));
-                let is_current = linked.is_some_and(|work_item| {
-                    state.current_next_action_id.as_ref() == Some(&work_item.id)
-                });
-                let status = linked.map_or_else(
-                    || item.status.as_str(),
-                    |work_item| match work_item.status {
-                        WorkItemStatus::Planned => "open",
-                        WorkItemStatus::Doing | WorkItemStatus::Blocked => "doing",
-                        WorkItemStatus::Done | WorkItemStatus::Abandoned => "done",
-                    },
-                );
-                TaskDto {
-                    id: id.clone(),
+                    .any(|existing| existing.source_task_id.as_deref() == Some(&source_task_id))
+                {
+                    return None;
+                }
+                Some(WorkItemDraft {
                     text: item.text.clone(),
-                    status: status.to_owned(),
+                    status: match item.status {
+                        TaskStatus::Open => WorkItemStatus::Planned,
+                        TaskStatus::Doing => WorkItemStatus::Doing,
+                        TaskStatus::Done => WorkItemStatus::Done,
+                    },
                     unclear: item.unclear,
                     due: item.due.clone(),
                     note: item.note.clone(),
                     commits: item.commits.clone(),
                     adopted_from_proposal_id: item.adopted_from_proposal_id.clone(),
-                    linked_work_item_id: linked.map(|work_item| work_item.id.as_str().to_owned()),
-                    is_current_commitment: is_current,
-                }
+                    source_task_id: Some(source_task_id),
+                })
             })
-        })
-        .collect();
-    Ok(TaskListDto {
-        revision: revision_for(raw),
-        tasks,
-    })
-}
-
-pub fn get_tasks(project_id: ProjectId) -> CommandResult<TaskListDto> {
-    load_project(&project_id)?;
-    let raw = read_optional(&omniproj_core::next_path(project_id.as_str()))?;
-    task_list(&project_id, &raw)
-}
-
-fn mutate(
-    project_id: &ProjectId,
-    expected_revision: &str,
-    message: &str,
-    f: impl FnOnce(&mut NextDoc) -> Result<(), String>,
-) -> CommandResult<TaskListDto> {
-    load_project(project_id)?;
-    let path = omniproj_core::next_path(project_id.as_str());
-    let raw = read_optional(&path)?;
-    let actual_revision = revision_for(&raw);
-    if actual_revision != expected_revision {
-        return Err(revision_conflict(expected_revision, &actual_revision));
+            .collect::<Vec<_>>();
+        if drafts.is_empty() {
+            continue;
+        }
+        apply_project_command(
+            &record.id,
+            state.revision,
+            ProjectCommand::ImportLegacyWorkItems { items: drafts },
+            &Utc::now().to_rfc3339(),
+        )?;
     }
-    let mut doc = NextDoc::parse(&String::from_utf8_lossy(&raw));
-    f(&mut doc).map_err(CommandError::invalid_input)?;
-    let rendered = doc.render();
-    let relative = PathBuf::from(format!("projects/{}/notes/next.md", project_id.as_str()));
-    write_checked_document(
-        &path,
-        relative,
-        expected_revision,
-        rendered.as_bytes(),
-        message,
-    )?;
-    task_list(project_id, rendered.as_bytes())
+    Ok(())
 }
 
 pub fn add_task(
@@ -596,10 +642,22 @@ pub fn add_task(
     if text.trim().is_empty() {
         return Err(CommandError::invalid_input("task text is required"));
     }
-    mutate(&project_id, &expected_revision, "task: add", |doc| {
-        doc.add(&text, unclear);
-        Ok(())
-    })
+    apply_work_command(
+        &project_id,
+        &expected_revision,
+        ProjectCommand::AddWorkItems {
+            items: vec![WorkItemDraft {
+                text,
+                status: WorkItemStatus::Planned,
+                unclear,
+                due: None,
+                note: None,
+                commits: Vec::new(),
+                adopted_from_proposal_id: None,
+                source_task_id: None,
+            }],
+        },
+    )
 }
 
 pub fn update_task(
@@ -610,36 +668,28 @@ pub fn update_task(
     due: Option<String>,
     note: Option<String>,
 ) -> CommandResult<TaskListDto> {
-    let mut parsed = TaskStatus::parse(&status)
+    let parsed = TaskStatus::parse(&status)
         .ok_or_else(|| CommandError::invalid_input("invalid task status"))?;
     let state = ProjectStateDoc::load(&project_id)?;
-    if let Some(work_item) = state
+    let work_item_id = parse_work_item_id(&id)?;
+    let item = state
         .work_items
         .iter()
-        .rev()
-        .find(|work_item| work_item.source_task_id.as_deref() == Some(id.as_str()))
-    {
-        parsed = match work_item.status {
-            WorkItemStatus::Planned => TaskStatus::Open,
-            WorkItemStatus::Doing | WorkItemStatus::Blocked => TaskStatus::Doing,
-            WorkItemStatus::Done | WorkItemStatus::Abandoned => TaskStatus::Done,
-        };
-    }
-    mutate(
+        .find(|item| item.id == work_item_id)
+        .ok_or_else(|| CommandError::invalid_input("task not found"))?;
+    apply_work_command(
         &project_id,
         &expected_revision,
-        "task: update",
-        move |doc| {
-            if !doc.set_status(&id, parsed) {
-                return Err("task not found".into());
-            }
-            if !doc.set_due(&id, due) {
-                return Err("invalid due date or task not found".into());
-            }
-            if !doc.set_note(&id, note) {
-                return Err("task not found".into());
-            }
-            Ok(())
+        ProjectCommand::UpdateWorkItem {
+            work_item_id,
+            status: match parsed {
+                TaskStatus::Open => WorkItemStatus::Planned,
+                TaskStatus::Doing => WorkItemStatus::Doing,
+                TaskStatus::Done => WorkItemStatus::Done,
+            },
+            unclear: item.unclear,
+            due,
+            note,
         },
     )
 }
@@ -649,26 +699,11 @@ pub fn remove_task(
     expected_revision: String,
     id: String,
 ) -> CommandResult<TaskListDto> {
-    let state = ProjectStateDoc::load(&project_id)?;
-    if state
-        .work_items
-        .iter()
-        .any(|work_item| work_item.source_task_id.as_deref() == Some(id.as_str()))
-    {
-        return Err(CommandError::invalid_input(
-            "a task linked to commitment history cannot be removed",
-        ));
-    }
-    mutate(
+    apply_work_command(
         &project_id,
         &expected_revision,
-        "task: remove",
-        move |doc| {
-            if doc.remove(&id) {
-                Ok(())
-            } else {
-                Err("task not found".into())
-            }
+        ProjectCommand::RemoveWorkItem {
+            work_item_id: parse_work_item_id(&id)?,
         },
     )
 }
@@ -679,16 +714,13 @@ pub fn attribute_commit(
     id: String,
     sha: String,
 ) -> CommandResult<TaskListDto> {
-    mutate(
+    apply_work_command(
         &project_id,
         &expected_revision,
-        "task: attribute commit",
-        move |doc| {
-            if doc.attribute_commit(&id, &sha) {
-                Ok(())
-            } else {
-                Err("invalid task or commit SHA".into())
-            }
+        ProjectCommand::AttributeCommit {
+            work_item_id: parse_work_item_id(&id)?,
+            sha,
+            attributed: true,
         },
     )
 }
@@ -699,16 +731,13 @@ pub fn unattribute_commit(
     id: String,
     sha: String,
 ) -> CommandResult<TaskListDto> {
-    mutate(
+    apply_work_command(
         &project_id,
         &expected_revision,
-        "task: unattribute commit",
-        move |doc| {
-            if doc.unattribute_commit(&id, &sha) {
-                Ok(())
-            } else {
-                Err("commit attribution not found".into())
-            }
+        ProjectCommand::AttributeCommit {
+            work_item_id: parse_work_item_id(&id)?,
+            sha,
+            attributed: false,
         },
     )
 }
@@ -763,11 +792,12 @@ pub fn get_graph(project_id: ProjectId, limit: usize) -> CommandResult<Vec<Graph
 }
 
 pub async fn advance_task(project_id: ProjectId, id: String) -> CommandResult<AdvanceProposalDto> {
-    let raw = read_optional(&omniproj_core::next_path(project_id.as_str()))?;
-    let item = NextDoc::parse(&String::from_utf8_lossy(&raw))
-        .items()
-        .find(|t| t.id.as_deref() == Some(id.as_str()))
-        .cloned()
+    let work_item_id = parse_work_item_id(&id)?;
+    let state = ProjectStateDoc::load(&project_id)?;
+    let item = state
+        .work_items
+        .iter()
+        .find(|item| item.id == work_item_id)
         .ok_or_else(|| CommandError::invalid_input("task not found"))?;
     let resolved = crate::agent_settings::resolve_provider()?;
     let mut steps =
@@ -844,39 +874,54 @@ pub fn adopt_subtasks(
     if proposal_id.trim().is_empty() {
         return Err(CommandError::invalid_input("proposal id is required"));
     }
-    mutate(
+    let items = texts
+        .into_iter()
+        .filter(|text| !text.trim().is_empty())
+        .map(|text| WorkItemDraft {
+            text,
+            status: WorkItemStatus::Planned,
+            unclear: false,
+            due: None,
+            note: None,
+            commits: Vec::new(),
+            adopted_from_proposal_id: Some(proposal_id.clone()),
+            source_task_id: None,
+        })
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        return Err(CommandError::invalid_input(
+            "at least one proposal item must be selected",
+        ));
+    }
+    apply_work_command(
         &project_id,
         &expected_revision,
-        "advance: adopt selected subtasks",
-        move |doc| {
-            for text in texts.iter().filter(|t| !t.trim().is_empty()) {
-                doc.add_adopted(text, &proposal_id);
-            }
-            Ok(())
-        },
+        ProjectCommand::AddWorkItems { items },
     )
 }
 
-pub fn task_for_commitment(
+pub fn promote_work_item_to_commitment(
     project_id: &ProjectId,
-    task_id: &str,
+    work_item_id: &str,
     expected_task_revision: &str,
-) -> CommandResult<TaskDto> {
-    let list = get_tasks(project_id.clone())?;
-    if list.revision != expected_task_revision {
-        return Err(revision_conflict(expected_task_revision, &list.revision));
-    }
-    let task = list
-        .tasks
-        .into_iter()
-        .find(|task| task.id == task_id)
-        .ok_or_else(|| CommandError::invalid_input("task not found"))?;
-    if task.linked_work_item_id.is_some() {
-        return Err(CommandError::invalid_input(
-            "task is already linked to commitment history",
+) -> CommandResult<()> {
+    let state = ProjectStateDoc::load(project_id)?;
+    let expected = expected_project_revision(expected_task_revision)?;
+    if state.revision != expected {
+        return Err(revision_conflict(
+            expected_task_revision,
+            &state.revision.to_string(),
         ));
     }
-    Ok(task)
+    apply_project_command(
+        project_id,
+        expected,
+        ProjectCommand::SetCommitmentFromWorkItem {
+            work_item_id: parse_work_item_id(work_item_id)?,
+        },
+        &Utc::now().to_rfc3339(),
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

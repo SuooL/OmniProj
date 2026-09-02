@@ -1,8 +1,6 @@
-// The dense four-column operating index. The default order is the backend's deterministic
-// review order — this component NEVER re-ranks it; alternative sorts are transparent, opt-in,
-// and clearly not a priority/health score. Filter (text + review chips) and sort live in the
-// canonical search params. The 7-day review interval is read from the response's review_policy,
-// never a frontend constant.
+// The re-entry queue. Search and the two routine views stay visible; lifecycle filters and
+// alternative sorts are progressively disclosed. Default ordering remains the backend's
+// deterministic review order and is never converted into a health or priority score.
 
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -52,7 +50,6 @@ export interface ProjectsIndexProps {
   reviewPolicy: ReviewPolicy;
   now: Date;
   onAddProject: () => void;
-  silentDaysThreshold?: number;
 }
 
 export function ProjectsIndex({
@@ -60,12 +57,9 @@ export function ProjectsIndex({
   reviewPolicy,
   now,
   onAddProject,
-  silentDaysThreshold = 7,
 }: ProjectsIndexProps) {
   const { t } = useI18n();
-  const reviewFilters: Array<{ value: ReviewFilter; label: string }> = [
-    { value: "all", label: t("index.filterAll") },
-    { value: "needs_review", label: t("index.filterNeedsReview") },
+  const secondaryFilters: Array<{ value: ReviewFilter; label: string }> = [
     { value: "waiting", label: t("index.filterWaiting") },
     { value: "parked", label: t("index.filterParked") },
     { value: "archived", label: t("index.filterArchived") },
@@ -87,6 +81,16 @@ export function ProjectsIndex({
     return applySort(filterByText(base, query), sort);
   }, [projects, filter, query, sort]);
 
+  const isDefaultView = query.trim() === "" && filter === "all" && sort === "review";
+  const needsDecision = isDefaultView ? visible.filter((item) => item.review_reasons.length > 0) : [];
+  const otherProjects = isDefaultView ? visible.filter((item) => item.review_reasons.length === 0) : [];
+
+  const renderRows = (items: ProjectIndexItem[], label: string) => (
+    <ul className="op-index__list" aria-label={label}>
+      {items.map((item) => <ProjectRow key={item.project_id} item={item} now={now} />)}
+    </ul>
+  );
+
   // A truly empty store offers the primary recovery action. Archived-only stores retain the
   // toolbar so the Archived filter remains an obvious recovery path.
   if (projects.length === 0) {
@@ -104,36 +108,40 @@ export function ProjectsIndex({
   return (
     <section className="op-index" aria-labelledby="projects-index-heading">
       <div className="op-index__toolbar">
-        <div className="op-index__meta">
-          <span className="op-index__order">{t("index.reviewOrderDetail")}</span>
-          <span className="op-index__interval">
-            {t("index.reviewInterval", { days: reviewPolicy.commitment_review_days })}
-          </span>
+        <div className="op-index__search" role="search">
+          <input
+            data-project-filter
+            type="search"
+            aria-label={t("shell.filterProjects")}
+            placeholder={t("shell.searchProjects")}
+            value={query}
+            onChange={(event) => setParam("q", event.target.value, event.target.value !== "")}
+          />
+          <kbd aria-hidden="true">⌘F</kbd>
         </div>
 
         <div className="op-index__controls">
           <div className="op-filters" role="group" aria-label={t("index.reviewFilters")}>
-            {reviewFilters.map((chip) => (
-              <FilterChip
-                key={chip.value}
-                label={chip.label}
-                pressed={filter === chip.value}
-                onClick={() => setParam("filter", chip.value, chip.value !== "all")}
-              />
-            ))}
+            <FilterChip label={t("index.filterAll")} pressed={filter === "all"} onClick={() => setParam("filter", "all", false)} />
+            <FilterChip label={t("index.filterNeedsReview")} pressed={filter === "needs_review"} onClick={() => setParam("filter", "needs_review", true)} />
           </div>
-          <label className="op-sort">
-            <span>{t("index.sort")}</span>
-            <select
-              aria-label={t("index.reviewOrder")}
-              value={sort}
-              onChange={(e) => setParam("sort", e.target.value, e.target.value !== "review")}
-            >
-              <option value="review">{t("index.reviewOrder")}</option>
-              <option value="name">{t("index.sortName")}</option>
-              <option value="commit">{t("index.sortRecentCommit")}</option>
-            </select>
-          </label>
+          <details className="op-index__more">
+            <summary>{t("index.moreFilters")}</summary>
+            <div className="op-index__more-panel">
+              <div className="op-filters" role="group" aria-label={t("index.lifecycleFilters")}>
+                {secondaryFilters.map((chip) => <FilterChip key={chip.value} label={chip.label} pressed={filter === chip.value} onClick={() => setParam("filter", chip.value, true)} />)}
+              </div>
+              <label className="op-sort">
+                <span>{t("index.sort")}</span>
+                <select aria-label={t("index.reviewOrder")} value={sort} onChange={(e) => setParam("sort", e.target.value, e.target.value !== "review")}>
+                  <option value="review">{t("index.reviewOrder")}</option>
+                  <option value="name">{t("index.sortName")}</option>
+                  <option value="commit">{t("index.sortRecentCommit")}</option>
+                </select>
+              </label>
+              <small>{t("index.reviewInterval", { days: reviewPolicy.commitment_review_days })}</small>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -143,11 +151,12 @@ export function ProjectsIndex({
             {t("index.noMatch")}
           </p>
         ) : (
-          <ul className="op-index__list" aria-label={t("shell.projects")}>
-            {visible.map((item) => (
-              <ProjectRow key={item.project_id} item={item} now={now} silentDaysThreshold={silentDaysThreshold} />
-            ))}
-          </ul>
+          isDefaultView ? (
+            <div className="op-index__groups">
+              {needsDecision.length > 0 && <section><h2>{t("index.needsDecision")}</h2>{renderRows(needsDecision, t("index.needsDecision"))}</section>}
+              {otherProjects.length > 0 && <section><h2>{t("index.otherProjects")}</h2>{renderRows(otherProjects, t("index.otherProjects"))}</section>}
+            </div>
+          ) : renderRows(visible, t("shell.projects"))
         )}
       </div>
     </section>

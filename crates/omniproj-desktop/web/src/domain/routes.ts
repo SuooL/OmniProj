@@ -8,6 +8,7 @@ import type { ProjectId } from "./project";
 export const ROUTES = {
   root: "/",
   projects: "/projects",
+  settings: "/settings",
   notFound: "*",
   // Parameterized patterns, for <Route path> declarations only (not for navigation).
   projectById: "/projects/:projectId",

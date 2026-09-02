@@ -1,5 +1,6 @@
-// The desktop interaction frame: a full-height project tree, native window controls, the main
-// route surface, the Add Project modal, global shortcuts, and persistent announcement regions.
+// The desktop interaction frame: compact native chrome, the route surface, global actions,
+// the Add Project modal, shortcuts, and persistent announcement regions. Project navigation
+// lives on the Projects route rather than in permanent chrome.
 
 import {
   createContext,
@@ -17,7 +18,6 @@ import {
   useLocation,
   useNavigate,
   useParams,
-  useSearchParams,
 } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -25,7 +25,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "../api";
 import { saveCanonicalLocation } from "../domain/navigationSession";
 import { projectId as brandProjectId } from "../domain/project";
-import type { ProjectId, ProjectIndexResponse } from "../domain/project";
+import type { ProjectIndexResponse } from "../domain/project";
 import {
   ROUTES,
   projectOverviewPath,
@@ -37,13 +37,13 @@ import { queryKeys } from "../queryKeys";
 import { NotFoundPage } from "../routes/NotFoundPage";
 import { ProjectOverviewPage } from "../routes/ProjectOverviewPage";
 import { ProjectsIndexPage } from "../routes/ProjectsIndexPage";
+import { SettingsPage } from "../routes/SettingsPage";
 import { AddProjectDialog } from "./AddProjectDialog";
 import {
   ChevronLeftIcon,
-  FolderIcon,
+  GearIcon,
   PlusIcon,
   RefreshIcon,
-  SidebarIcon,
 } from "./Icons";
 import { LiveStatus } from "./LiveStatus";
 
@@ -87,22 +87,17 @@ function ProjectIdRedirect() {
 }
 
 export function AppShell() {
-  const { locale, setLocale, t } = useI18n();
+  const { t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const filterRef = useRef<HTMLInputElement>(null);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(
-    () => typeof window === "undefined" || window.innerWidth >= 800,
-  );
   const [polite, setPolite] = useState("");
   const [assertive, setAssertive] = useState("");
   const [refreshProgress, setRefreshProgress] = useState<{ completed: number; total: number } | null>(null);
   const refreshInFlight = useRef(false);
   const startupRefreshStarted = useRef(false);
-  const { data: sidebarProjects } = useQuery({
+  const { data: projectIndex } = useQuery({
     queryKey: queryKeys.projectIndex,
     queryFn: api.listProjectIndex,
   });
@@ -117,17 +112,6 @@ export function AppShell() {
   useEffect(() => {
     saveCanonicalLocation(location.pathname + location.search);
   }, [location.pathname, location.search]);
-
-  const filterValue = searchParams.get("q") ?? "";
-  const onFilterChange = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      const next = new URLSearchParams(searchParams);
-      if (event.target.value) next.set("q", event.target.value);
-      else next.delete("q");
-      setSearchParams(next, { replace: true });
-    },
-    [searchParams, setSearchParams],
-  );
 
   const foldRefreshResults = useCallback(
     (results: Awaited<ReturnType<typeof api.refreshProjects>>) => {
@@ -190,10 +174,10 @@ export function AppShell() {
   // The persisted cache makes startup instant; this background pass then reconciles it with
   // the current repositories once per application mount.
   useEffect(() => {
-    if (!sidebarProjects || startupRefreshStarted.current) return;
+    if (!projectIndex || startupRefreshStarted.current) return;
     startupRefreshStarted.current = true;
     void onRefresh(true);
-  }, [onRefresh, sidebarProjects]);
+  }, [onRefresh, projectIndex]);
 
   const openAddProject = useCallback(() => setAddProjectOpen(true), []);
   const appActions = useMemo(
@@ -206,45 +190,15 @@ export function AppShell() {
       setAddProjectOpen(false);
       return;
     }
-    if (typeof window !== "undefined" && window.innerWidth < 800 && sidebarOpen) {
-      setSidebarOpen(false);
-    }
-  }, [addProjectOpen, sidebarOpen]);
+  }, [addProjectOpen]);
 
   const showBack = location.pathname !== projectsPath();
-  const sidebarProjectItems = Array.isArray(sidebarProjects?.projects)
-    ? sidebarProjects.projects
+  const projectItems = Array.isArray(projectIndex?.projects)
+    ? projectIndex.projects
     : [];
-  const sidebarMatches = sidebarProjectItems.filter((project) =>
-    project.name.toLowerCase().includes(filterValue.trim().toLowerCase()),
-  );
-  const activeSidebarProjects = sidebarMatches.filter((project) => project.status !== "archived");
-  const archivedSidebarProjects = sidebarMatches.filter((project) => project.status === "archived");
-  const currentProject = sidebarProjectItems.find((project) =>
+  const currentProject = projectItems.find((project) =>
     location.pathname.includes(`/projects/${project.project_id}`),
   );
-
-  const navigateToProject = useCallback((id: ProjectId) => {
-    navigate(projectOverviewPath(id));
-    if (typeof window !== "undefined" && window.innerWidth < 800) setSidebarOpen(false);
-  }, [navigate]);
-
-  const renderProjectNodes = (projects: typeof sidebarProjectItems) => projects.map((project) => {
-    const active = location.pathname.includes(`/projects/${project.project_id}`);
-    return (
-      <div className="app-shell__project-node" key={project.project_id}>
-        <button
-          className="app-shell__project-item"
-          data-active={active}
-          type="button"
-          onClick={() => navigateToProject(project.project_id)}
-        >
-          <FolderIcon />
-          <span>{project.name}</span>
-        </button>
-      </div>
-    );
-  });
 
   const startWindowDrag = useCallback((event: React.MouseEvent<HTMLElement>) => {
     if (event.button !== 0) return;
@@ -256,7 +210,7 @@ export function AppShell() {
   }, []);
 
   useAppShortcuts({
-    onFocusFilter: () => filterRef.current?.focus(),
+    onFocusFilter: () => document.querySelector<HTMLInputElement>("[data-project-filter]")?.focus(),
     onOpenAddProject: openAddProject,
     onRefresh,
     onEscape: handleEscape,
@@ -265,102 +219,17 @@ export function AppShell() {
   return (
     <AnnouncerContext.Provider value={announce}>
       <AppActionsContext.Provider value={appActions}>
-      <div className="app-shell" data-sidebar-open={sidebarOpen}>
-        <aside className="app-shell__sidebar">
-          <div
-            className="app-shell__sidebar-chrome"
-            data-tauri-drag-region
-            onMouseDown={startWindowDrag}
-          >
-            <button
-              className="op-chrome-button"
-              type="button"
-              aria-label={t("shell.hideSidebar")}
-              onClick={() => setSidebarOpen(false)}
-            >
-              <SidebarIcon />
-            </button>
-            <button
-              className="op-chrome-button"
-              type="button"
-              aria-label={t("shell.backProjects")}
-              onClick={() => navigate(projectsPath())}
-              disabled={!showBack}
-            >
-              <ChevronLeftIcon />
-            </button>
-          </div>
-          <div className="app-shell__sidebar-body">
-            <div className="app-shell__brand-row">
-              <strong>OmniProj</strong>
-            </div>
-            <div className="app-shell__search" role="search">
-              <input
-                ref={filterRef}
-                type="search"
-                aria-label={t("shell.filterProjects")}
-                placeholder={t("shell.searchProjects")}
-                value={filterValue}
-                onChange={onFilterChange}
-              />
-              <kbd aria-hidden="true">⌘F</kbd>
-            </div>
-            <nav aria-label={t("shell.primaryNav")} className="app-shell__nav">
-              <div className="app-shell__nav-section-title">
-                <span>{t("shell.projects")}</span>
-                <button type="button" onClick={openAddProject} aria-label={t("shell.addProject")}><PlusIcon /></button>
-              </div>
-              <div className="app-shell__project-tree">
-                {renderProjectNodes(activeSidebarProjects)}
-              </div>
-              {archivedSidebarProjects.length > 0 && (
-                <>
-                  <div className="app-shell__nav-section-title app-shell__nav-section-title--archived">
-                    <span>{t("shell.archived")}</span>
-                  </div>
-                  <div className="app-shell__project-tree">
-                    {renderProjectNodes(archivedSidebarProjects)}
-                  </div>
-                </>
-              )}
-            </nav>
-            <div className="app-shell__sidebar-footer">
-              <label className="app-shell__language">
-                <span>{t("language.label")}</span>
-                <select
-                  aria-label={t("language.label")}
-                  value={locale}
-                  onChange={(event) => setLocale(event.target.value as "zh-CN" | "en")}
-                >
-                  <option value="zh-CN">{t("language.zh")}</option>
-                  <option value="en">{t("language.en")}</option>
-                </select>
-              </label>
-              <span className="app-shell__source-note">
-                <span className="app-shell__local-dot" aria-hidden="true" />
-                <span>{t("shell.localReadonly")}</span>
-              </span>
-            </div>
-          </div>
-        </aside>
-
+      <div className="app-shell">
         <section className="app-shell__main">
-          <header
-            className="app-shell__context-bar"
-            data-tauri-drag-region
-            onMouseDown={startWindowDrag}
-          >
-            <div className="app-shell__context-title">
-              <button
-                className="app-shell__sidebar-toggle"
-                type="button"
-                aria-label={t("shell.showSidebar")}
-                onClick={() => setSidebarOpen(true)}
-              >
-                <SidebarIcon />
-              </button>
-              <FolderIcon />
-              <strong>{currentProject?.name ?? t("shell.projects")}</strong>
+          <header className="app-shell__topbar" data-tauri-drag-region onMouseDown={startWindowDrag}>
+            <div className="app-shell__topbar-context">
+              {showBack && (
+                <button className="op-chrome-button" type="button" aria-label={t("shell.backProjects")} onClick={() => navigate(projectsPath())}>
+                  <ChevronLeftIcon />
+                </button>
+              )}
+              <button className="app-shell__brand" type="button" onClick={() => navigate(projectsPath())}>OmniProj</button>
+              {showBack && <span className="app-shell__context-name">{location.pathname === ROUTES.settings ? t("shell.settings") : currentProject?.name}</span>}
             </div>
             <div className="app-shell__actions">
               {refreshProgress && (
@@ -376,6 +245,7 @@ export function AppShell() {
                 data-refreshing={refreshProgress !== null}
               ><RefreshIcon /></button>
               <button type="button" onClick={openAddProject} aria-label={t("shell.newProject")}><PlusIcon /></button>
+              <button type="button" onClick={() => navigate(ROUTES.settings)} aria-label={t("shell.settings")} aria-current={location.pathname === ROUTES.settings ? "page" : undefined}><GearIcon /></button>
             </div>
           </header>
           <div className="app-shell__content">
@@ -384,19 +254,11 @@ export function AppShell() {
               <Route path={ROUTES.projects} element={<ProjectsIndexPage />} />
               <Route path={ROUTES.projectById} element={<ProjectIdRedirect />} />
               <Route path={ROUTES.projectOverview} element={<ProjectOverviewPage />} />
+              <Route path={ROUTES.settings} element={<SettingsPage />} />
               <Route path={ROUTES.notFound} element={<NotFoundPage />} />
             </Routes>
           </div>
         </section>
-
-        {sidebarOpen && (
-          <button
-            type="button"
-            className="app-shell__sidebar-backdrop"
-            aria-label={t("shell.closeSidebar")}
-            onClick={() => setSidebarOpen(false)}
-          />
-        )}
 
         {addProjectOpen && <AddProjectDialog onClose={() => setAddProjectOpen(false)} />}
 

@@ -37,7 +37,8 @@ pub use project::{
 };
 pub use project_state::{
     apply_project_command, CommitmentTransition, CommitmentTransitionKind, ProjectCommand,
-    ProjectMutation, ProjectStateDoc, ProjectStateError, ProjectStatus, WorkItem, WorkItemStatus,
+    ProjectMutation, ProjectStateDoc, ProjectStateError, ProjectStatus, WorkItem, WorkItemDraft,
+    WorkItemStatus,
 };
 pub use review::{
     derive_review_reasons, ReviewReason, ReviewReasonCode, DEFAULT_COMMITMENT_REVIEW_DAYS,

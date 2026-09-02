@@ -64,16 +64,19 @@ describe("canonical routes", () => {
     renderAppAt("/projects");
 
     expect(await screen.findByRole("heading", { name: "项目" })).toBeInTheDocument();
-    const language = screen.getByRole("combobox", { name: "界面语言" });
+    await user.click(screen.getByRole("button", { name: "设置" }));
+    const language = await screen.findByRole("combobox", { name: "界面语言" });
     expect(language).toHaveValue("zh-CN");
 
     await user.selectOptions(language, "en");
-    expect(screen.getByRole("heading", { name: "Projects" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /back to projects/i }));
+    expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
     expect(window.localStorage.getItem("omniproj.locale")).toBe("en");
   });
 
   it("redirects / to /projects", async () => {
-    renderAppAt("/");
+    renderAppAt("/", [indexItem({ name: "Alpha" })]);
     expect(await screen.findByTestId("projects-index")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/projects");
   });
@@ -113,7 +116,7 @@ describe("desktop project navigation", () => {
     expect(window.location.pathname).toBe("/projects/project-1/overview");
   });
 
-  it("shows the selected project as active in the sidebar", async () => {
+  it("shows the selected project in the compact top bar", async () => {
     const user = userEvent.setup();
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
@@ -122,7 +125,7 @@ describe("desktop project navigation", () => {
       }),
     );
     expect(await screen.findByTestId("overview-page")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Alpha" })).toHaveAttribute("data-active", "true");
+    expect(document.querySelector(".app-shell__context-name")).toHaveTextContent("Alpha");
   });
 
   it("Back and Forward restore the prior screen", async () => {
@@ -174,7 +177,7 @@ describe("desktop project navigation", () => {
     );
   });
 
-  it("selects a project in the sidebar after opening it", async () => {
+  it("keeps the project name in context after opening it", async () => {
     const user = userEvent.setup();
     renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await user.click(
@@ -183,7 +186,7 @@ describe("desktop project navigation", () => {
       }),
     );
     await screen.findByTestId("overview-page");
-    expect(screen.getByRole("button", { name: "Alpha" })).toHaveAttribute("data-active", "true");
+    expect(document.querySelector(".app-shell__context-name")).toHaveTextContent("Alpha");
   });
 
   it("restores the Index scroller and row focus after returning", async () => {
@@ -203,7 +206,7 @@ describe("filter/sort in search params", () => {
     renderAppAt("/projects?q=alpha&sort=name", [indexItem({ name: "Alpha" })]);
     await screen.findByTestId("projects-index");
     expect(screen.getByLabelText(/filter projects/i)).toHaveValue("alpha");
-    expect(screen.getByRole("combobox", { name: /attention order/i })).toHaveValue(
+    expect(screen.getByRole("combobox", { name: /review order/i })).toHaveValue(
       "name",
     );
   });
@@ -215,7 +218,7 @@ describe("restart restoration and deep-link precedence", () => {
       "omniproj.nav.canonical",
       "/projects?q=beta",
     );
-    renderAppAt("/");
+    renderAppAt("/", [indexItem({ name: "Alpha" })]);
     await screen.findByTestId("projects-index");
     expect(currentUrl()).toBe("/projects?q=beta");
     expect(screen.getByLabelText(/filter projects/i)).toHaveValue("beta");

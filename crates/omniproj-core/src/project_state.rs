@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use chrono::DateTime;
+use chrono::{DateTime, NaiveDate};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{CommitmentTransitionId, ProjectId, WorkItemId};
@@ -158,6 +158,14 @@ pub struct WorkItem {
     pub project_id: ProjectId,
     pub text: String,
     pub status: WorkItemStatus,
+    #[serde(default)]
+    pub unclear: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commits: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocker: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -169,6 +177,20 @@ pub struct WorkItem {
     /// Optional stable id of the Human planning task that was explicitly promoted to
     /// this project-level commitment. This is provenance, not a second pointer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_task_id: Option<String>,
+}
+
+/// Input used by one-time legacy import and atomic Agent adoption. It deliberately contains
+/// only Human work fields; commitment history remains a separate append-only concern.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct WorkItemDraft {
+    pub text: String,
+    pub status: WorkItemStatus,
+    pub unclear: bool,
+    pub due: Option<String>,
+    pub note: Option<String>,
+    pub commits: Vec<String>,
+    pub adopted_from_proposal_id: Option<String>,
     pub source_task_id: Option<String>,
 }
 
@@ -244,6 +266,30 @@ pub enum ProjectCommand {
         text: String,
         source_task_id: String,
         adopted_from_proposal_id: Option<String>,
+    },
+    AddWorkItems {
+        items: Vec<WorkItemDraft>,
+    },
+    UpdateWorkItem {
+        work_item_id: WorkItemId,
+        status: WorkItemStatus,
+        unclear: bool,
+        due: Option<String>,
+        note: Option<String>,
+    },
+    RemoveWorkItem {
+        work_item_id: WorkItemId,
+    },
+    SetCommitmentFromWorkItem {
+        work_item_id: WorkItemId,
+    },
+    AttributeCommit {
+        work_item_id: WorkItemId,
+        sha: String,
+        attributed: bool,
+    },
+    ImportLegacyWorkItems {
+        items: Vec<WorkItemDraft>,
     },
     ConfirmCommitment {
         work_item_id: WorkItemId,
@@ -398,6 +444,25 @@ impl ProjectStateDoc {
         for item in &self.work_items {
             if !work_item_ids.insert(item.id.clone()) {
                 return invalid(format!("duplicate work item id {}", item.id));
+            }
+            if item.text.trim().is_empty() {
+                return invalid(format!("work item {} has empty text", item.id));
+            }
+            if let Some(due) = item.due.as_deref() {
+                NaiveDate::parse_from_str(due, "%Y-%m-%d").map_err(|_| {
+                    ProjectStateError::InvalidDocument(format!(
+                        "work item {} has invalid due date",
+                        item.id
+                    ))
+                })?;
+            }
+            let mut commit_ids = HashSet::new();
+            if item
+                .commits
+                .iter()
+                .any(|sha| sha.trim().is_empty() || !commit_ids.insert(sha))
+            {
+                return invalid(format!("work item {} has invalid commits", item.id));
             }
             validate_timestamp("work item created_at", &item.created_at)?;
             validate_timestamp("work item updated_at", &item.updated_at)?;
@@ -749,6 +814,133 @@ fn apply_command_in_memory(
                 None,
             );
         }
+        ProjectCommand::AddWorkItems { items } => {
+            if items.is_empty() {
+                return Err(ProjectStateError::InvalidCommand(
+                    "at least one work item is required".into(),
+                ));
+            }
+            for draft in items {
+                validate_work_item_draft(&draft)?;
+                state
+                    .work_items
+                    .push(work_item_from_draft(project_id, draft, occurred_at));
+            }
+        }
+        ProjectCommand::UpdateWorkItem {
+            work_item_id,
+            status,
+            unclear,
+            due,
+            note,
+        } => {
+            validate_due(due.as_deref())?;
+            let referenced = work_item_is_referenced(state, &work_item_id);
+            let item = require_item_mut(state, &work_item_id)?;
+            if referenced && item.status != status {
+                return Err(ProjectStateError::InvalidCommand(
+                    "commitment lifecycle status must be changed through commitment actions".into(),
+                ));
+            }
+            item.status = status;
+            item.unclear = unclear;
+            item.due = normalize_optional(due);
+            item.note = normalize_optional(note);
+            item.updated_at = occurred_at.to_owned();
+        }
+        ProjectCommand::RemoveWorkItem { work_item_id } => {
+            if state.current_next_action_id.as_ref() == Some(&work_item_id)
+                || work_item_is_referenced(state, &work_item_id)
+            {
+                return Err(ProjectStateError::InvalidCommand(
+                    "a work item in commitment history cannot be removed".into(),
+                ));
+            }
+            let before = state.work_items.len();
+            state.work_items.retain(|item| item.id != work_item_id);
+            if state.work_items.len() == before {
+                return Err(ProjectStateError::WorkItemNotFound(work_item_id));
+            }
+        }
+        ProjectCommand::SetCommitmentFromWorkItem { work_item_id } => {
+            if let Some(current) = state.current_next_action_id.clone() {
+                return Err(ProjectStateError::CurrentCommitmentExists {
+                    work_item_id: current,
+                });
+            }
+            if work_item_is_referenced(state, &work_item_id) {
+                return Err(ProjectStateError::InvalidCommand(
+                    "a historical commitment cannot be promoted again".into(),
+                ));
+            }
+            let item = require_item_mut(state, &work_item_id)?;
+            if matches!(
+                item.status,
+                WorkItemStatus::Done | WorkItemStatus::Abandoned
+            ) {
+                return Err(ProjectStateError::InvalidCommand(
+                    "a closed work item cannot become the current commitment".into(),
+                ));
+            }
+            item.status = WorkItemStatus::Doing;
+            item.updated_at = occurred_at.to_owned();
+            state.current_next_action_id = Some(work_item_id.clone());
+            push_transition(
+                state,
+                project_id,
+                CommitmentTransitionKind::Set,
+                None,
+                Some(work_item_id),
+                None,
+                occurred_at,
+                accepted_revision,
+                None,
+            );
+        }
+        ProjectCommand::AttributeCommit {
+            work_item_id,
+            sha,
+            attributed,
+        } => {
+            require_field("sha", &sha)?;
+            let item = require_item_mut(state, &work_item_id)?;
+            if attributed {
+                if !item.commits.iter().any(|existing| existing == &sha) {
+                    item.commits.push(sha);
+                }
+            } else {
+                item.commits.retain(|existing| existing != &sha);
+            }
+            item.updated_at = occurred_at.to_owned();
+        }
+        ProjectCommand::ImportLegacyWorkItems { items } => {
+            for draft in items {
+                validate_work_item_draft(&draft)?;
+                let existing = draft.source_task_id.as_deref().and_then(|legacy_id| {
+                    state
+                        .work_items
+                        .iter()
+                        .position(|item| item.source_task_id.as_deref() == Some(legacy_id))
+                });
+                if let Some(index) = existing {
+                    let referenced = work_item_is_referenced(state, &state.work_items[index].id);
+                    let item = &mut state.work_items[index];
+                    item.unclear = draft.unclear;
+                    item.due = normalize_optional(draft.due);
+                    item.note = normalize_optional(draft.note);
+                    item.commits = deduplicated(draft.commits);
+                    item.adopted_from_proposal_id = draft.adopted_from_proposal_id;
+                    if !referenced {
+                        item.status = draft.status;
+                    }
+                    item.updated_at = occurred_at.to_owned();
+                } else {
+                    state
+                        .work_items
+                        .push(work_item_from_draft(project_id, draft, occurred_at));
+                }
+            }
+        }
         ProjectCommand::ConfirmCommitment { work_item_id } => {
             require_current(state, &work_item_id)?;
             require_item(state, &work_item_id)?;
@@ -992,6 +1184,10 @@ fn new_work_item(project_id: &ProjectId, text: String, occurred_at: &str) -> Wor
         project_id: project_id.clone(),
         text,
         status: WorkItemStatus::Doing,
+        unclear: false,
+        due: None,
+        note: None,
+        commits: Vec::new(),
         blocker: None,
         blocked_at: None,
         created_at: occurred_at.to_owned(),
@@ -999,6 +1195,60 @@ fn new_work_item(project_id: &ProjectId, text: String, occurred_at: &str) -> Wor
         adopted_from_proposal_id: None,
         source_task_id: None,
     }
+}
+
+fn work_item_from_draft(
+    project_id: &ProjectId,
+    draft: WorkItemDraft,
+    occurred_at: &str,
+) -> WorkItem {
+    WorkItem {
+        id: WorkItemId::new(),
+        project_id: project_id.clone(),
+        text: draft.text.trim().to_owned(),
+        status: draft.status,
+        unclear: draft.unclear,
+        due: normalize_optional(draft.due),
+        note: normalize_optional(draft.note),
+        commits: deduplicated(draft.commits),
+        blocker: None,
+        blocked_at: None,
+        created_at: occurred_at.to_owned(),
+        updated_at: occurred_at.to_owned(),
+        adopted_from_proposal_id: draft.adopted_from_proposal_id,
+        source_task_id: draft.source_task_id,
+    }
+}
+
+fn validate_work_item_draft(draft: &WorkItemDraft) -> Result<(), ProjectStateError> {
+    require_field("text", &draft.text)?;
+    validate_due(draft.due.as_deref())?;
+    Ok(())
+}
+
+fn validate_due(value: Option<&str>) -> Result<(), ProjectStateError> {
+    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+        return Ok(());
+    };
+    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map(|_| ())
+        .map_err(|_| ProjectStateError::InvalidCommand("due date must use YYYY-MM-DD".into()))
+}
+
+fn work_item_is_referenced(state: &ProjectStateDoc, work_item_id: &WorkItemId) -> bool {
+    state.commitment_transitions.iter().any(|transition| {
+        transition.previous_work_item_id.as_ref() == Some(work_item_id)
+            || transition.next_work_item_id.as_ref() == Some(work_item_id)
+    })
+}
+
+fn deduplicated(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    values
+        .into_iter()
+        .filter(|value| !value.trim().is_empty())
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1600,6 +1850,96 @@ mod tests {
 
         assert!(matches!(error, ProjectStateError::InvalidCommand(_)));
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn canonical_work_item_becomes_commitment_without_creating_a_duplicate() {
+        let project_id = ProjectId::parse("project-canonical-work").unwrap();
+        let mut state = ProjectStateDoc::new_setup(CREATED_AT).unwrap();
+        state.status = ProjectStatus::Active;
+        state.objective = Some("Ship the re-entry loop".into());
+        state.desired_outcome = Some("Resume work without reconstructing history".into());
+
+        apply_command_in_memory(
+            &mut state,
+            &project_id,
+            ProjectCommand::AddWorkItems {
+                items: vec![WorkItemDraft {
+                    text: "Validate one real re-entry".into(),
+                    status: WorkItemStatus::Planned,
+                    unclear: false,
+                    due: Some("2026-08-12".into()),
+                    note: Some("Use a project untouched for 24 hours".into()),
+                    commits: Vec::new(),
+                    adopted_from_proposal_id: None,
+                    source_task_id: None,
+                }],
+            },
+            CREATED_AT,
+            1,
+        )
+        .unwrap();
+        let work_item_id = state.work_items[0].id.clone();
+
+        apply_command_in_memory(
+            &mut state,
+            &project_id,
+            ProjectCommand::SetCommitmentFromWorkItem {
+                work_item_id: work_item_id.clone(),
+            },
+            CREATED_AT,
+            2,
+        )
+        .unwrap();
+
+        assert_eq!(state.work_items.len(), 1);
+        assert_eq!(state.current_next_action_id, Some(work_item_id));
+        assert_eq!(state.work_items[0].status, WorkItemStatus::Doing);
+    }
+
+    #[test]
+    fn legacy_import_enriches_an_existing_linked_work_item_once() {
+        let project_id = ProjectId::parse("project-legacy-import").unwrap();
+        let mut state = ProjectStateDoc::new_setup(CREATED_AT).unwrap();
+        state.status = ProjectStatus::Active;
+        let mut linked = new_work_item(&project_id, "Existing commitment".into(), CREATED_AT);
+        linked.source_task_id = Some("legacy-task".into());
+        let linked_id = linked.id.clone();
+        state.work_items.push(linked);
+
+        let draft = WorkItemDraft {
+            text: "Existing commitment".into(),
+            status: WorkItemStatus::Planned,
+            unclear: true,
+            due: Some("2026-08-20".into()),
+            note: Some("Imported context".into()),
+            commits: vec!["abc123".into(), "abc123".into()],
+            adopted_from_proposal_id: None,
+            source_task_id: Some("legacy-task".into()),
+        };
+        apply_command_in_memory(
+            &mut state,
+            &project_id,
+            ProjectCommand::ImportLegacyWorkItems {
+                items: vec![draft.clone()],
+            },
+            CREATED_AT,
+            1,
+        )
+        .unwrap();
+        apply_command_in_memory(
+            &mut state,
+            &project_id,
+            ProjectCommand::ImportLegacyWorkItems { items: vec![draft] },
+            CREATED_AT,
+            2,
+        )
+        .unwrap();
+
+        assert_eq!(state.work_items.len(), 1);
+        assert_eq!(state.work_items[0].id, linked_id);
+        assert!(state.work_items[0].unclear);
+        assert_eq!(state.work_items[0].commits, vec!["abc123"]);
     }
 
     #[test]

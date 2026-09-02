@@ -96,7 +96,7 @@ describe("review reason display", () => {
   });
 
   it("exposes a transparent, non-ranking order label", () => {
-    expect(REVIEW_ORDER_LABEL.toLowerCase()).toContain("not priority");
+    expect(REVIEW_ORDER_LABEL.toLowerCase()).toContain("explicit decision");
   });
 });
 

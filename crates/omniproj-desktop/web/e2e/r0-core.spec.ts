@@ -8,21 +8,24 @@ test.beforeEach(async ({ page }) => {
 
 test("smoke: the dense Index renders the 12-project fixture", async ({ page }) => {
   await page.goto("/projects");
-  await expect(page.getByRole("list", { name: "Projects" }).getByRole("listitem")).toHaveCount(12);
+  await expect(page.locator(".op-row")).toHaveCount(12);
 });
 
 test("language switch updates the whole shell and persists across reloads", async ({ page }) => {
   await page.goto("/projects");
+  await page.getByRole("button", { name: "Settings" }).click();
   const language = page.getByRole("combobox", { name: "Interface language" });
   await expect(language).toHaveValue("en");
 
   await language.selectOption("zh-CN");
-  await expect(page.getByRole("heading", { name: "项目" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
   await expect(page.getByRole("combobox", { name: "界面语言" })).toHaveValue("zh-CN");
 
   await page.reload();
-  await expect(page.getByRole("heading", { name: "项目" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
   await expect(page.getByRole("combobox", { name: "界面语言" })).toHaveValue("zh-CN");
+  await page.getByRole("button", { name: "返回项目列表" }).click();
+  await expect(page.getByRole("heading", { name: "项目", exact: true })).toBeVisible();
 });
 
 test("core loop: filter, open the project page, replace with explicit Save, Undo, and return", async ({ page }) => {
@@ -42,6 +45,7 @@ test("core loop: filter, open the project page, replace with explicit Save, Undo
   await overview.getByRole("button", { name: "Save replacement" }).click();
 
   await expect(overview.getByText("Exactly-once delivery")).toBeVisible();
+  await overview.getByText("More actions", { exact: true }).click();
   await expect(overview.getByTestId("undo-button")).toBeVisible();
   await overview.getByTestId("undo-button").click();
   // Undo is a real inverse: the prior commitment is restored.
@@ -75,7 +79,7 @@ test("browser history moves between the Index and the project page", async ({ pa
 test("Add Project registers a valid directory and opens the new setup project", async ({ page }) => {
   await page.goto("/projects");
   await page.evaluate(() => ((window as any).__mock.pick = "/valid/repo"));
-  await page.getByRole("button", { name: "Add Project" }).click();
+  await page.getByRole("button", { name: "New project" }).click();
 
   const dialog = page.getByTestId("add-project-dialog");
   await expect(dialog).toBeVisible();
@@ -106,7 +110,7 @@ test("a refresh with a partial source failure completes and announces the failur
   // Pull-refresh re-observes via refresh_projects; a source that failed is announced assertively,
   // not silently dropped, and the Index still renders every project.
   await expect(page.getByTestId("live-assertive")).toHaveText(/could not be refreshed/i);
-  await expect(page.getByRole("list", { name: "Projects" }).getByRole("listitem")).toHaveCount(12);
+  await expect(page.locator(".op-row")).toHaveCount(12);
 });
 
 test("a fully successful refresh announces completion politely", async ({ page }) => {
@@ -136,6 +140,7 @@ test("completing a commitment leaves no replacement", async ({ page }) => {
 
 test("planning task creation is revisioned and appears without a page reload", async ({ page }) => {
   await page.goto("/projects/p04/overview");
+  await page.getByText("Planning and tasks", { exact: true }).click();
   const board = page.getByTestId("task-board");
   await board.getByLabel("New task").fill("Validate retry behavior under failover");
   await board.getByRole("button", { name: "Add task" }).click();
@@ -144,6 +149,7 @@ test("planning task creation is revisioned and appears without a page reload", a
 
 test("Agent settings enable the explicit Advance and adopt loop", async ({ page }) => {
   await page.goto("/projects/p04/overview");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   const settings = page.getByTestId("agent-settings");
   await settings.getByRole("combobox", { name: /^Provider$/ }).selectOption("deepseek");
   await settings.getByRole("textbox", { name: /^Model$/ }).fill("deepseek-chat");
@@ -153,12 +159,17 @@ test("Agent settings enable the explicit Advance and adopt loop", async ({ page 
   await settings.getByRole("button", { name: "Test connection" }).click();
   await expect(settings.getByText("Agent connection is ready.")).toBeVisible();
 
+  await page.getByRole("button", { name: "Back to projects" }).click();
+  await page.getByRole("link", { name: /^billing-worker/ }).click();
+  await page.getByText("Planning and tasks", { exact: true }).click();
   const board = page.getByTestId("task-board");
   await board.getByLabel("New task").fill("Fix the intermittent retry bug");
   await board.getByLabel("Not yet clear (?)").check();
   await board.getByRole("button", { name: "Add task" }).click();
   await board.getByRole("button", { name: "Ask Agent to break down" }).click();
   await expect(board.getByText("Write a regression test")).toBeVisible();
+  await board.getByLabel("Write a regression test").check();
+  await board.getByLabel("Implement the smallest fix").check();
   await board.getByRole("button", { name: "Adopt selected" }).click();
   await expect(board.getByText("Implement the smallest fix")).toBeVisible();
 });

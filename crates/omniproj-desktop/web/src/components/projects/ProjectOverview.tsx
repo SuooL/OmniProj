@@ -1,9 +1,7 @@
-// The full-page Project Overview content. DOM order is
-// the spec's fixed sequence (9.3): identity + lifecycle -> all review reasons -> current
-// commitment (or the atomic Complete-setup framing in `setup`) -> observed actual -> recent
-// transition rail. The full source path appears ONLY here, never in the Index.
+// The focus-first project page. The current next step is the visual endpoint; direction,
+// review evidence, and low-frequency tools support it without competing as equal tabs.
 
-import type { Ref } from "react";
+import { useState, type ReactNode, type Ref } from "react";
 
 import type { ProjectOverview as ProjectOverviewDto } from "../../domain/project";
 import { ProjectStateTag } from "../semantic/ProjectStateTag";
@@ -18,15 +16,23 @@ import { useI18n } from "../../i18n/I18nProvider";
 import { TaskBoard } from "./TaskBoard";
 import { CommitTimeline } from "./CommitTimeline";
 import { PlanLog } from "./PlanLog";
-import { ReminderSettings } from "../ReminderSettings";
 import { GitFlowGraph } from "./GitFlowGraph";
-import { DogfoodRecorder } from "./DogfoodRecorder";
-import { AgentSettings } from "../AgentSettings";
+import { ReentryContext } from "./ReentryContext";
 
 export interface ProjectOverviewProps {
   overview: ProjectOverviewDto;
   now: Date;
   headingRef?: Ref<HTMLHeadingElement>;
+}
+
+function WorkspaceDisclosure({ label, testId, children }: { label: string; testId: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="op-workspace-disclosure" data-testid={testId} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>{label}</summary>
+      {open && <div className="op-workspace-disclosure__body">{children}</div>}
+    </details>
+  );
 }
 
 export function ProjectOverview({
@@ -50,41 +56,40 @@ export function ProjectOverview({
             <ProjectStateTag status={overview.status} />
           </div>
         </div>
-        {overview.source && (
-          <p data-testid="source-path" className="op-source-path">
-            {overview.source.location}
-          </p>
-        )}
       </header>
 
-      <div className="op-overview__primary">
-        {/* 2. Expanded review reasons */}
-        <ReviewReasons reasons={overview.review_reasons} />
-
-        {/* 3. Current commitment actions — or the atomic Complete-setup framing */}
-        {isSetup ? (
-          <ProjectFramingForm overview={overview} />
-        ) : (
-          <CurrentCommitment overview={overview} />
-        )}
-      </div>
-
-      <div className="op-overview__secondary">
-        {!isSetup && <><DogfoodRecorder projectId={overview.project_id} /><TaskBoard projectId={overview.project_id} projectRevision={overview.revision} hasCurrentCommitment={overview.current_commitment !== null} /><CommitTimeline projectId={overview.project_id} /><GitFlowGraph projectId={overview.project_id} /><PlanLog projectId={overview.project_id} /><ReminderSettings /><AgentSettings /></>}
-        {/* 4. Observed actual + source recovery */}
-        <ObservedActual observed={overview.observed_actual} source={overview.source} now={now} />
-        <SourceRecovery overview={overview} />
-
-        {/* 5. Recent commitment transition rail */}
-        <CommitmentHistory transitions={overview.recent_transitions} now={now} />
-
-        {!isSetup && (
-          <div className="op-overview__settings">
-            <ProjectFramingForm overview={overview} />
-            <ProjectLifecycleControl overview={overview} />
+      {isSetup ? (
+        <div className="op-overview__primary"><ProjectFramingForm overview={overview} /></div>
+      ) : (
+        <>
+          <div className="op-overview__primary" data-testid="reentry-view">
+            <CurrentCommitment overview={overview} />
+            <ReviewReasons reasons={overview.review_reasons} />
+            <ReentryContext overview={overview} />
+            <SourceRecovery overview={overview} />
           </div>
-        )}
-      </div>
+
+          <div className="op-workspace-disclosures">
+            <WorkspaceDisclosure label={t("workspace.plan")} testId="plan-view">
+              <TaskBoard projectId={overview.project_id} hasCurrentCommitment={overview.current_commitment !== null} />
+              <PlanLog projectId={overview.project_id} />
+              <CommitmentHistory transitions={overview.recent_transitions} now={now} />
+            </WorkspaceDisclosure>
+
+            <WorkspaceDisclosure label={t("workspace.activity")} testId="activity-view">
+              {overview.source && <p data-testid="source-path" className="op-source-path">{overview.source.location}</p>}
+              <ObservedActual observed={overview.observed_actual} source={overview.source} now={now} />
+              <CommitTimeline projectId={overview.project_id} />
+              <GitFlowGraph projectId={overview.project_id} />
+            </WorkspaceDisclosure>
+
+            <WorkspaceDisclosure label={t("workspace.project")} testId="project-view">
+              <ProjectFramingForm overview={overview} />
+              <ProjectLifecycleControl overview={overview} />
+            </WorkspaceDisclosure>
+          </div>
+        </>
+      )}
     </article>
   );
 }

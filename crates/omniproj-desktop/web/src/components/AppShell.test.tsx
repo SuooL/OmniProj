@@ -71,77 +71,31 @@ afterEach(() => {
   startDraggingMock.mockClear();
 });
 
-describe("primary navigation", () => {
-  it("exposes Projects as the sidebar navigation group", async () => {
-    renderAppAt("/projects");
-    await screen.findByTestId("projects-index");
-    const nav = screen.getByRole("navigation", { name: /primary/i });
-    expect(within(nav).getByText("Projects")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("link", { name: /settings|attention|agents?/i }),
-    ).not.toBeInTheDocument();
-  });
-});
-
-describe("desktop sidebar", () => {
-  it("marks the current project without advertising unavailable subpages", async () => {
+describe("compact application chrome", () => {
+  it("shows project context without a permanent project tree", async () => {
     renderAppAt("/projects/p1/overview", [indexItem({ project_id: "p1" as never, name: "Alpha" })]);
     await screen.findByTestId("overview-page");
-    expect(screen.getByRole("button", { name: "Alpha" })).toHaveAttribute("data-active", "true");
-    expect(screen.queryByText("Commitment")).not.toBeInTheDocument();
-    expect(screen.queryByText("Activity")).not.toBeInTheDocument();
+    expect(document.querySelector(".app-shell__context-name")).toHaveTextContent("Alpha");
+    expect(document.querySelector(".app-shell__sidebar")).not.toBeInTheDocument();
   });
 
-  it("can be hidden and restored from the main toolbar", async () => {
+  it("keeps Projects and Settings one action away", async () => {
     const user = userEvent.setup();
     renderAppAt("/projects");
     await screen.findByTestId("projects-index");
-
-    await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
-    expect(document.querySelector(".app-shell")).toHaveAttribute("data-sidebar-open", "false");
-
-    await user.click(screen.getByRole("button", { name: "Show sidebar" }));
-    expect(document.querySelector(".app-shell")).toHaveAttribute("data-sidebar-open", "true");
-  });
-
-  it("filters the project tree on detail routes", async () => {
-    const user = userEvent.setup();
-    renderAppAt("/projects/p1/overview", [
-      indexItem({ project_id: "p1" as never, name: "Alpha" }),
-      indexItem({ project_id: "p2" as never, name: "Beta" }),
-    ]);
-    await screen.findByTestId("overview-page");
-    await user.type(screen.getByLabelText(/filter projects/i), "beta");
-    expect(screen.queryByRole("button", { name: "Alpha" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Beta" })).toBeInTheDocument();
-  });
-
-  it("keeps archived projects discoverable in a separate tree section", async () => {
-    renderAppAt("/projects", [indexItem({ name: "Old study", status: "archived" })]);
-    await screen.findByTestId("projects-index");
-    const nav = screen.getByRole("navigation", { name: /primary/i });
-    expect(within(nav).getByText("Archived")).toBeInTheDocument();
-    expect(within(nav).getByRole("button", { name: "Old study" })).toBeInTheDocument();
-  });
-
-  it("closes the narrow drawer after choosing a project", async () => {
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 640 });
-    const user = userEvent.setup();
-    renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
-    await screen.findByTestId("projects-index");
-    expect(document.querySelector(".app-shell")).toHaveAttribute("data-sidebar-open", "false");
-    await user.click(screen.getByRole("button", { name: "Show sidebar" }));
-    await user.click(screen.getByRole("button", { name: "Alpha" }));
-    expect(document.querySelector(".app-shell")).toHaveAttribute("data-sidebar-open", "false");
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /back to projects/i }));
+    expect(await screen.findByTestId("projects-index")).toBeInTheDocument();
   });
 });
 
 describe("native window chrome", () => {
-  it("starts native dragging from the sidebar chrome", async () => {
+  it("starts native dragging from the compact top bar", async () => {
     renderAppAt("/projects");
     await screen.findByTestId("projects-index");
 
-    const toolbar = document.querySelector<HTMLElement>(".app-shell__sidebar-chrome");
+    const toolbar = document.querySelector<HTMLElement>(".app-shell__topbar");
     expect(toolbar).not.toBeNull();
     await userEvent.setup().click(toolbar!);
 
@@ -152,7 +106,7 @@ describe("native window chrome", () => {
 describe("keyboard shortcuts", () => {
   it("Cmd/Ctrl+F focuses the local filter", async () => {
     const user = userEvent.setup();
-    renderAppAt("/projects");
+    renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await screen.findByTestId("projects-index");
     await user.keyboard("{Control>}f{/Control}");
     expect(screen.getByLabelText(/filter projects/i)).toHaveFocus();
@@ -160,7 +114,7 @@ describe("keyboard shortcuts", () => {
 
   it("Cmd/Ctrl+N opens Add Project, even while a text input is focused", async () => {
     const user = userEvent.setup();
-    renderAppAt("/projects");
+    renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await screen.findByTestId("projects-index");
     await user.click(screen.getByLabelText(/filter projects/i));
     expect(screen.getByLabelText(/filter projects/i)).toHaveFocus();
@@ -248,7 +202,7 @@ describe("visible desktop navigation", () => {
     renderAppAt("/projects");
     await screen.findByTestId("projects-index");
 
-    await user.click(screen.getAllByRole("button", { name: "Add Project" })[0]);
+    await user.click(screen.getByRole("button", { name: /add project/i }));
     await user.click(screen.getByRole("button", { name: /close add project/i }));
 
     expect(screen.queryByRole("dialog", { name: /add project/i })).not.toBeInTheDocument();
@@ -258,7 +212,7 @@ describe("visible desktop navigation", () => {
 describe("review-fix regressions", () => {
   it("writes the filter back to the canonical q search param", async () => {
     const user = userEvent.setup();
-    renderAppAt("/projects");
+    renderAppAt("/projects", [indexItem({ name: "Alpha" })]);
     await screen.findByTestId("projects-index");
 
     await user.type(screen.getByLabelText(/filter projects/i), "beta");
