@@ -47,6 +47,8 @@
 - **FR-A1 项目总览**:一屏列出所有项目,每个显示:腐坏度(距上次提交/活动,**阈值旁注**)、一行 next-action、16 周 commit sparkline、卡点标记。**按腐坏度排序**(中性事实,禁优先级排名/健康分)。
 - **FR-A2 受控 push 提醒**:**默认每天(daily)提醒一次**——每日汇总当前该关注的项目(静默/卡点)→ 原生系统通知。**节奏与阈值用户可见、可调、可关**;不轰炸、不视觉打断。
 - **FR-A3 菜单栏常驻**:图标旁以 macOS 原生标题显示「N 个待关注」(零时隐藏数字),点开即主屏；菜单项与 tooltip 使用同一计数。
+- **FR-A4 逾期驱动关注(R1)**:Active 项目内存在 `due < 本地今日` 且未完成的 task 时,产生确定性 review reason「有任务逾期」,进入需决策组、菜单栏计数与每日提醒;Waiting/Parked 不计入。临期(未来 N 天)不产生 reason,只在视图层可视化。
+- **FR-A5 跨项目聚焦(R1)**:Projects Index 顶部可折叠「今日聚焦」区,聚合所有 Active 项目的逾期 + 今日到期任务,按项目分组、只读、点击跳转对应项目;零条目时整区不渲染。
 - **验收**:冷启动到「知道先碰哪个 + 下一步」**< 60 秒**;主指标 re-entry 时间 15–25 分 → **< 5 分**。
 
 ### 4.2 记录 Record(#1 #2)—— 人主导规划与 Git 对账
@@ -54,7 +56,9 @@
 - **FR-R2 Git 对账**:项目详情展示提交时间线及轻量 commit topology summary；用户可把**一个或多个 commit 归属到一个 task**(多对一)，并可解除/改绑。当前不宣称提供 gitk 式完整 branch-lane flow graph。
 - **FR-R3 计划/决策日志**:`plan.md`(独立文件)append-only 记规划与决策,含**「决定不做」**(标 abandoned 不删),可选关联 commit。
 - **FR-R4 非侵入(硬约束)**:只**读** repo 的 git 数据,**绝不写/改 repo**(§5)。
-- **验收**:用户能建项目并维护带状态/日期/备注的 task list；能把 task 提升为 Current Commitment；能在提交时间线上把 ≥1 commit 归属、解除或改绑到 task；能记「决定不做 X」永久可查。
+- **FR-R5 任务 tags(R1)**:task 支持 0..8 个字符串 tag(单个 ≤24 字符,写入时 trim/NFC/去重,比较大小写不敏感);录入带项目内自动补全,展示为 chips,项目内可按 tag 多选过滤(AND)。tag 不参与 review reason 派生与排序,纯分类维度;不做 key:value 结构。
+- **FR-R6 任务视图(R1)**:Planning 披露层内 task 支持三种视图,默认列表、选择本地持久化:①**看板**——按状态三列(open/doing/done),移动用键盘可达的显式控件(拖拽为后续增强),commitment 绑定的 task 状态锁定、指向 commitment 处置,done 列默认收纳(最近 5 条 + 总数);②**按时间**——按 due 分组(逾期/今天/本周/下周/以后/未排期,ISO 周、本地日期),done 不显示;③现有列表。三种视图零新数据、共用同一写路径。
+- **验收**:用户能建项目并维护带状态/日期/备注的 task list；能把 task 提升为 Current Commitment；能在提交时间线上把 ≥1 commit 归属、解除或改绑到 task；能记「决定不做 X」永久可查。R1:能给 task 加 tag 并过滤;看板三列计数与列表一致且键盘可移动;时间视图分组正确。
 
 ### 4.3 推进 Advance(#3)
 - **FR-V1 拆解(MVP)**:对一条 task/想法,agent 产出 3–6 条**具体可执行**候选子任务;用户可一键采纳为正式 task。provider/model 在 app 内配置；远程调用先取得发送 task 文本与问题备注的知情确认；API key 只存系统钥匙串。格式不合格只做一次有界重试，仍不合格则报错且不写 proposal。
@@ -78,7 +82,13 @@
 - **Attend(FR-A1/A2/A3)**:总览 + 每日提醒 + 菜单栏。
 - **Advance 拆解(FR-V1)**:单一模式。
 
-**门槛**:MVP 真被日用 2–4 周、覆盖 ≥5 个真实项目并记录 ≥20 次 re-entry event 才继续扩展。当前 UI 的 re-entry timer 将事件写入本地 `dogfood/reentry-events.jsonl`；统计解释见 `docs/dogfood.md`。
+**R1(项目管理能力,dogfood 的前置;设计见 `docs/superpowers/specs/2026-09-02-r1-project-management.md`)**:
+- **逾期驱动关注(FR-A4)** + **跨项目聚焦(FR-A5)**:让「预期完成日期」真正驱动 Attend 闭环。
+- **任务 tags(FR-R5)** + **看板/时间视图(FR-R6)**:项目内规划、排期、分类、跟踪的日用形态。
+- 交付切分:R1a 逾期 reason → R1b tags(含 schema v2 迁移)→ R1c 看板 ∥ R1d 时间视图 → R1e 跨项目聚焦;每项独立 PR。
+- R1 明确**不做**:Gantt/日历/工时估算/start date、任务依赖、手动排序、项目级 tag、跨项目编辑。
+
+**门槛**:MVP+R1 真被日用 2–4 周、覆盖 ≥5 个真实项目并记录 ≥20 次 re-entry event 才继续扩展(R2:FR-V2/V3、跨项目看板编辑等)。R1 是该门槛要求的「真实日用」的前置条件——用户日用形态就是多项目规划/排期/跟踪——而非对门槛失败的补偿。当前 UI 的 re-entry timer 将事件写入本地 `dogfood/reentry-events.jsonl`；统计解释见 `docs/dogfood.md`。
 
 ## 7. 细节决策
 1. **Task 状态**:open / **doing** / done(+ `?`未成形)。要 doing 中间态。
@@ -86,3 +96,5 @@
 3. **FR-V2 调研**:**允许联网**(读 repo + 上网)。
 4. **`plan.md`**:**独立文件**,与 task 分开。
 5. **非侵入(硬约束)**:对原始 repo 零侵入零修改,只读其 git;一切落 `~/.omniproj`(见 §5)。
+6. **逾期判定(R1)**:due 按**用户本地日期**比较(due < today 为逾期,due = today 不算);临期不产生提醒。Waiting/Parked 项目的逾期不进关注队列(生命周期挂起即用户明示暂缓)。
+7. **tags 存储(R1)**:`WorkItem.tags` 落项目 state 文档,schema v1→v2(既有迁移骨架,no-op 迁移;旧构建对 v2 文档得到明确版本拒绝而非解析错误)。
