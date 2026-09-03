@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Task } from "./project";
-import { boardColumns, columnOrder, daysBetween, dueSignal, isoWeekStart, timeGroups, DONE_PREVIEW_COUNT } from "./taskBoardModel";
+import { columnOrder, daysBetween, dueSignal, isoWeekStart, parseTagsInput, timeGroups } from "./taskBoardModel";
 
 const TODAY = "2026-09-02";
 
@@ -61,24 +61,6 @@ describe("columnOrder", () => {
   });
 });
 
-describe("boardColumns", () => {
-  it("splits by status and keeps done most-recent-first", () => {
-    const columns = boardColumns(
-      [
-        task("a", { status: "done", updated_at: "2026-08-10T00:00:00Z" }),
-        task("b", { status: "doing" }),
-        task("c", { status: "done", updated_at: "2026-08-12T00:00:00Z" }),
-        task("d", { status: "open" }),
-      ],
-      TODAY,
-    );
-    expect(columns.open.map((item) => item.id)).toEqual(["d"]);
-    expect(columns.doing.map((item) => item.id)).toEqual(["b"]);
-    expect(columns.done.map((item) => item.id)).toEqual(["c", "a"]);
-    expect(DONE_PREVIEW_COUNT).toBe(5);
-  });
-});
-
 describe("timeGroups", () => {
   // 2026-09-02 is a Wednesday: ISO week runs Mon 2026-08-31 .. Sun 2026-09-06.
   it("computes the ISO week start (Monday) including the Sunday edge", () => {
@@ -129,5 +111,12 @@ describe("dueSignal for finished work", () => {
     // Unfinished work is unaffected.
     expect(dueSignal("2026-08-01", TODAY, "open")).toEqual({ kind: "overdue", days: 32 });
     expect(dueSignal("2026-08-01", TODAY, "doing")).toEqual({ kind: "overdue", days: 32 });
+  });
+});
+
+describe("parseTagsInput", () => {
+  it("splits comma variants and trims", () => {
+    expect(parseTagsInput("论文, infra、eval ，  x ")).toEqual(["论文", "infra", "eval", "x"]);
+    expect(parseTagsInput("   ")).toEqual([]);
   });
 });
