@@ -6,8 +6,9 @@ import { afterEach, expect, it, vi } from "vitest";
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
-import { projectId } from "../../domain/project";
+import { projectId, type ProjectOverview } from "../../domain/project";
 import { I18nProvider } from "../../i18n/I18nProvider";
+import { overview } from "../../test/fixtures";
 import { TaskBoard } from "./TaskBoard";
 
 const PROJECT_ID = projectId("project-task-board");
@@ -42,9 +43,14 @@ const TASKS = {
   }],
 };
 
-function renderBoard() {
+/** Nothing is being worked on unless a test says so, so the promote path stays reachable. */
+function boardOverview(overrides: Partial<ProjectOverview> = {}) {
+  return overview({ project_id: PROJECT_ID, current_commitment: null, undoable_transition_id: null, ...overrides });
+}
+
+function renderBoard(over: ProjectOverview = boardOverview()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><I18nProvider initialLocale="en"><TaskBoard projectId={PROJECT_ID} hasCurrentCommitment={false} /></I18nProvider></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><I18nProvider initialLocale="en"><TaskBoard overview={over} /></I18nProvider></QueryClientProvider>);
 }
 
 afterEach(() => invokeMock.mockReset());
@@ -83,7 +89,7 @@ it("promotes a planning task to the current commitment with both revisions", asy
   const user = userEvent.setup();
   renderBoard();
   await user.click(await screen.findByRole("button", { name: /Validate cohort labels/ }));
-  await user.click((await screen.findAllByRole("button", { name: /make current commitment/i }))[0]);
+  await user.click((await screen.findAllByRole("button", { name: /do this one now/i }))[0]);
   await waitFor(() => expect(invokeMock.mock.calls.some((call) => call[0] === "promote_task_to_commitment")).toBe(true));
 });
 
@@ -155,10 +161,10 @@ it("does not send an update when nothing changed", async () => {
   expect(invokeMock.mock.calls.some((call) => call[0] === "update_task")).toBe(false);
 });
 
-it("leaves a former commitment fully editable and off the promote path", async () => {
+it("leaves a former commitment fully editable and eligible to be picked up again", async () => {
   // Regression: `was_committed` records history only. Gating edits on it froze every step
   // that had ever been the commitment — replaced and completed ones alike stayed in the
-  // list unmovable and undeletable.
+  // list unmovable and undeletable. Core also allows re-marking one, so the control stays.
   const historic = {
     revision: "11",
     tasks: [{ ...TASKS.tasks[0], id: "h1", text: "Former commitment", unclear: false, tags: [], was_committed: true, is_current_commitment: false }],
@@ -173,9 +179,8 @@ it("leaves a former commitment fully editable and off the promote path", async (
 
   expect(await screen.findByLabelText(/task status: Former commitment/i)).toBeEnabled();
   await user.click(screen.getByRole("button", { name: /Former commitment/ }));
-  expect(screen.getByRole("button", { name: /remove/i })).toBeEnabled();
-  // Core rejects promoting a historical commitment, so the control is not offered at all.
-  expect(screen.queryByRole("button", { name: /make current commitment/i })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: /do this one now/i })).toBeInTheDocument();
 });
 
 it("surfaces a rejected removal instead of appearing to do nothing", async () => {

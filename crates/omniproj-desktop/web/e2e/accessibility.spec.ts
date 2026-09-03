@@ -180,7 +180,7 @@ test("forced-colors and reduced-motion keep labels and boundaries", async ({ pag
 
   // Open a project page: its heading and primary action remain reachable.
   await page.getByRole("link", { name: /^billing-worker/ }).click();
-  await expect(page.getByTestId("overview-page").getByRole("button", { name: "Replace" })).toBeVisible();
+  await expect(page.getByTestId("overview-page").getByRole("button", { name: "Switch away" })).toBeVisible();
 });
 
 // --- Interaction audit gates ------------------------------------------------

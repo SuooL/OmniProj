@@ -28,7 +28,7 @@ test("language switch updates the whole shell and persists across reloads", asyn
   await expect(page.getByRole("heading", { name: "项目", exact: true })).toBeVisible();
 });
 
-test("core loop: filter, open the project page, replace with explicit Save, Undo, and return", async ({ page }) => {
+test("core loop: filter, open the project page, switch away, Undo, and return", async ({ page }) => {
   await page.goto("/projects");
   await page.getByLabel(/filter projects/i).fill("billing");
   const row = page.getByRole("link", { name: /^billing-worker/ });
@@ -39,18 +39,14 @@ test("core loop: filter, open the project page, replace with explicit Save, Undo
   await expect(overview).toBeVisible();
   await expect(overview.getByText("Idempotent retries")).toBeVisible();
 
-  await overview.getByRole("button", { name: "Replace" }).click();
-  await overview.getByLabel("New commitment").fill("Exactly-once delivery");
-  await overview.getByLabel("Replace reason").fill("scope narrowed");
-  await overview.getByRole("button", { name: "Save replacement" }).click();
+  // Switching away releases the step back to the list; there is no separate replace form.
+  await overview.getByRole("button", { name: "Switch away" }).click();
+  await expect(overview.getByText("No step picked yet.")).toBeVisible();
 
-  await expect(overview.getByText("Exactly-once delivery")).toBeVisible();
-  await overview.getByText("More actions", { exact: true }).click();
   await expect(overview.getByTestId("undo-button")).toBeVisible();
   await overview.getByTestId("undo-button").click();
-  // Undo is a real inverse: the prior commitment is restored.
+  // Undo is a real inverse: the prior step is restored.
   await expect(overview.getByText("Idempotent retries")).toBeVisible();
-  await expect(overview.getByText("Exactly-once delivery")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Back to projects" }).click();
   await expect(page.getByTestId("projects-index")).toBeVisible();
@@ -119,22 +115,21 @@ test("a fully successful refresh announces completion politely", async ({ page }
   await expect(page.getByTestId("live-polite")).toHaveText(/projects refreshed/i);
 });
 
-test("a save failure preserves the draft and offers Retry + Copy", async ({ page }) => {
-  await page.goto("/projects/p03/overview"); // p03 has no commitment -> set form
+test("a save failure surfaces the error and offers Retry", async ({ page }) => {
+  await page.goto("/projects/p04/overview");
   await page.evaluate(() => ((window as any).__mock.failNext = "store_write_failed"));
-  await page.getByLabel("New commitment").fill("draft that must survive");
-  await page.getByRole("button", { name: "Save commitment" }).click();
+  await page.getByRole("button", { name: "Complete" }).click();
 
   await expect(page.getByTestId("write-error")).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Copy text" })).toBeVisible();
-  await expect(page.getByLabel("New commitment")).toHaveValue("draft that must survive");
+  // The step is untouched, so there is no draft to preserve and nothing to copy.
+  await expect(page.getByText("Idempotent retries")).toBeVisible();
 });
 
-test("completing a commitment leaves no replacement", async ({ page }) => {
+test("completing the current step leaves no replacement", async ({ page }) => {
   await page.goto("/projects/p04/overview");
   await page.getByRole("button", { name: "Complete" }).click();
-  await expect(page.getByTestId("set-form")).toBeVisible(); // now shows the empty set form
+  await expect(page.getByText("No step picked yet.")).toBeVisible();
   await expect(page.getByText("Idempotent retries")).toHaveCount(0);
 });
 
