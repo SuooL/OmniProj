@@ -12,6 +12,24 @@ projects, ≥20 recorded re-entry events) has **not** been met, so no release is
 
 ### Changed
 
+- **Interaction audit sweep** — rather than fixing only the reported examples, every surface
+  and state was walked (index, project setup/active, all three workspace tabs, all three task
+  views, settings, dialogs) against measurable rules: pointer-target size, accessible name,
+  placeholder-as-label, unexplained disabled controls, text-size floor, horizontal overflow,
+  clipped-without-title, duplicate names, nested interactives, and label→control travel. The
+  fixes below all came out of that sweep.
+  - **Forms keep a readable measure.** `space-between` on a full-width settings row was
+    harmless in the old 760px column; in the wide detail pane it flung each control ~1000px
+    from its own label, and pinned 「启用提醒」's checkbox to the far left with its text at
+    the far right. Form rows now cap at a 560px measure, and a checkbox row sits left-aligned
+    so the box is beside the words it toggles.
+  - **Pointer targets** — checkboxes were 13×13 and the rail toggle 23×27; controls now meet
+    the 28px minimum, and the whole label is the checkbox target.
+  - **Every disabled control explains itself** — 添加任务, 记录决策, 保存 Agent 设置, and
+    测试连接 were disabled with no stated reason; each now carries one.
+  - **Chinese-first gaps** — 「模型」 and 「Provider（服务商）」 were shipping the English
+    strings inside the Chinese table.
+  - **Text-size floor** — `small` rendered at 10.4px; small text now has an 11px floor.
 - **The shell is a two-pane desktop layout, not a centered web column** — reviewing the built
   app in a real window showed it behaved like a responsive web page inside a native frame:
   content was locked to a 760px centered column in an 1100px window, switching projects was a

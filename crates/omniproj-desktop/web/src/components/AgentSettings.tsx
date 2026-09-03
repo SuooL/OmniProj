@@ -49,7 +49,7 @@ export function AgentSettings() {
         {selected?.key_required && <label>{t("agent.apiKey")}<input type="password" autoComplete="off" value={apiKey} placeholder={selected.key_present ? t("agent.keyStored") : t("agent.keyRequired")} onChange={(event) => setApiKey(event.target.value)} /></label>}
       </div>
       {selected && !selected.local && <label className="op-consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /> {t("agent.consent")}</label>}
-      <div className="op-task-actions"><button className="op-button op-button--secondary" type="button" disabled={save.isPending || !model.includes("/")} onClick={() => save.mutate()}>{t("agent.save")}</button><button className="op-button op-button--ghost" type="button" disabled={test.isPending || !data.ready} onClick={() => test.mutate()}>{test.isPending ? t("agent.testing") : t("agent.test")}</button>{message && <span role="status" className={save.isError || test.isError ? "op-error" : "op-muted"}>{message}</span>}</div>
+      <div className="op-task-actions"><button className="op-button op-button--secondary" type="button" disabled={save.isPending || !model.includes("/")} title={!model.includes("/") ? t("agent.saveDisabled") : undefined} onClick={() => save.mutate()}>{t("agent.save")}</button><button className="op-button op-button--ghost" type="button" disabled={test.isPending || !data.ready} title={!data.ready ? t("agent.testDisabled") : undefined} onClick={() => test.mutate()}>{test.isPending ? t("agent.testing") : t("agent.test")}</button>{message && <span role="status" className={save.isError || test.isError ? "op-error" : "op-muted"}>{message}</span>}</div>
     </section>
   );
 }

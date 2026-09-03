@@ -182,3 +182,66 @@ test("forced-colors and reduced-motion keep labels and boundaries", async ({ pag
   await page.getByRole("link", { name: /^billing-worker/ }).click();
   await expect(page.getByTestId("overview-page").getByRole("button", { name: "Replace" })).toBeVisible();
 });
+
+// --- Interaction audit gates ------------------------------------------------
+// These encode the rules the R2 audit sweep used, so the defects it found cannot
+// silently return: a control must be hittable, must say why it is disabled, must not
+// be labelled by its placeholder alone, and a label/control pair must stay within a
+// readable measure instead of stretching across a wide pane.
+
+const AUDIT = `(() => {
+  const out = [];
+  const vis = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const name = (el) => (el.getAttribute('aria-label') || el.getAttribute('title') || (el.labels && el.labels[0] && el.labels[0].textContent) || el.textContent || '').trim();
+  document.querySelectorAll('button, a[href], select, [role=button], [role=tab]').forEach((el) => {
+    if (!vis(el)) return;
+    const r = el.getBoundingClientRect();
+    if (r.height < 26 || r.width < 26) out.push('hit-target: ' + Math.round(r.width) + 'x' + Math.round(r.height) + ' "' + name(el).slice(0, 30) + '"');
+  });
+  document.querySelectorAll('button:disabled, input:disabled, select:disabled').forEach((el) => {
+    if (vis(el) && !el.getAttribute('title') && !el.getAttribute('aria-describedby')) out.push('disabled-unexplained: "' + name(el).slice(0, 30) + '"');
+  });
+  document.querySelectorAll('input[placeholder], textarea[placeholder]').forEach((el) => {
+    if (!vis(el)) return;
+    if (!(el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || (el.labels && el.labels.length))) out.push('placeholder-as-label: "' + el.getAttribute('placeholder') + '"');
+  });
+  // Only SIDE-BY-SIDE label/control pairs have a travel problem; a stacked field (label
+  // above its control) is fine at any width, so the rule measures the horizontal offset
+  // rather than the row width.
+  document.querySelectorAll('label').forEach((lab) => {
+    if (!vis(lab)) return;
+    const ctl = lab.querySelector('select, input, textarea');
+    if (!ctl || !vis(ctl)) return;
+    const l = lab.getBoundingClientRect();
+    const c = ctl.getBoundingClientRect();
+    const sideBySide = c.left - l.left > 24;
+    if (sideBySide && c.left - l.left > 420) out.push('label-control-travel: ' + Math.round(c.left - l.left) + 'px "' + lab.textContent.trim().slice(0, 20) + '"');
+  });
+  document.querySelectorAll('*').forEach((el) => {
+    if (!el.childNodes.length || !vis(el)) return;
+    if (!Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent.trim())) return;
+    const size = parseFloat(getComputedStyle(el).fontSize);
+    if (size && size < 11) out.push('text-too-small: ' + size + 'px "' + el.textContent.trim().slice(0, 20) + '"');
+  });
+  return out;
+})()`;
+
+for (const [label, url] of [
+  ["projects index", "/projects"],
+  ["project overview", "/projects/p04/overview"],
+  ["settings", "/settings"],
+]) {
+  test(`interaction audit: ${label} has hittable, explained, measured controls`, async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(url);
+    if (url.includes("overview")) {
+      // Include the planning surface and one open task editor in the sweep.
+      await page.getByRole("tab", { name: "Planning and tasks" }).click();
+      await page.getByTestId("task-board").getByLabel("New task").fill("Audited task");
+      await page.getByTestId("task-board").getByRole("button", { name: "Add task" }).click();
+      await page.getByRole("button", { name: /Audited task/ }).click();
+    }
+    const findings = await page.evaluate(AUDIT);
+    expect(findings, `audit findings on ${label}:\n${findings.join("\n")}`).toEqual([]);
+  });
+}
