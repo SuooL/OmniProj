@@ -14,6 +14,12 @@ export function PlanLog({ projectId }: { projectId: ProjectId }) {
   const key = ["plan", projectId] as const;
   const { data, isLoading } = useQuery({ queryKey: key, queryFn: () => api.getPlan(projectId) });
   const entries = data?.entries ?? [];
+  // Anchors are picked from the repository's own commits. A hand-typed SHA is exactly the
+  // kind of manually maintained link that drifts (charter principle 4).
+  const { data: commits } = useQuery({
+    queryKey: ["timeline", projectId] as const,
+    queryFn: () => api.getCommitTimeline(projectId),
+  });
   const accept = (next: PlanList) => client.setQueryData(key, next);
 
   async function add() {
@@ -28,6 +34,8 @@ export function PlanLog({ projectId }: { projectId: ProjectId }) {
     accept(await api.setPlanStatus({ project_id: projectId, expected_revision: data.revision, id, status }));
   }
 
+  const commitList = Array.isArray(commits) ? commits : [];
+
   async function setCommit(id: string, commit: string) {
     if (!data) return;
     accept(await api.setPlanCommit({ project_id: projectId, expected_revision: data.revision, id, commit: commit.trim() || null }));
@@ -36,7 +44,7 @@ export function PlanLog({ projectId }: { projectId: ProjectId }) {
   return <section className="op-section" aria-labelledby="plan-heading" data-testid="plan-log">
     <div className="op-section__header"><div><p className="op-section__kicker">{t("plan.kicker")}</p><h3 id="plan-heading">{t("plan.title")}</h3></div><span className="op-section__count">{entries.length}</span></div>
     <div className="op-plan-add"><input aria-label={t("plan.newTitle")} placeholder={t("plan.newTitle")} value={title} onChange={(event) => setTitle(event.target.value)} /><textarea aria-label={t("plan.body")} placeholder={t("plan.body")} value={body} onChange={(event) => setBody(event.target.value)} /><button className="op-button op-button--primary" type="button" disabled={!title.trim() || !data} title={!title.trim() ? t("plan.addDisabled") : undefined} onClick={() => void add()}>{t("plan.add")}</button></div>
-    {isLoading ? <p className="op-muted">{t("plan.loading")}</p> : entries.length === 0 ? <p className="op-muted">{t("plan.empty")}</p> : <ol className="op-plan-list">{entries.map((entry) => <li key={entry.id ?? `${entry.date}-${entry.title}`}><div><strong>{entry.title}</strong><small>{entry.date}{entry.commit ? ` · ${entry.commit}` : ""}</small>{entry.body && <p>{entry.body}</p>}</div>{entry.id && <div className="op-task-actions"><select aria-label={`${t("plan.status")}: ${entry.title}`} value={entry.status} onChange={(event) => void setStatus(entry.id!, event.target.value)}><option value="planned">{t("plan.planned")}</option><option value="doing">{t("plan.doing")}</option><option value="done">{t("plan.done")}</option><option value="abandoned">{t("plan.abandoned")}</option></select><input aria-label={`${t("plan.commit")}: ${entry.title}`} placeholder={t("plan.commit")} value={commitDrafts[entry.id] ?? entry.commit ?? ""} onChange={(event) => setCommitDrafts((all) => ({ ...all, [entry.id!]: event.target.value }))} /><button className="op-button op-button--secondary" type="button" onClick={() => void setCommit(entry.id!, commitDrafts[entry.id!] ?? entry.commit ?? "")}>{t("plan.saveCommit")}</button></div>}</li>)}</ol>}
+    {isLoading ? <p className="op-muted">{t("plan.loading")}</p> : entries.length === 0 ? <p className="op-muted">{t("plan.empty")}</p> : <ol className="op-plan-list">{entries.map((entry) => <li key={entry.id ?? `${entry.date}-${entry.title}`}><div><strong>{entry.title}</strong><small>{entry.date}{entry.commit ? ` · ${entry.commit}` : ""}</small>{entry.body && <p>{entry.body}</p>}</div>{entry.id && <div className="op-task-actions"><select aria-label={`${t("plan.status")}: ${entry.title}`} value={entry.status} onChange={(event) => void setStatus(entry.id!, event.target.value)}><option value="planned">{t("plan.planned")}</option><option value="doing">{t("plan.doing")}</option><option value="done">{t("plan.done")}</option><option value="abandoned">{t("plan.abandoned")}</option></select><select aria-label={`${t("plan.commit")}: ${entry.title}`} value={commitDrafts[entry.id] ?? entry.commit ?? ""} onChange={(event) => { setCommitDrafts((all) => ({ ...all, [entry.id!]: event.target.value })); void setCommit(entry.id!, event.target.value); }}><option value="">{t("plan.commitNone")}</option>{(entry.commit && !commitList.some((commit) => commit.sha === entry.commit)) && <option value={entry.commit}>{entry.commit}</option>}{commitList.map((commit) => <option key={commit.sha} value={commit.sha}>{commit.short_sha} · {commit.subject}</option>)}</select></div>}</li>)}</ol>}
   </section>;
 }
 

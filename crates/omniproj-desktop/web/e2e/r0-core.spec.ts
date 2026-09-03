@@ -133,6 +133,19 @@ test("completing the current step leaves no replacement", async ({ page }) => {
   await expect(page.getByText("Idempotent retries")).toHaveCount(0);
 });
 
+test("decisions live in their own tab, not beside the task list", async ({ page }) => {
+  await page.goto("/projects/p04/overview");
+  await page.getByRole("tab", { name: "Planning and tasks" }).click();
+  await expect(page.getByTestId("task-board")).toBeVisible();
+  // Two near-identical lists side by side is exactly what made "which one does this go in?"
+  // unanswerable, so the decision log is not on this pane.
+  await expect(page.getByTestId("plan-log")).toHaveCount(0);
+
+  await page.getByRole("tab", { name: "Decisions" }).click();
+  await expect(page.getByTestId("plan-log")).toBeVisible();
+  await expect(page.getByTestId("task-board")).toHaveCount(0);
+});
+
 test("planning task creation is revisioned and appears without a page reload", async ({ page }) => {
   await page.goto("/projects/p04/overview");
   await page.getByText("Planning and tasks", { exact: true }).click();

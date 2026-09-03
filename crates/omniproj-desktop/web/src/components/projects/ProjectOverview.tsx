@@ -29,14 +29,14 @@ export interface ProjectOverviewProps {
   headingRef?: Ref<HTMLHeadingElement>;
 }
 
-type WorkspaceTab = "plan" | "activity" | "project";
+type WorkspaceTab = "plan" | "decisions" | "activity" | "project";
 const WORKSPACE_TAB_STORAGE_KEY = "omniproj.workspace-tab";
 
 function storedTab(): WorkspaceTab {
   if (typeof window === "undefined") return "plan";
   try {
     const raw = window.localStorage.getItem(WORKSPACE_TAB_STORAGE_KEY);
-    return raw === "activity" || raw === "project" ? raw : "plan";
+    return raw === "decisions" || raw === "activity" || raw === "project" ? raw : "plan";
   } catch {
     return "plan";
   }
@@ -57,6 +57,7 @@ export function ProjectOverview({
 
   const TABS: Array<{ id: WorkspaceTab; label: string }> = [
     { id: "plan", label: t("workspace.plan") },
+    { id: "decisions", label: t("workspace.decisions") },
     { id: "activity", label: t("workspace.activity") },
     { id: "project", label: t("workspace.project") },
   ];
@@ -114,6 +115,12 @@ export function ProjectOverview({
             {tab === "plan" && (
               <div role="tabpanel" id="workspace-panel-plan" aria-labelledby="workspace-tab-plan" data-testid="plan-view">
                 <TaskBoard overview={overview} />
+              </div>
+            )}
+            {/* Decisions answer "why", tasks answer "what next". Side by side they read as two
+                near-identical lists and the user cannot tell which one a note belongs in. */}
+            {tab === "decisions" && (
+              <div role="tabpanel" id="workspace-panel-decisions" aria-labelledby="workspace-tab-decisions" data-testid="decisions-view">
                 <PlanLog projectId={overview.project_id} />
               </div>
             )}
