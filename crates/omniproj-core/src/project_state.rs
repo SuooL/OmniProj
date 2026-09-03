@@ -651,20 +651,22 @@ impl ProjectStateDoc {
                 self.current_next_action_id, replayed.current_next_action_id
             ));
         }
-        for (work_item_id, expected_status) in replayed.expected_statuses {
+        // Only the item the commitment points at right now has a status the log fixes.
+        // Items it merely touched in the past are ordinary user state again.
+        if let Some(work_item_id) = &replayed.current_next_action_id {
             let item = self
                 .work_items
                 .iter()
-                .find(|item| item.id == work_item_id)
+                .find(|item| &item.id == work_item_id)
                 .ok_or_else(|| {
                     ProjectStateError::InvalidDocument(format!(
-                        "replayed status references missing work item {work_item_id}"
+                        "current commitment references missing work item {work_item_id}"
                     ))
                 })?;
-            if item.status != expected_status {
+            if item.status != WorkItemStatus::Doing {
                 return invalid(format!(
-                    "work item {work_item_id} has status {:?}, expected {:?} from commitment history",
-                    item.status, expected_status
+                    "current commitment {work_item_id} has status {:?}, expected Doing",
+                    item.status
                 ));
             }
         }
@@ -868,9 +870,11 @@ fn apply_command_in_memory(
         } => {
             validate_due(due.as_deref())?;
             let tags = tags.map(normalize_tags).transpose()?;
-            let referenced = work_item_is_referenced(state, &work_item_id);
+            // Only the item the commitment points at right now has a status owned by the
+            // commitment actions. A past commitment is the user's to reopen or re-plan.
+            let is_current = state.current_next_action_id.as_ref() == Some(&work_item_id);
             let item = require_item_mut(state, &work_item_id)?;
-            if referenced && item.status != status {
+            if is_current && item.status != status {
                 return Err(ProjectStateError::InvalidCommand(
                     "commitment lifecycle status must be changed through commitment actions".into(),
                 ));
@@ -885,12 +889,20 @@ fn apply_command_in_memory(
             item.updated_at = occurred_at.to_owned();
         }
         ProjectCommand::RemoveWorkItem { work_item_id } => {
-            if state.current_next_action_id.as_ref() == Some(&work_item_id)
-                || work_item_is_referenced(state, &work_item_id)
-            {
+            if state.current_next_action_id.as_ref() == Some(&work_item_id) {
                 return Err(ProjectStateError::InvalidCommand(
-                    "a work item in commitment history cannot be removed".into(),
+                    "the current commitment cannot be removed".into(),
                 ));
+            }
+            // The audit log must keep its subject: every transition names a work item that
+            // has to still exist. An item the log mentions is therefore tombstoned rather
+            // than deleted — `abandoned` items are filtered out of the task list, so it
+            // leaves the user's list either way, and the history stays readable.
+            if work_item_is_referenced(state, &work_item_id) {
+                let item = require_item_mut(state, &work_item_id)?;
+                item.status = WorkItemStatus::Abandoned;
+                item.updated_at = occurred_at.to_owned();
+                return Ok(());
             }
             let before = state.work_items.len();
             state.work_items.retain(|item| item.id != work_item_id);
@@ -959,14 +971,15 @@ fn apply_command_in_memory(
                         .position(|item| item.source_task_id.as_deref() == Some(legacy_id))
                 });
                 if let Some(index) = existing {
-                    let referenced = work_item_is_referenced(state, &state.work_items[index].id);
+                    let is_current =
+                        state.current_next_action_id.as_ref() == Some(&state.work_items[index].id);
                     let item = &mut state.work_items[index];
                     item.unclear = draft.unclear;
                     item.due = normalize_optional(draft.due);
                     item.note = normalize_optional(draft.note);
                     item.commits = deduplicated(draft.commits);
                     item.adopted_from_proposal_id = draft.adopted_from_proposal_id;
-                    if !referenced {
+                    if !is_current {
                         item.status = draft.status;
                     }
                     item.updated_at = occurred_at.to_owned();
@@ -1616,16 +1629,23 @@ fn validate_transition_static_shape(
     Ok(())
 }
 
+/// What the transition log says the commitment pointer must be.
+///
+/// The log is the audit record: it owns *what happened* — every set, confirm, complete,
+/// replace and clear, plus the pointer they imply — and all of that is still replayed and
+/// compared against the stored document. It deliberately does NOT own the current status of
+/// items it has touched. Reopening a step you once completed is ordinary work, not a forged
+/// history; pinning those statuses forever made every past commitment unmovable and
+/// undeletable. The one status the log still fixes is the item it points at right now, which
+/// must be `doing` — that is checked directly from the pointer.
 struct CommitmentReplay {
     current_next_action_id: Option<WorkItemId>,
-    expected_statuses: HashMap<WorkItemId, WorkItemStatus>,
 }
 
 fn replay_and_validate_commitment_history(
     transitions: &[CommitmentTransition],
 ) -> Result<CommitmentReplay, ProjectStateError> {
     let mut current = None;
-    let mut expected_statuses = HashMap::new();
     let mut corrected_ids = HashSet::new();
     for (index, transition) in transitions.iter().enumerate() {
         if transition.kind == CommitmentTransitionKind::Correction {
@@ -1653,124 +1673,13 @@ fn replay_and_validate_commitment_history(
                 ));
             }
             current = after;
-            apply_status_correction(&mut expected_statuses, target)?;
         } else {
             apply_pointer_transition(&mut current, transition)?;
-            apply_status_transition(&mut expected_statuses, transition)?;
         }
     }
     Ok(CommitmentReplay {
         current_next_action_id: current,
-        expected_statuses,
     })
-}
-
-fn apply_status_transition(
-    expected_statuses: &mut HashMap<WorkItemId, WorkItemStatus>,
-    transition: &CommitmentTransition,
-) -> Result<(), ProjectStateError> {
-    match transition.kind {
-        CommitmentTransitionKind::Set | CommitmentTransitionKind::Replaced => {
-            let item_id = transition.next_work_item_id.clone().ok_or_else(|| {
-                ProjectStateError::InvalidDocument(format!(
-                    "{:?} transition {} has no introduced item",
-                    transition.kind, transition.id
-                ))
-            })?;
-            expected_statuses.insert(item_id, WorkItemStatus::Doing);
-            // A replaced step was dropped, not finished: it returns to the list as planned.
-            if transition.kind == CommitmentTransitionKind::Replaced {
-                let previous_id = transition.previous_work_item_id.clone().ok_or_else(|| {
-                    ProjectStateError::InvalidDocument(format!(
-                        "Replaced transition {} has no prior item",
-                        transition.id
-                    ))
-                })?;
-                expected_statuses.insert(previous_id, WorkItemStatus::Planned);
-            }
-        }
-        CommitmentTransitionKind::Completed => {
-            let item_id = transition.previous_work_item_id.clone().ok_or_else(|| {
-                ProjectStateError::InvalidDocument(format!(
-                    "Completed transition {} has no completed item",
-                    transition.id
-                ))
-            })?;
-            expected_statuses.insert(item_id, WorkItemStatus::Done);
-        }
-        CommitmentTransitionKind::Cleared => {
-            // Clearing drops the commitment, not the work: the item goes back to planned.
-            let item_id = transition.previous_work_item_id.clone().ok_or_else(|| {
-                ProjectStateError::InvalidDocument(format!(
-                    "Cleared transition {} has no prior item",
-                    transition.id
-                ))
-            })?;
-            expected_statuses.insert(item_id, WorkItemStatus::Planned);
-        }
-        CommitmentTransitionKind::Confirmed => {}
-        CommitmentTransitionKind::Correction => {
-            return invalid(format!(
-                "unexpected Correction transition {}",
-                transition.id
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn apply_status_correction(
-    expected_statuses: &mut HashMap<WorkItemId, WorkItemStatus>,
-    target: &CommitmentTransition,
-) -> Result<(), ProjectStateError> {
-    match target.kind {
-        CommitmentTransitionKind::Set | CommitmentTransitionKind::Replaced => {
-            let item_id = target.next_work_item_id.clone().ok_or_else(|| {
-                ProjectStateError::InvalidDocument(format!(
-                    "corrected {:?} transition {} has no introduced item",
-                    target.kind, target.id
-                ))
-            })?;
-            expected_statuses.insert(item_id, WorkItemStatus::Abandoned);
-            // Undoing a replace hands the commitment back to the previous item, so its
-            // status comes back with it.
-            if target.kind == CommitmentTransitionKind::Replaced {
-                let previous_id = target.previous_work_item_id.clone().ok_or_else(|| {
-                    ProjectStateError::InvalidDocument(format!(
-                        "corrected Replaced transition {} has no prior item",
-                        target.id
-                    ))
-                })?;
-                expected_statuses.insert(previous_id, WorkItemStatus::Doing);
-            }
-        }
-        CommitmentTransitionKind::Completed => {
-            let item_id = target.previous_work_item_id.clone().ok_or_else(|| {
-                ProjectStateError::InvalidDocument(format!(
-                    "corrected Completed transition {} has no completed item",
-                    target.id
-                ))
-            })?;
-            expected_statuses.insert(item_id, WorkItemStatus::Doing);
-        }
-        CommitmentTransitionKind::Cleared => {
-            let item_id = target.previous_work_item_id.clone().ok_or_else(|| {
-                ProjectStateError::InvalidDocument(format!(
-                    "corrected Cleared transition {} has no prior item",
-                    target.id
-                ))
-            })?;
-            expected_statuses.insert(item_id, WorkItemStatus::Doing);
-        }
-        CommitmentTransitionKind::Confirmed => {}
-        CommitmentTransitionKind::Correction => {
-            return invalid(format!(
-                "correction cannot target correction transition {}",
-                target.id
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn replay_masked_pointer(

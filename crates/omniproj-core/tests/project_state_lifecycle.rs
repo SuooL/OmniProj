@@ -4,7 +4,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use omniproj_core::{
     apply_project_command, ensure_home, ProjectCommand, ProjectId, ProjectStateDoc,
-    ProjectStateError, ProjectStatus, WorkItemStatus,
+    ProjectStateError, ProjectStatus, WorkItemDraft, WorkItemStatus,
 };
 
 const AT_0: &str = "2026-08-10T12:00:00Z";
@@ -544,7 +544,9 @@ fn parse_rejects_nonadjacent_correction_and_forged_compensation_pointers() {
 }
 
 #[test]
-fn parse_rejects_forged_status_after_undo_set() {
+fn parse_accepts_user_status_on_an_item_the_commitment_released_by_undo_set() {
+    // The log owns what happened, not what the item is now. Once undo drops the pointer the
+    // item is ordinary user state again, so any status parses.
     let store = TestStore::new("parse-forged-undo-set-status");
     let set = set_commitment(&store, 0, "Current", AT_1);
     let item_id = set.work_items[0].id.clone();
@@ -560,10 +562,7 @@ fn parse_rejects_forged_status_after_undo_set() {
         "doing",
     );
 
-    assert!(matches!(
-        ProjectStateDoc::parse(&forged),
-        Err(ProjectStateError::InvalidDocument(_))
-    ));
+    assert!(ProjectStateDoc::parse(&forged).is_ok());
 }
 
 #[test]
@@ -633,7 +632,7 @@ fn parse_rejects_forged_status_after_undo_complete() {
 }
 
 #[test]
-fn parse_rejects_forged_status_after_undo_replace() {
+fn parse_accepts_user_status_on_a_replacement_the_commitment_released() {
     let store = TestStore::new("parse-forged-undo-replace-status");
     let set = set_commitment(&store, 0, "Previous", AT_1);
     let previous_id = set.work_items[0].id.clone();
@@ -662,10 +661,7 @@ fn parse_rejects_forged_status_after_undo_replace() {
         "doing",
     );
 
-    assert!(matches!(
-        ProjectStateDoc::parse(&forged),
-        Err(ProjectStateError::InvalidDocument(_))
-    ));
+    assert!(ProjectStateDoc::parse(&forged).is_ok());
 }
 
 #[test]
@@ -737,7 +733,7 @@ fn parse_rejects_forged_status_across_transition_revision_gap() {
 }
 
 #[test]
-fn parse_rejects_forged_status_after_undo_and_tail_revision() {
+fn parse_accepts_user_status_on_a_released_item_across_a_later_revision() {
     let store = TestStore::new("parse-forged-status-tail-revision");
     let set = set_commitment(&store, 0, "Current", AT_1);
     let item_id = set.work_items[0].id.clone();
@@ -754,10 +750,7 @@ fn parse_rejects_forged_status_after_undo_and_tail_revision() {
         "doing",
     );
 
-    assert!(matches!(
-        ProjectStateDoc::parse(&forged),
-        Err(ProjectStateError::InvalidDocument(_))
-    ));
+    assert!(ProjectStateDoc::parse(&forged).is_ok());
 }
 
 #[test]
@@ -882,6 +875,131 @@ fn lifecycle_complete_marks_item_done_and_clears_pointer() {
             .document_revision,
         2
     );
+}
+
+#[test]
+fn a_completed_commitment_can_be_reopened_and_then_removed() {
+    // The point of the whole change: finishing a step must not turn its task into a
+    // permanent, unmovable, undeletable fixture of the list.
+    let store = TestStore::new("reopen-completed");
+    let set = set_commitment(&store, 0, "Review cohort", AT_1);
+    let item_id = set.work_items[0].id.clone();
+    store
+        .apply(
+            1,
+            ProjectCommand::CompleteCommitment {
+                work_item_id: item_id.clone(),
+            },
+            AT_2,
+        )
+        .unwrap();
+
+    let reopened = store
+        .apply(
+            2,
+            ProjectCommand::UpdateWorkItem {
+                work_item_id: item_id.clone(),
+                status: WorkItemStatus::Planned,
+                unclear: false,
+                due: None,
+                note: None,
+                tags: None,
+            },
+            AT_3,
+        )
+        .unwrap()
+        .state;
+    assert_eq!(reopened.work_items[0].status, WorkItemStatus::Planned);
+    // The audit log still records that it was set and completed; reopening does not rewrite it.
+    assert_eq!(reopened.commitment_transitions.len(), 2);
+
+    // Removal tombstones rather than deletes, because every transition must keep naming an
+    // item that exists. `abandoned` is filtered out of the task list, so it leaves the user's
+    // list all the same.
+    let removed = store
+        .apply(
+            3,
+            ProjectCommand::RemoveWorkItem {
+                work_item_id: item_id,
+            },
+            AT_3,
+        )
+        .unwrap()
+        .state;
+    assert_eq!(removed.work_items[0].status, WorkItemStatus::Abandoned);
+    assert_eq!(removed.commitment_transitions.len(), 2);
+}
+
+#[test]
+fn removing_a_task_with_no_commitment_history_deletes_it_outright() {
+    let store = TestStore::new("remove-plain-task");
+    let added = store
+        .apply(
+            0,
+            ProjectCommand::AddWorkItems {
+                items: vec![WorkItemDraft {
+                    text: "Plain task".into(),
+                    status: WorkItemStatus::Planned,
+                    unclear: false,
+                    due: None,
+                    note: None,
+                    tags: Vec::new(),
+                    commits: Vec::new(),
+                    adopted_from_proposal_id: None,
+                    source_task_id: None,
+                }],
+            },
+            AT_1,
+        )
+        .unwrap()
+        .state;
+    let item_id = added.work_items[0].id.clone();
+
+    let removed = store
+        .apply(
+            1,
+            ProjectCommand::RemoveWorkItem {
+                work_item_id: item_id,
+            },
+            AT_2,
+        )
+        .unwrap()
+        .state;
+    assert!(removed.work_items.is_empty());
+}
+
+#[test]
+fn the_current_commitment_still_resists_status_edits_and_removal() {
+    let store = TestStore::new("current-still-locked");
+    let set = set_commitment(&store, 0, "Review cohort", AT_1);
+    let item_id = set.work_items[0].id.clone();
+
+    let status_error = store
+        .apply(
+            1,
+            ProjectCommand::UpdateWorkItem {
+                work_item_id: item_id.clone(),
+                status: WorkItemStatus::Done,
+                unclear: false,
+                due: None,
+                note: None,
+                tags: None,
+            },
+            AT_2,
+        )
+        .unwrap_err();
+    assert!(matches!(status_error, ProjectStateError::InvalidCommand(_)));
+
+    let remove_error = store
+        .apply(
+            1,
+            ProjectCommand::RemoveWorkItem {
+                work_item_id: item_id,
+            },
+            AT_2,
+        )
+        .unwrap_err();
+    assert!(matches!(remove_error, ProjectStateError::InvalidCommand(_)));
 }
 
 #[test]

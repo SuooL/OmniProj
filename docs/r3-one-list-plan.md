@@ -118,6 +118,22 @@ if work_item_is_referenced(state, &work_item_id) {
 
 这一步**独立可发**，不依赖任何概念决策，而且是收益最高的一刀。
 
+### PR-1b `refactor(core)`：日志管历史，状态归用户 —— **已实现**
+
+PR-1 只解了前端的锁，后端还有两道同样基于 `referenced` 的闸门（`UpdateWorkItem` 拒绝状态变更、`RemoveWorkItem` 拒绝删除），所以按钮能点但会被拒——而且 `remove()` 当时没有错误处理，表现为静默失败。
+
+根因是审计模型本身：**凡被承诺碰过的条目，状态永久由 transition 日志拥有**。用户裁决（2026-09-03）：改成**日志只管历史，状态归用户**。
+
+| 改动 | 说明 |
+|---|---|
+| `replay_and_validate_commitment_history` | 删除 `expected_statuses` 整套推导（连同 PR-1 刚加的规则）。解析时只校验一条：当前星标项必须是 `doing` |
+| `UpdateWorkItem` / `ImportLegacyWorkItems` | 闸门从「被引用过」收窄为「正是当前星标项」 |
+| `RemoveWorkItem` | 同上收窄；但有承诺历史的条目改为**墓碑式删除**（置 `abandoned`）而非真删——每条 transition 必须始终有主语，而 `abandoned` 本来就被任务清单过滤掉，用户看到的效果一样 |
+| `TaskBoard.remove()` | 补上缺失的错误处理 |
+
+**保留的保证**：transition 日志本身、指针重放、correction 的前后指针，仍然全量校验——「你在 T 时刻完成了 X」改不了。
+**放弃的保证**：手改 `~/.omniproj` 的 markdown 去伪造**历史条目**的状态，不再被检出。三个 `parse_rejects_forged_status_after_undo_*` 测试相应翻转成 `parse_accepts_user_status_on_*`，明确记录这个取舍。
+
 **本轮发现、明确推迟的一个问题**：`undo` 一次「把已有任务提升为承诺」的操作，会把该任务置 `Abandoned` → 它从清单里消失。修它需要让 transition 记录「本次 set 是否新建了 item」，因为推导侧只看 transition、无法区分两种 set。属于持久化格式变更，另议。
 
 ### PR-2 `refactor(record)`：合并承诺与任务（依赖 §3 的拍板）
