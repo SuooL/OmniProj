@@ -192,10 +192,20 @@ test("a task row stays read-only until opened, then autosaves due, tags, and sta
   // Opening reveals labelled fields; leaving the panel persists them.
   await row.click();
   await expect(row).toHaveAttribute("aria-expanded", "true");
-  await board.getByLabel(/Expected completion date: Drain the dead-letter queue/).fill("2026-08-01");
-  await board.getByLabel(/Tags: Drain the dead-letter queue/).fill("infra, retry");
-  await board.getByRole("heading", { name: "Task list" }).click();
+  // A real date control and a token field, not typed strings.
+  const due = board.getByLabel(/Expected completion date: Drain the dead-letter queue/);
+  await expect(due).toHaveAttribute("type", "date");
+  await due.fill("2026-08-01");
+  const tags = board.getByLabel(/Tags: Drain the dead-letter queue/);
+  await tags.fill("infra");
+  await tags.press("Enter");
+  await tags.fill("retry");
+  await tags.press("Enter");
+  // Closing the row persists it: autosave must not depend on focus leaving the panel,
+  // because on macOS a click never moves keyboard focus to a button.
+  await row.click();
   await expect(board.getByRole("button", { name: /Drain the dead-letter queue.*Overdue/ })).toBeVisible();
+  await expect(board.getByRole("button", { name: /Drain the dead-letter queue.*infra.*retry/ })).toBeVisible();
 
   // Status is a single decisive control on the collapsed row and saves immediately.
   await board.getByLabel(/Task status: Drain the dead-letter queue/).selectOption("doing");

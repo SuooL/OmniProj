@@ -12,6 +12,14 @@ projects, ≥20 recorded re-entry events) has **not** been met, so no release is
 
 ### Changed
 
+- **A real date control and a real tag control.** The due date was a text box demanding a
+  typed `YYYY-MM-DD`, and tags were a comma-separated string that made the user retype a tag
+  they had already used elsewhere in the project, with no way to see what existed. Due date is
+  now a native date input plus relative presets (今天 / 明天 / 本周五 / 下周一 / 清除),
+  because a due date is usually thought about as "by Friday" rather than as a calendar
+  coordinate. Tags are a token field: chips with their own remove control, Enter or comma to
+  commit, Backspace to remove the last one, and type-ahead over the tags already used in the
+  project, excluding those already applied.
 - **Interaction audit sweep** — rather than fixing only the reported examples, every surface
   and state was walked (index, project setup/active, all three workspace tabs, all three task
   views, settings, dialogs) against measurable rules: pointer-target size, accessible name,
@@ -58,6 +66,10 @@ projects, ≥20 recorded re-entry events) has **not** been met, so no release is
 
 ### Fixed
 
+- **An edit was silently dropped when the row was closed by clicking another row** — autosave
+  listened only for `blur`, but on macOS a click does not move keyboard focus to a button, so
+  the panel never blurred and the change was lost. Persistence is now driven by the open row
+  changing, not by focus; `blur` remains as the keyboard path.
 - **A finished task is no longer shown as overdue** — the list, board, and time views ran
   the due signal without the task's status, so a completed item with a past date still
   displayed 「逾期 N 天」, contradicting core, where only Planned/Doing/Blocked work produces
