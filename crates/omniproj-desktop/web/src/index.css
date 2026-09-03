@@ -2746,3 +2746,85 @@ small,
 /* Agent/consent forms share the form measure. */
 .op-form-section,
 .op-consent { max-width: var(--op-measure-form); }
+
+/* ---- Date field: native picker + relative presets ------------------------- */
+
+.op-datefield { display: grid; gap: var(--op-space-2); }
+.op-datefield input[type="date"] { width: 100%; }
+.op-datefield__presets { display: flex; flex-wrap: wrap; gap: var(--op-space-1); }
+
+/* A compact, low-weight action chip shared by the date presets and tag suggestions. */
+.op-chip--action {
+  min-height: var(--op-control-min);
+  padding: 0 var(--op-space-2);
+  font-size: max(11px, var(--op-text-size-micro));
+}
+
+/* ---- Tag field: a token box with a project vocabulary -------------------- */
+
+.op-tagfield { display: grid; gap: var(--op-space-2); }
+
+.op-tagfield__box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--op-space-1);
+  min-height: var(--op-control-min);
+  padding: 3px var(--op-space-2);
+  border: 1px solid var(--op-border-strong);
+  border-radius: var(--op-radius-sm);
+  background: var(--op-bg-canvas);
+  cursor: text;
+}
+
+.op-tagfield__box:focus-within {
+  border-color: var(--op-interactive-fg);
+  outline: 2px solid var(--op-focus-ring);
+  outline-offset: 1px;
+}
+
+.op-tagfield__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 22px;
+  padding: 0 2px 0 var(--op-space-2);
+  border: 1px solid var(--op-border-strong);
+  border-radius: var(--op-radius-sm);
+  background: var(--op-surface-raised);
+  font-size: max(11px, var(--op-text-size-micro));
+}
+
+/* The remove control is inside a chip, so it carries its own target rather than
+   inheriting the 28px minimum that would blow the chip out of proportion. */
+.op-tagfield__chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--op-radius-sm);
+  background: none;
+  color: var(--op-text-tertiary);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.op-tagfield__chip button:hover { background: var(--op-bg-canvas); color: var(--op-text-primary); }
+
+/* The token input is inside the box; the box draws the control affordance. */
+.op-tagfield__input {
+  flex: 1 1 96px;
+  min-width: 96px;
+  min-height: 22px;
+  padding: 0;
+  border: 0;
+  background: none;
+  outline: none;
+}
+
+.op-tagfield__input:focus-visible { outline: none; }
+
+.op-tagfield__suggestions { display: flex; flex-wrap: wrap; gap: var(--op-space-1); }

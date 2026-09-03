@@ -87,19 +87,7 @@ it("promotes a planning task to the current commitment with both revisions", asy
   await waitFor(() => expect(invokeMock.mock.calls.some((call) => call[0] === "promote_task_to_commitment")).toBe(true));
 });
 
-it("shows an unambiguous empty YYYY-MM-DD due-date field", async () => {
-  invokeMock.mockImplementation(async (command: string) => {
-    if (command === "get_tasks") return TASKS;
-    throw new Error(`unexpected command ${command}`);
-  });
-  const user = userEvent.setup();
-  renderBoard();
-  await user.click(await screen.findByRole("button", { name: /Validate cohort labels/ }));
-  expect(await screen.findByLabelText(/expected completion date: Validate cohort labels/i)).toHaveAttribute(
-    "placeholder",
-    "YYYY-MM-DD",
-  );
-});
+
 
 it("renders tag chips, filters with AND semantics, and clears the filter", async () => {
   invokeMock.mockImplementation(async (command: string) => {
@@ -129,7 +117,7 @@ it("keeps rows read-only until opened, then autosaves the edit on blur", async (
   invokeMock.mockImplementation(async (command: string, args?: { input?: Record<string, unknown> }) => {
     if (command === "get_tasks") return TASKS;
     if (command === "update_task") {
-      expect(args?.input).toMatchObject({ id: "a1b2", tags: ["论文", "eval"] });
+      expect(args?.input).toMatchObject({ id: "a1b2", tags: ["论文", "infra", "eval"] });
       return TASKS;
     }
     if (command === "list_project_index" || command === "get_project_overview") return {};
@@ -147,10 +135,8 @@ it("keeps rows read-only until opened, then autosaves the edit on blur", async (
   await user.click(row);
   expect(row).toHaveAttribute("aria-expanded", "true");
   const input = await screen.findByLabelText(/tags: Validate cohort labels/i);
-  await user.clear(input);
-  await user.type(input, "论文, eval");
+  await user.type(input, "eval{Enter}");
   // Leaving the panel is what persists: no explicit save control exists.
-  await user.tab();
   await user.click(screen.getByRole("button", { name: /Refactor the pipeline/ }));
   await waitFor(() => expect(invokeMock.mock.calls.some((call) => call[0] === "update_task")).toBe(true));
 });
@@ -254,4 +240,58 @@ it("time view groups tasks by due and hides done", async () => {
   expect(within(groups).getByRole("heading", { name: /overdue/i })).toBeInTheDocument();
   expect(within(groups).getByRole("heading", { name: /unscheduled/i })).toBeInTheDocument();
   window.localStorage.removeItem("omniproj.task-view");
+});
+
+it("persists an edit when the row closes, not only when focus leaves it", async () => {
+  // On macOS a click does not move keyboard focus to a button, so an autosave that only
+  // listened for `blur` would silently drop the edit when the user opens another row.
+  let saved: Record<string, unknown> | undefined;
+  invokeMock.mockImplementation(async (command: string, args?: { input?: Record<string, unknown> }) => {
+    if (command === "get_tasks") return TASKS;
+    if (command === "update_task") { saved = args?.input; return TASKS; }
+    if (command === "list_project_index" || command === "get_project_overview") return {};
+    throw new Error(`unexpected command ${command}`);
+  });
+  const user = userEvent.setup();
+  renderBoard();
+
+  await user.click(await screen.findByRole("button", { name: /Validate cohort labels/ }));
+  // Remove a tag chip, then close this row by opening the other one.
+  await user.click(screen.getByRole("button", { name: /Remove tag 论文/i }));
+  await user.click(screen.getByRole("button", { name: /Refactor the pipeline/ }));
+
+  await waitFor(() => expect(saved).toBeDefined());
+  expect(saved).toMatchObject({ id: "a1b2", tags: ["infra"] });
+});
+
+it("offers a real date control with relative presets instead of a typed YYYY-MM-DD box", async () => {
+  invokeMock.mockImplementation(async (command: string) => {
+    if (command === "get_tasks") return TASKS;
+    if (command === "list_project_index" || command === "get_project_overview") return {};
+    throw new Error(`unexpected command ${command}`);
+  });
+  const user = userEvent.setup();
+  renderBoard();
+  await user.click(await screen.findByRole("button", { name: /Validate cohort labels/ }));
+
+  const due = screen.getByLabelText(/Expected completion date: Validate cohort labels/i);
+  expect(due).toHaveAttribute("type", "date");
+  for (const preset of [/^Today$/, /^Tomorrow$/, /^This Friday$/, /^Next Monday$/]) {
+    expect(screen.getByRole("button", { name: preset })).toBeInTheDocument();
+  }
+});
+
+it("suggests tags already used in the project and never re-offers an applied one", async () => {
+  invokeMock.mockImplementation(async (command: string) => {
+    if (command === "get_tasks") return TASKS;
+    if (command === "list_project_index" || command === "get_project_overview") return {};
+    throw new Error(`unexpected command ${command}`);
+  });
+  const user = userEvent.setup();
+  renderBoard();
+  // The second task carries only "infra"; the project vocabulary also holds 论文.
+  await user.click(await screen.findByRole("button", { name: /Refactor the pipeline/ }));
+  const suggestions = screen.getByRole("group", { name: /Tags used in this project/i });
+  expect(within(suggestions).getByRole("button", { name: "论文" })).toBeInTheDocument();
+  expect(within(suggestions).queryByRole("button", { name: "infra" })).not.toBeInTheDocument();
 });
