@@ -198,26 +198,20 @@ it("surfaces a rejected removal instead of appearing to do nothing", async () =>
   expect(await screen.findByRole("status")).toBeInTheDocument();
 });
 
-it("parseTagsInput splits comma variants and trims", async () => {
-  const { parseTagsInput } = await import("./TaskBoard");
-  expect(parseTagsInput("论文, infra、eval ，  x ")).toEqual(["论文", "infra", "eval", "x"]);
-  expect(parseTagsInput("   ")).toEqual([]);
-});
-
-it("board view moves a card via the keyboard-accessible control and locks commitment cards", async () => {
-  window.localStorage.setItem("omniproj.task-view", "board");
-  const boardTasks = {
+it("time view moves a card via the keyboard-accessible control and locks the marked one", async () => {
+  window.localStorage.setItem("omniproj.task-view", "time");
+  const timed = {
     revision: "9",
     tasks: [
-      { ...TASKS.tasks[0], id: "m1", text: "Movable card", unclear: false, tags: [] },
-      { ...TASKS.tasks[1], id: "l1", text: "Locked card", status: "doing", was_committed: true, is_current_commitment: true, tags: [] },
+      { ...TASKS.tasks[0], id: "m1", text: "Movable card", unclear: false, tags: [], due: "2026-08-12" },
+      { ...TASKS.tasks[1], id: "l1", text: "Locked card", status: "doing", was_committed: true, is_current_commitment: true, tags: [], due: "2026-08-12" },
     ],
   };
   invokeMock.mockImplementation(async (command: string, args?: { input?: Record<string, unknown> }) => {
-    if (command === "get_tasks") return boardTasks;
+    if (command === "get_tasks") return timed;
     if (command === "update_task") {
       expect(args?.input).toMatchObject({ id: "m1", status: "doing", tags: [] });
-      return boardTasks;
+      return timed;
     }
     if (command === "list_project_index" || command === "get_project_overview") return {};
     throw new Error(`unexpected command ${command}`);
@@ -225,39 +219,13 @@ it("board view moves a card via the keyboard-accessible control and locks commit
   const user = userEvent.setup();
   renderBoard();
 
-  const columns = await screen.findByTestId("task-board-columns");
-  // Locked card exposes guidance instead of a move control.
-  expect(within(columns).getByText(/managed by commitment actions/i)).toBeInTheDocument();
-  expect(within(columns).queryByLabelText(/move to: Locked card/i)).not.toBeInTheDocument();
+  const groups = await screen.findByTestId("task-time-groups");
+  // The marked card exposes guidance instead of a move control.
+  expect(within(groups).getByText(/managed by commitment actions/i)).toBeInTheDocument();
+  expect(within(groups).queryByLabelText(/move to: Locked card/i)).not.toBeInTheDocument();
   // Keyboard-accessible move on the unlocked card.
-  await user.selectOptions(within(columns).getByLabelText(/move to: Movable card/i), "doing");
+  await user.selectOptions(within(groups).getByLabelText(/move to: Movable card/i), "doing");
   await waitFor(() => expect(invokeMock.mock.calls.some((call) => call[0] === "update_task")).toBe(true));
-  window.localStorage.removeItem("omniproj.task-view");
-});
-
-it("board view folds the done column beyond five and expands on demand", async () => {
-  window.localStorage.setItem("omniproj.task-view", "board");
-  const done = Array.from({ length: 7 }, (_, index) => ({
-    ...TASKS.tasks[0],
-    id: `done-${index}`,
-    text: `Done item ${index}`,
-    status: "done",
-    tags: [],
-    updated_at: `2026-08-${String(10 + index).padStart(2, "0")}T00:00:00Z`,
-  }));
-  invokeMock.mockImplementation(async (command: string) => {
-    if (command === "get_tasks") return { revision: "9", tasks: done };
-    throw new Error(`unexpected command ${command}`);
-  });
-  const user = userEvent.setup();
-  renderBoard();
-
-  const columns = await screen.findByTestId("task-board-columns");
-  // Newest five shown, oldest two folded.
-  expect(within(columns).getByText("Done item 6", { exact: false })).toBeInTheDocument();
-  expect(within(columns).queryByText("Done item 0", { exact: false })).not.toBeInTheDocument();
-  await user.click(within(columns).getByRole("button", { name: /show all \(7\)/i }));
-  expect(within(columns).getByText("Done item 0", { exact: false })).toBeInTheDocument();
   window.localStorage.removeItem("omniproj.task-view");
 });
 

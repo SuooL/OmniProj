@@ -1554,16 +1554,13 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .op-task-tagfilter { display:flex; flex-wrap:wrap; align-items:center; gap:var(--op-space-2); margin-bottom:var(--op-space-3); }
 /* Planning board (R1c): three status columns; stacks below 900px. */
 /* Columns stretch to a common height so an empty column never looks broken. */
-.op-board { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:var(--op-space-3); align-items:stretch; }
 .op-board-col { display:flex; flex-direction:column; min-height:140px; border:1px solid var(--op-border-hairline); border-radius:var(--op-radius-md); padding:var(--op-space-3); background:var(--op-surface-raised); }
-.op-board-col__empty { flex:1 1 auto; display:flex; align-items:center; justify-content:center; color:var(--op-text-tertiary); font-size:var(--op-text-size-micro); }
 .op-board-col > h4 { display:flex; align-items:center; gap:var(--op-space-2); margin:0 0 var(--op-space-2); font-size:var(--op-text-size-necessary); }
 .op-board-col > ul { list-style:none; margin:0; padding:0; display:grid; gap:var(--op-space-2); }
 .op-board-card { display:grid; gap:var(--op-space-1); padding:var(--op-space-2); border:1px solid var(--op-border-hairline); border-radius:var(--op-radius-sm); background:var(--op-surface-base); }
 .op-board-card__meta { display:inline-flex; flex-wrap:wrap; gap:var(--op-space-1); }
 .op-board-card__locked { font-size:var(--op-text-size-micro); }
 .op-board-card select { min-height:28px; justify-self:start; max-width:100%; }
-@media (max-width: 900px) { .op-board { grid-template-columns:1fr; } }
 /* Time-grouped view (R1d): stacked due groups reusing the board column shell. */
 .op-time-groups { display:grid; gap:var(--op-space-3); }
 /* Cross-project focus strip (R1e): collapsed one-liner above the Index. */

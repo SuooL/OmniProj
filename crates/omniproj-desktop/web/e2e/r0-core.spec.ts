@@ -220,20 +220,17 @@ test("a task row stays read-only until opened, then autosaves due, tags, and sta
   await expect(board.getByLabel(/Task status: Drain the dead-letter queue/)).toHaveValue("doing");
 });
 
-test("the board keeps three aligned columns and marks empty ones", async ({ page }) => {
+test("the task list offers two views, and the time view is one of them", async ({ page }) => {
   await page.goto("/projects/p04/overview");
-  await page.getByText("Planning and tasks", { exact: true }).click();
+  await page.getByRole("tab", { name: "Planning and tasks" }).click();
   const board = page.getByTestId("task-board");
+  const views = board.getByRole("group", { name: "Task view" });
+  // A board of status columns said nothing the ordered list does not already say.
+  await expect(views.getByRole("button")).toHaveCount(2);
+  await expect(views.getByRole("button", { name: "Board" })).toHaveCount(0);
+
   await board.getByLabel("New task").fill("Only open work");
   await board.getByRole("button", { name: "Add task" }).click();
-  await board.getByRole("button", { name: "Board" }).click();
-
-  const columns = board.getByTestId("task-board-columns");
-  await expect(columns.locator(".op-board-col")).toHaveCount(3);
-  // The two empty columns say so rather than collapsing into hollow bars.
-  await expect(columns.getByText("None", { exact: true })).toHaveCount(2);
-  const heights = await columns.locator(".op-board-col").evaluateAll((els) =>
-    els.map((el) => Math.round(el.getBoundingClientRect().height)),
-  );
-  expect(new Set(heights).size).toBe(1);
+  await views.getByRole("button", { name: "By time" }).click();
+  await expect(board.getByTestId("task-time-groups")).toBeVisible();
 });

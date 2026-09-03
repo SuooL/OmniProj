@@ -1,3 +1,10 @@
+// The project's one list of work. It owns the data and every mutation; the head card, the
+// composer, the rows and the time view are presentational and receive callbacks.
+//
+// Two views, not three. The board view was a status-column layout of the same rows the list
+// already shows in a deterministic order — a second way to look at one list, with fewer
+// controls on each card than the list itself offered.
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -5,21 +12,19 @@ import { api, AppError } from "../../api";
 import type { AdvanceProposal, ProjectOverview, Task, TaskList } from "../../domain/project";
 import { useOverviewMutation, type MutationOutcome } from "../../hooks/useOverviewMutation";
 import {
-  boardColumns,
-  dueSignal,
   localToday,
-  timeGroups,
-  DONE_PREVIEW_COUNT,
+  parseTagsInput,
   TASK_VIEW_STORAGE_KEY,
+  type TaskDraft,
   type TaskViewMode,
-  type TimeGroupKey,
 } from "../../domain/taskBoardModel";
-import { DateField } from "../semantic/DateField";
 import { FilterChip } from "../semantic/FilterChip";
-import { TagField } from "../semantic/TagField";
-import { toneStyle } from "../semantic/tone";
 import { localizeError, useI18n } from "../../i18n/I18nProvider";
 import { queryKeys } from "../../queryKeys";
+import { NowDoingCard } from "./tasks/NowDoingCard";
+import { TaskComposer } from "./tasks/TaskComposer";
+import { TaskListRow } from "./tasks/TaskListRow";
+import { TaskTimeView } from "./tasks/TaskTimeView";
 
 interface TaskBoardProps {
   overview: ProjectOverview;
@@ -29,16 +34,10 @@ interface ProposalDraft extends AdvanceProposal {
   selected: boolean[];
 }
 
-/** Split a user-entered tag string on comma variants; trimming and dedupe happen in core. */
-export function parseTagsInput(value: string): string[] {
-  return value.split(/[,，、]/).map((tag) => tag.trim()).filter((tag) => tag.length > 0);
-}
-
 function storedViewMode(): TaskViewMode {
   if (typeof window === "undefined") return "list";
   try {
-    const stored = window.localStorage.getItem(TASK_VIEW_STORAGE_KEY);
-    return stored === "board" || stored === "time" ? stored : "list";
+    return window.localStorage.getItem(TASK_VIEW_STORAGE_KEY) === "time" ? "time" : "list";
   } catch {
     return "list";
   }
@@ -47,18 +46,16 @@ function storedViewMode(): TaskViewMode {
 export function TaskBoard({ overview }: TaskBoardProps) {
   const projectId = overview.project_id;
   const commitment = overview.current_commitment;
-  const hasCurrentCommitment = commitment !== null;
   const { locale, t } = useI18n();
   const client = useQueryClient();
   const commitmentMutation = useOverviewMutation();
   const [text, setText] = useState("");
   const [unclear, setUnclear] = useState(false);
-  const [drafts, setDrafts] = useState<Record<string, { status: string; due: string; note: string; tags: string }>>({});
+  const [drafts, setDrafts] = useState<Record<string, TaskDraft>>({});
   const [proposal, setProposal] = useState<ProposalDraft | null>(null);
   const [message, setMessage] = useState("");
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<TaskViewMode>(storedViewMode);
-  const [doneExpanded, setDoneExpanded] = useState(false);
   /** Which task's edit panel is open. A row is read-only until the user opens it. */
   const [editingId, setEditingId] = useState<string | null>(null);
   const [commitmentOutcome, setCommitmentOutcome] = useState<MutationOutcome | null>(null);
@@ -101,19 +98,22 @@ export function TaskBoard({ overview }: TaskBoardProps) {
     setMessage("");
   }
 
+  /** Never surface a raw backend string; the typed, localized copy is the user-facing text. */
+  async function reportFailure(error: unknown) {
+    setMessage(error instanceof AppError ? localizeError(error, locale) : t("task.conflict"));
+    await client.invalidateQueries({ queryKey: key });
+  }
+
   async function add() {
     if (!text.trim() || !data) return;
     try {
       accept(await api.addTask({ project_id: projectId, expected_revision: data.revision, text: text.trim(), unclear }));
       setText("");
       setUnclear(false);
-    } catch {
-      setMessage(t("task.conflict"));
-      await client.invalidateQueries({ queryKey: key });
+    } catch (error) {
+      await reportFailure(error);
     }
   }
-
-  type TaskDraft = { status: string; due: string; note: string; tags: string };
 
   function draft(task: Task): TaskDraft {
     return drafts[task.id] ?? { status: task.status, due: task.due ?? "", note: task.note ?? "", tags: task.tags.join(", ") };
@@ -137,16 +137,8 @@ export function TaskBoard({ overview }: TaskBoardProps) {
       accept(await api.updateTask({ project_id: projectId, expected_revision: data.revision, id: task.id, status: value.status, due: value.due || null, note: value.note || null, tags: parseTagsInput(value.tags) }));
       setDrafts((all) => { const next = { ...all }; delete next[task.id]; return next; });
     } catch (error) {
-      // Never surface a raw backend string; the typed conflict copy is the user-facing text.
-      setMessage(error instanceof AppError ? localizeError(error, locale) : t("task.conflict"));
-      await client.invalidateQueries({ queryKey: key });
+      await reportFailure(error);
     }
-  }
-
-  /** Autosave when the edit panel loses focus to something outside it. */
-  function handlePanelBlur(task: Task, event: React.FocusEvent<HTMLDivElement>) {
-    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-    void update(task);
   }
 
   // Blur alone is not a safe autosave trigger: on macOS a click does not move keyboard
@@ -166,15 +158,13 @@ export function TaskBoard({ overview }: TaskBoardProps) {
   const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
 
-  // Board move replaces only the status; due/note/tags resend the task's persisted values.
+  // The time view moves only the status; due/note/tags resend the task's persisted values.
   async function move(task: Task, status: string) {
     if (!data || status === task.status) return;
     try {
       accept(await api.updateTask({ project_id: projectId, expected_revision: data.revision, id: task.id, status, due: task.due, note: task.note, tags: task.tags }));
     } catch (error) {
-      // Typed, localized copy only; a raw backend string must never reach the user.
-      setMessage(error instanceof AppError ? localizeError(error, locale) : t("task.conflict"));
-      await client.invalidateQueries({ queryKey: key });
+      await reportFailure(error);
     }
   }
 
@@ -206,8 +196,7 @@ export function TaskBoard({ overview }: TaskBoardProps) {
       await api.promoteTaskToCommitment({ project_id: projectId, task_id: task.id, expected_task_revision: data.revision, expected_project_revision: Number(data.revision) });
     } catch (error) {
       // Without this the rejection was unhandled and the click looked like it did nothing.
-      setMessage(error instanceof AppError ? localizeError(error, locale) : t("task.conflict"));
-      await client.invalidateQueries({ queryKey: key });
+      await reportFailure(error);
       return;
     }
     await Promise.all([
@@ -215,6 +204,16 @@ export function TaskBoard({ overview }: TaskBoardProps) {
       client.invalidateQueries({ queryKey: queryKeys.projectOverview(projectId) }),
       client.invalidateQueries({ queryKey: queryKeys.projectIndex }),
     ]);
+  }
+
+  async function remove(task: Task) {
+    if (!data) return;
+    try {
+      accept(await api.removeTask({ project_id: projectId, expected_revision: data.revision, id: task.id }));
+    } catch (error) {
+      // Without this the rejection was unhandled and the click looked like it did nothing.
+      await reportFailure(error);
+    }
   }
 
   // The commitment lifecycle runs from the list itself now. Every one of these also moves the
@@ -227,186 +226,83 @@ export function TaskBoard({ overview }: TaskBoardProps) {
   }
 
   const rev = overview.revision;
-  const doConfirm = () => runCommitment(
-    () => api.confirmCommitment({ project_id: projectId, expected_revision: rev, work_item_id: commitment!.work_item_id }),
-    t("commitment.confirmSuccess"),
-  );
-  const doComplete = () => runCommitment(
-    () => api.completeCommitment({ project_id: projectId, expected_revision: rev, work_item_id: commitment!.work_item_id }),
-    t("commitment.completeSuccess"),
-  );
-  const doSwitchAway = () => runCommitment(
-    () => api.clearCommitment({ project_id: projectId, expected_revision: rev, work_item_id: commitment!.work_item_id }),
-    t("commitment.clearSuccess"),
-  );
-  const doUndo = () => runCommitment(
-    () => api.undoCommitmentTransition({ project_id: projectId, expected_revision: rev, transition_id: overview.undoable_transition_id! }),
-    t("commitment.undoSuccess"),
-  );
+  const commitmentAction = (
+    call: () => Promise<ProjectOverview>,
+    success: string,
+  ) => () => void runCommitment(call, success);
 
   // Undo is deliberately not offered for a `set`: undoing one abandons the item, which would
   // silently delete a task that existed before it was marked. Switching away covers that case.
   const canUndo = overview.undoable_transition_id !== null && overview.last_transition?.type !== "set";
 
-  async function remove(task: Task) {
-    if (!data) return;
-    try {
-      accept(await api.removeTask({ project_id: projectId, expected_revision: data.revision, id: task.id }));
-    } catch (error) {
-      // Without this the rejection was unhandled and the click looked like it did nothing.
-      setMessage(error instanceof AppError ? localizeError(error, locale) : t("task.conflict"));
-      await client.invalidateQueries({ queryKey: key });
-    }
-  }
-
-  // Shared card renderer for the board and time views: due signal, tags, commitment
-  // marker, and the keyboard-accessible move control (locked for commitment-bound items).
-  const card = (task: Task) => {
-    // Only the item the commitment points at right now is locked. A task that merely *was*
-    // the commitment stays fully editable — freezing those left every replaced or completed
-    // step stranded in the list, unmovable and undeletable.
-    const locked = task.is_current_commitment;
-    const signal = dueSignal(task.due, today, task.status);
-    return <li key={task.id} className="op-board-card">
-      <span className={task.unclear ? "op-task-unclear" : ""}>{task.unclear ? "? " : ""}{task.text}</span>
-      <span className="op-board-card__meta">
-        {task.is_current_commitment && <span className="op-task-tag">{t("task.currentCommitment")}</span>}
-        {task.tags.map((tag) => <span key={tag} className="op-task-tag">{tag}</span>)}
-        {signal.kind === "overdue" && <span className="op-badge" style={toneStyle("danger")}>{t("board.overdue", { days: signal.days })}</span>}
-        {signal.kind === "soon" && <span className="op-badge" style={toneStyle("warning")}>{signal.days === 0 ? t("board.dueToday") : t("board.dueSoon", { days: signal.days })}</span>}
-        {signal.kind === "scheduled" && <span className="op-task-tag">{task.due}</span>}
-      </span>
-      {locked
-        ? <span className="op-muted op-board-card__locked">{t("board.locked")}</span>
-        : <select aria-label={`${t("board.moveTo")}: ${task.text}`} value={task.status} onChange={(event) => void move(task, event.target.value)}>
-            <option value="open">{t("task.open")}</option><option value="doing">{t("task.doing")}</option><option value="done">{t("task.done")}</option>
-          </select>}
-    </li>;
-  };
-
-  const timeGroupLabel = (key: TimeGroupKey) =>
-    key === "overdue" ? t("time.overdue") : key === "today" ? t("time.today") : key === "thisWeek" ? t("time.thisWeek") : key === "nextWeek" ? t("time.nextWeek") : key === "later" ? t("time.later") : t("time.unscheduled");
-
   return <section className="op-section" aria-labelledby="tasks-heading" data-testid="task-board">
     <div className="op-section__header"><div><p className="op-section__kicker">{t("task.kicker")}</p><h3 id="tasks-heading">{t("task.title")}</h3></div><span className="op-section__count">{tasks.length}</span></div>
     <p className="op-muted">{t("task.relationship")}</p>
-    {/* The single next step lives at the head of the same list it belongs to — there is no
-        second surface, and no second way to enter one. */}
-    <div className="op-now-doing" data-testid="now-doing">
-      <p className="op-section__kicker">{t("task.currentCommitment")}</p>
-      {commitment
-        ? <p className="op-now-doing__text">{commitment.text}</p>
-        : <p className="op-muted">{t("task.nowDoingEmpty")}</p>}
-      <div className="op-task-actions">
-        {commitment && commitment.confirmed_at === null && <button className="op-button op-button--secondary" type="button" disabled={commitmentMutation.pending} onClick={() => void doConfirm()}>{t("task.stillThis")}</button>}
-        {commitment && <button className="op-button op-button--primary" type="button" disabled={commitmentMutation.pending} onClick={() => void doComplete()}>{t("task.complete")}</button>}
-        {commitment && <button className="op-button op-button--ghost" type="button" disabled={commitmentMutation.pending} title={t("task.switchAwayHint")} onClick={() => void doSwitchAway()}>{t("task.switchAway")}</button>}
-        {canUndo && <button className="op-button op-button--ghost" type="button" data-testid="undo-button" disabled={commitmentMutation.pending} onClick={() => void doUndo()}>{t("task.undo")}</button>}
-      </div>
-      {commitmentOutcome?.status === "durable_audit_failed" && <p role="status" className="op-mutation-note" data-testid="audit-failed-note">{t("commitment.auditFailed")}</p>}
-      {commitmentOutcome?.status === "conflict" && <p role="alert" className="op-mutation-error" data-testid="conflict-note">{t("commitment.conflict")}</p>}
-      {commitmentOutcome?.status === "error" && <div role="alert" className="op-mutation-error" data-testid="write-error">
-        <p>{localizeError(commitmentOutcome.error, locale)}</p>
-        {commitmentOutcome.error.recovery === "retry" && <button className="op-button op-button--secondary" type="button" disabled={commitmentMutation.pending} onClick={() => retryCommitment?.()}>{t("common.retry")}</button>}
-      </div>}
+
+    {/* The single next step lives at the head of the same list it belongs to. */}
+    <NowDoingCard
+      commitment={commitment}
+      canUndo={canUndo}
+      pending={commitmentMutation.pending}
+      outcome={commitmentOutcome}
+      onConfirm={commitmentAction(() => api.confirmCommitment({ project_id: projectId, expected_revision: rev, work_item_id: commitment!.work_item_id }), t("commitment.confirmSuccess"))}
+      onComplete={commitmentAction(() => api.completeCommitment({ project_id: projectId, expected_revision: rev, work_item_id: commitment!.work_item_id }), t("commitment.completeSuccess"))}
+      onSwitchAway={commitmentAction(() => api.clearCommitment({ project_id: projectId, expected_revision: rev, work_item_id: commitment!.work_item_id }), t("commitment.clearSuccess"))}
+      onUndo={commitmentAction(() => api.undoCommitmentTransition({ project_id: projectId, expected_revision: rev, transition_id: overview.undoable_transition_id! }), t("commitment.undoSuccess"))}
+      onRetry={() => retryCommitment?.()}
+    />
+
+    <TaskComposer
+      text={text}
+      unclear={unclear}
+      disabled={!data}
+      onTextChange={setText}
+      onUnclearChange={setUnclear}
+      onSubmit={() => void add()}
+    />
+
+    <div className="op-task-tagfilter" role="group" aria-label={t("board.viewLabel")}>
+      <span className="op-muted">{t("board.viewLabel")}</span>
+      <FilterChip label={t("board.viewList")} pressed={viewMode === "list"} onClick={() => switchView("list")} />
+      <FilterChip label={t("board.viewTime")} pressed={viewMode === "time"} onClick={() => switchView("time")} />
     </div>
-    <div className="op-task-add"><input aria-label={t("task.new")} placeholder={t("task.new")} value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void add(); }} /><label><input type="checkbox" checked={unclear} onChange={(event) => setUnclear(event.target.checked)} /> {t("task.unclear")}</label><button className="op-button op-button--primary" type="button" disabled={!text.trim() || !data} title={!text.trim() ? t("task.addDisabled") : undefined} onClick={() => void add()}>{t("task.add")}</button></div>
-    <div className="op-task-tagfilter" role="group" aria-label={t("board.viewLabel")}><span className="op-muted">{t("board.viewLabel")}</span><FilterChip label={t("board.viewList")} pressed={viewMode === "list"} onClick={() => switchView("list")} /><FilterChip label={t("board.viewBoard")} pressed={viewMode === "board"} onClick={() => switchView("board")} /><FilterChip label={t("board.viewTime")} pressed={viewMode === "time"} onClick={() => switchView("time")} /></div>
+
     {allTags.length > 0 && <div className="op-task-tagfilter" role="group" aria-label={t("task.filterTags")}><span className="op-muted">{t("task.filterTags")}</span>{allTags.map((tag) => <FilterChip key={tag} label={tag} pressed={tagFilter.some((selected) => selected.toLowerCase() === tag.toLowerCase())} onClick={() => setTagFilter((current) => current.some((selected) => selected.toLowerCase() === tag.toLowerCase()) ? current.filter((selected) => selected.toLowerCase() !== tag.toLowerCase()) : [...current, tag])} />)}{tagFilter.length > 0 && <button className="op-button op-button--ghost" type="button" onClick={() => setTagFilter([])}>{t("task.tagFilterClear")}</button>}</div>}
+
     {message && <p role="status" className="op-error">{message}</p>}
+
     {proposal && <div className="op-proposal" role="region" aria-label={t("task.proposal")}><p><strong>{t("task.advanceReady")}</strong></p>{proposal.candidates.map((candidate, index) => <label key={`${proposal.proposal_id}-${index}`}><input type="checkbox" checked={proposal.selected[index]} onChange={(event) => setProposal({ ...proposal, selected: proposal.selected.map((value, itemIndex) => itemIndex === index ? event.target.checked : value) })} />{candidate}</label>)}<div className="op-task-actions"><button className="op-button op-button--primary" type="button" disabled={!proposal.selected.some(Boolean)} onClick={() => void adopt()}>{t("task.adoptSelected")}</button><button className="op-button op-button--ghost" type="button" onClick={() => setProposal(null)}>{t("common.cancel")}</button></div></div>}
-    {isLoading ? <p className="op-muted">{t("task.loading")}</p> : tasks.length === 0 ? <p className="op-muted">{t("task.empty")}</p> : viewMode === "time" ? (() => {
-      const groups = timeGroups(visible, today);
-      if (groups.length === 0) return <p className="op-muted">{t("time.empty")}</p>;
-      return <div className="op-time-groups" data-testid="task-time-groups">
-        {groups.map((group) => <section key={group.key} className="op-board-col" aria-labelledby={`time-group-${group.key}`}>
-          <h4 id={`time-group-${group.key}`}>{timeGroupLabel(group.key)} <span className="op-section__count">{group.tasks.length}</span></h4>
-          <ul>{group.tasks.map(card)}</ul>
-        </section>)}
-      </div>;
-    })() : viewMode === "board" ? (() => {
-      const columns = boardColumns(visible, today);
-      return <div className="op-board" data-testid="task-board-columns">
-        {(["open", "doing", "done"] as const).map((status) => {
-          const total = columns[status].length;
-          const items = status === "done" && !doneExpanded ? columns.done.slice(0, DONE_PREVIEW_COUNT) : columns[status];
-          return <section key={status} className="op-board-col" aria-labelledby={`board-col-${status}`}>
-            <h4 id={`board-col-${status}`}>{status === "open" ? t("task.open") : status === "doing" ? t("task.doing") : t("task.done")} <span className="op-section__count">{total}</span></h4>
-            {total === 0 ? <p className="op-board-col__empty">{t("board.columnEmpty")}</p> : <ul>{items.map(card)}</ul>}
-            {status === "done" && total > DONE_PREVIEW_COUNT && <button className="op-button op-button--ghost" type="button" onClick={() => setDoneExpanded((value) => !value)}>{doneExpanded ? t("board.doneCollapse") : t("board.doneShowAll", { count: total })}</button>}
-          </section>;
-        })}
-      </div>;
-    })() : <ul className="op-task-list">{visible.map((task) => {
-      const value = draft(task);
-      const linked = task.is_current_commitment;
-      const open = editingId === task.id;
-      const signal = dueSignal(task.due, today, task.status);
-      return <li key={task.id} className={`op-task-item${open ? " op-task-item--open" : ""}`}>
-        {/* Collapsed row: scannable facts only. The whole row is one button that opens editing. */}
-        <div className="op-task-row">
-          <button
-            type="button"
-            className="op-task-summary"
-            aria-expanded={open}
-            onClick={() => setEditingId(open ? null : task.id)}
-          >
-            <span className="op-task-summary__text">
-              {task.unclear && <span className="op-task-unclear" aria-label={t("task.unclear")}>?</span>}
-              {task.text}
-            </span>
-            <span className="op-task-summary__meta">
-              {task.is_current_commitment && <span className="op-task-tag">{t("task.currentCommitment")}</span>}
-              {signal.kind === "overdue" && <span className="op-badge" style={toneStyle("danger")}>{t("board.overdue", { days: signal.days })}</span>}
-              {signal.kind === "soon" && <span className="op-badge" style={toneStyle("warning")}>{signal.days === 0 ? t("board.dueToday") : t("board.dueSoon", { days: signal.days })}</span>}
-              {signal.kind === "scheduled" && <span className="op-task-due">{task.due}</span>}
-              {task.tags.map((tag) => <span key={tag} className="op-task-tag">{tag}</span>)}
-            </span>
-          </button>
-          <select
-            className="op-task-status"
-            disabled={linked}
-            aria-label={`${t("task.status")}: ${task.text}`}
-            value={value.status}
-            onChange={(event) => {
-              const status = event.target.value;
-              setDrafts((all) => ({ ...all, [task.id]: { ...value, status } }));
-              // Status is a single decisive change: commit it immediately.
-              void update(task, { status });
-            }}
-          >
-            <option value="open">{t("task.open")}</option><option value="doing">{t("task.doing")}</option><option value="done">{t("task.done")}</option>
-          </select>
-        </div>
-        {open && <div className="op-task-edit" onBlur={(event) => handlePanelBlur(task, event)}>
-          <div className="op-field"><span id={`due-label-${task.id}`}>{t("task.due")}</span>
-            <DateField
-              value={value.due}
-              today={today}
-              ariaLabel={`${t("task.due")}: ${task.text}`}
-              onChange={(due) => setDrafts((all) => ({ ...all, [task.id]: { ...value, due } }))}
-            />
-          </div>
-          <div className="op-field"><span id={`tags-label-${task.id}`}>{t("task.tags")}</span>
-            <TagField
-              value={parseTagsInput(value.tags)}
-              vocabulary={allTags}
-              ariaLabel={`${t("task.tags")}: ${task.text}`}
-              onChange={(tags) => setDrafts((all) => ({ ...all, [task.id]: { ...value, tags: tags.join(", ") } }))}
-            />
-          </div>
-          <label className="op-field op-field--wide"><span>{t("task.note")}</span>
-            <input aria-label={`${t("task.note")}: ${task.text}`} placeholder={t("task.notePlaceholder")} value={value.note} onChange={(event) => setDrafts((all) => ({ ...all, [task.id]: { ...value, note: event.target.value } }))} />
-          </label>
-          {task.adopted_from_proposal_id && <small className="op-field--wide">{t("task.fromProposal", { id: task.adopted_from_proposal_id })}</small>}
-          <div className="op-task-actions op-field--wide">
-            <span className="op-muted op-task-autosave">{t("task.autosave")}</span>
-            {!linked && !hasCurrentCommitment && <button className="op-button op-button--secondary" type="button" onClick={() => void promote(task)}>{t("task.makeCommitment")}</button>}
-            {task.unclear && <button className="op-button op-button--ghost" type="button" onClick={() => void advance(task)}>{t("task.advance")}</button>}
-            <button className="op-button op-button--ghost" type="button" disabled={linked} onClick={() => void remove(task)}>{t("task.remove")}</button>
-          </div>
-        </div>}
-      </li>;
-    })}</ul>}
+
+    {isLoading ? <p className="op-muted">{t("task.loading")}</p>
+      : tasks.length === 0 ? <p className="op-muted">{t("task.empty")}</p>
+        : viewMode === "time" ? <TaskTimeView tasks={visible} today={today} onMove={(task, status) => void move(task, status)} />
+          : <ul className="op-task-list">
+              {visible.map((task) => (
+                <TaskListRow
+                  key={task.id}
+                  task={task}
+                  draft={draft(task)}
+                  open={editingId === task.id}
+                  today={today}
+                  vocabulary={allTags}
+                  canMarkNowDoing={commitment === null}
+                  onToggle={() => setEditingId(editingId === task.id ? null : task.id)}
+                  onDraftChange={(value) => setDrafts((all) => ({ ...all, [task.id]: value }))}
+                  onStatusChange={(status) => {
+                    setDrafts((all) => ({ ...all, [task.id]: { ...draft(task), status } }));
+                    // Status is a single decisive change: commit it immediately.
+                    void update(task, { status });
+                  }}
+                  onPanelBlur={(event) => {
+                    // Autosave when focus leaves the panel entirely.
+                    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                    void update(task);
+                  }}
+                  onMarkNowDoing={() => void promote(task)}
+                  onAdvance={() => void advance(task)}
+                  onRemove={() => void remove(task)}
+                />
+              ))}
+            </ul>}
   </section>;
 }

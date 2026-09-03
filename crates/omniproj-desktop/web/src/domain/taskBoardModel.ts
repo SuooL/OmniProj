@@ -4,7 +4,7 @@
 
 import type { Task } from "./project";
 
-export type TaskViewMode = "list" | "board" | "time";
+export type TaskViewMode = "list" | "time";
 export const TASK_VIEW_STORAGE_KEY = "omniproj.task-view";
 
 /** The user's local calendar date as YYYY-MM-DD (en-CA formats ISO-style). */
@@ -50,27 +50,6 @@ export function columnOrder(tasks: Task[], today: string): Task[] {
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
 }
-
-export interface BoardColumns {
-  open: Task[];
-  doing: Task[];
-  done: Task[];
-}
-
-/** Split into status columns with deterministic ordering; done is most-recent-first. */
-export function boardColumns(tasks: Task[], today: string): BoardColumns {
-  const by = (status: Task["status"]) => tasks.filter((task) => task.status === status);
-  return {
-    open: columnOrder(by("open"), today),
-    doing: columnOrder(by("doing"), today),
-    done: [...by("done")].sort((a, b) =>
-      a.updated_at === b.updated_at ? (a.id < b.id ? -1 : 1) : a.updated_at > b.updated_at ? -1 : 1,
-    ),
-  };
-}
-
-/** How many done cards show before the column folds into a count. */
-export const DONE_PREVIEW_COUNT = 5;
 
 // --- Time-grouped view (R1d) ----------------------------------------------
 
@@ -122,4 +101,17 @@ export function timeGroups(tasks: Task[], today: string): Array<{ key: TimeGroup
   return TIME_GROUP_ORDER.map((key) => ({ key, tasks: columnOrder(keyed.get(key)!, today) })).filter(
     (group) => group.tasks.length > 0,
   );
+}
+
+/** Split a user-entered tag string on comma variants; trimming and dedupe happen in core. */
+export function parseTagsInput(value: string): string[] {
+  return value.split(/[,，、]/).map((tag) => tag.trim()).filter((tag) => tag.length > 0);
+}
+
+/** The editable shape of one task row while its panel is open. */
+export interface TaskDraft {
+  status: string;
+  due: string;
+  note: string;
+  tags: string;
 }
