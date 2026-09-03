@@ -178,6 +178,21 @@ it("leaves a former commitment fully editable and off the promote path", async (
   expect(screen.queryByRole("button", { name: /make current commitment/i })).not.toBeInTheDocument();
 });
 
+it("surfaces a rejected removal instead of appearing to do nothing", async () => {
+  invokeMock.mockImplementation(async (command: string) => {
+    if (command === "get_tasks") return TASKS;
+    if (command === "remove_task") throw new Error("rejected");
+    if (command === "list_project_index" || command === "get_project_overview") return {};
+    throw new Error(`unexpected command ${command}`);
+  });
+  const user = userEvent.setup();
+  renderBoard();
+  await user.click(await screen.findByRole("button", { name: /Validate cohort labels/ }));
+  // Exact: the tag chips also expose "Remove tag …" buttons.
+  await user.click(screen.getByRole("button", { name: "Remove" }));
+  expect(await screen.findByRole("status")).toBeInTheDocument();
+});
+
 it("parseTagsInput splits comma variants and trims", async () => {
   const { parseTagsInput } = await import("./TaskBoard");
   expect(parseTagsInput("论文, infra、eval ，  x ")).toEqual(["论文", "infra", "eval", "x"]);
