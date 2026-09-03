@@ -120,6 +120,10 @@
 
   /* -- Control minimums. ----------------------------------------------------- */
   --op-control-min: 28px;
+  /* The widest a label/control pair may span before the eye has to travel. */
+  --op-measure-form: 560px;
+  /* A simple settings row (short label + one control) stays tighter still. */
+  --op-measure-setting-row: 380px;
   --op-control-icon-min: 32px;
 
   /* -- Elevation. Reserved for true overlays only. --------------------------- */
@@ -1489,8 +1493,13 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .op-plan-list li { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
 .op-plan-list small { display: block; color: var(--op-text-tertiary); margin-top: .2rem; }
 .op-plan-list p { margin: .35rem 0 0; white-space: pre-wrap; }
-.op-settings-grid { display: grid; gap: .75rem; margin-bottom: 1rem; }
-.op-settings-grid label { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+/* Forms keep a readable measure. `space-between` on a full-width row was fine in the old
+   760px column, but in the wide detail pane it flung each control ~1000px away from its own
+   label — and pinned a checkbox to the far left with its text at the far right. */
+.op-settings-grid { display: grid; gap: var(--op-space-3); max-width: var(--op-measure-form); margin-bottom: var(--op-space-4); }
+.op-settings-grid label { display: flex; align-items: center; justify-content: space-between; gap: var(--op-space-3); max-width: var(--op-measure-setting-row); }
+/* A checkbox belongs beside the words it toggles, never across the row from them. */
+.op-settings-grid label:has(> input[type="checkbox"]) { justify-content: flex-start; }
 .op-consent { display:flex; align-items:flex-start; gap:var(--op-space-2); margin:var(--op-space-3) 0; color:var(--op-text-secondary); }
 .op-graph { display: flex; gap: .5rem; overflow-x: auto; }
 .op-graph__list { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 0; }
@@ -1527,7 +1536,9 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .op-task-due { color:var(--op-text-tertiary); font-size:var(--op-text-size-micro); font-family:var(--op-font-mono); }
 .op-task-status { flex:0 0 auto; min-height:28px; }
 /* Edit panel: real labelled fields, two columns, autosaved on blur. */
-.op-task-edit { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:var(--op-space-2) var(--op-space-3); padding:0 0 var(--op-space-3); }
+/* The editor keeps a readable measure: a one-line note stretched to 1080px in the wide
+   detail pane is neither scannable nor a sensible target. */
+.op-task-edit { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:var(--op-space-2) var(--op-space-3); max-width:min(100%, 720px); padding:0 0 var(--op-space-3); }
 .op-field { display:grid; gap:2px; min-width:0; }
 .op-field > span { color:var(--op-text-tertiary); font-size:var(--op-text-size-micro); }
 .op-field input { min-height:30px; width:100%; }
@@ -2523,6 +2534,7 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
   align-items: center;
   justify-content: space-between;
   gap: var(--op-space-3);
+  max-width: var(--op-measure-setting-row);
   color: var(--op-text-secondary);
 }
 
@@ -2695,3 +2707,42 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
   font-weight: 600;
   border-bottom-color: var(--op-interactive-fg);
 }
+
+
+/* ---- Audit fixes: targets, measures, and readable minimums ---------------- */
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--op-interactive-fg);
+}
+
+/* The whole label is the target, so the 16px box is not the only place to click. */
+label:has(> input[type="checkbox"]),
+label:has(> input[type="radio"]) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--op-space-2);
+  min-height: var(--op-control-min);
+  cursor: pointer;
+}
+
+/* Chrome buttons must meet the pointer target minimum in both axes. */
+.op-chrome-button {
+  min-width: var(--op-control-min);
+  min-height: var(--op-control-min);
+}
+
+/* No text below the readable floor; `small` was rendering at 10.4px. */
+small,
+.op-section__kicker,
+.op-field > span {
+  font-size: max(11px, var(--op-text-size-micro));
+}
+
+/* Agent/consent forms share the form measure. */
+.op-form-section,
+.op-consent { max-width: var(--op-measure-form); }
