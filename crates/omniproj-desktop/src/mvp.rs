@@ -27,7 +27,11 @@ pub struct TaskDto {
     pub tags: Vec<String>,
     pub commits: Vec<String>,
     pub adopted_from_proposal_id: Option<String>,
-    pub linked_work_item_id: Option<String>,
+    /// True once this item has appeared in any commitment transition. It records history
+    /// only — it must never gate editing. What is locked is the item the commitment points
+    /// at right now, which is `is_current_commitment`.
+    #[serde(default)]
+    pub was_committed: bool,
     pub is_current_commitment: bool,
     /// RFC3339 instant of the last mutation, for deterministic board ordering.
     #[serde(default)]
@@ -648,9 +652,7 @@ fn task_list(state: &ProjectStateDoc) -> TaskListDto {
                 tags: item.tags.clone(),
                 commits: item.commits.clone(),
                 adopted_from_proposal_id: item.adopted_from_proposal_id.clone(),
-                linked_work_item_id: referenced
-                    .contains(&item.id)
-                    .then(|| item.id.as_str().to_owned()),
+                was_committed: referenced.contains(&item.id),
                 is_current_commitment: state.current_next_action_id.as_ref() == Some(&item.id),
                 updated_at: item.updated_at.clone(),
             })
