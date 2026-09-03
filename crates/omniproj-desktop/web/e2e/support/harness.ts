@@ -228,23 +228,23 @@ export async function installMockTauri(page: Page): Promise<void> {
         }
         case "set_commitment": {
           const code = checkFail(); if (code) return fail(code);
-          return bump(input.project_id, (ov) => { ov.__prev = ov.current_commitment; const t = `t${txCounter++}`; ov.current_commitment = { work_item_id: `${input.project_id}-w${txCounter}`, text: input.text, status: "doing", set_at: "2026-08-12T10:00:00Z", confirmed_at: null }; ov.undoable_transition_id = t; });
+          return bump(input.project_id, (ov) => { ov.__prev = ov.current_commitment; const t = `t${txCounter++}`; ov.current_commitment = { work_item_id: `${input.project_id}-w${txCounter}`, text: input.text, status: "doing", set_at: "2026-08-12T10:00:00Z", confirmed_at: null }; ov.undoable_transition_id = t; ov.last_transition = { ...(ov.last_transition ?? {}), id: t, type: "set" }; });
         }
         case "confirm_commitment": {
           const code = checkFail(); if (code) return fail(code);
-          return bump(input.project_id, (ov) => { if (ov.current_commitment) ov.current_commitment.confirmed_at = "2026-08-12T10:05:00Z"; ov.undoable_transition_id = `t${txCounter++}`; });
+          return bump(input.project_id, (ov) => { if (ov.current_commitment) ov.current_commitment.confirmed_at = "2026-08-12T10:05:00Z"; const tx = `t${txCounter++}`; ov.undoable_transition_id = tx; ov.last_transition = { ...(ov.last_transition ?? {}), id: tx, type: "confirmed" }; });
         }
         case "complete_commitment": {
           const code = checkFail(); if (code) return fail(code);
-          return bump(input.project_id, (ov) => { ov.__prev = ov.current_commitment; ov.current_commitment = null; ov.undoable_transition_id = `t${txCounter++}`; });
+          return bump(input.project_id, (ov) => { ov.__prev = ov.current_commitment; ov.current_commitment = null; const tx = `t${txCounter++}`; ov.undoable_transition_id = tx; ov.last_transition = { ...(ov.last_transition ?? {}), id: tx, type: "completed" }; });
         }
         case "replace_commitment": {
           const code = checkFail(); if (code) return fail(code);
-          return bump(input.project_id, (ov) => { ov.__prev = ov.current_commitment; ov.current_commitment = { work_item_id: `${input.project_id}-w${txCounter++}`, text: input.text, status: "doing", set_at: "2026-08-12T10:00:00Z", confirmed_at: null }; ov.undoable_transition_id = `t${txCounter++}`; });
+          return bump(input.project_id, (ov) => { ov.__prev = ov.current_commitment; ov.current_commitment = { work_item_id: `${input.project_id}-w${txCounter++}`, text: input.text, status: "doing", set_at: "2026-08-12T10:00:00Z", confirmed_at: null }; const tx = `t${txCounter++}`; ov.undoable_transition_id = tx; ov.last_transition = { ...(ov.last_transition ?? {}), id: tx, type: "replaced" }; });
         }
         case "clear_commitment": {
           const code = checkFail(); if (code) return fail(code);
-          return bump(input.project_id, (ov) => { ov.__prev = ov.current_commitment; ov.current_commitment = null; ov.undoable_transition_id = `t${txCounter++}`; });
+          return bump(input.project_id, (ov) => { ov.__prev = ov.current_commitment; ov.current_commitment = null; const tx = `t${txCounter++}`; ov.undoable_transition_id = tx; ov.last_transition = { ...(ov.last_transition ?? {}), id: tx, type: "cleared" }; });
         }
         case "undo_commitment_transition": {
           const code = checkFail(); if (code) return fail(code);

@@ -931,6 +931,40 @@ fn a_completed_commitment_can_be_reopened_and_then_removed() {
 }
 
 #[test]
+fn a_step_switched_away_from_can_be_picked_up_again() {
+    // The star model needs this: switching away and later coming back is ordinary planning.
+    let store = TestStore::new("re-mark");
+    let set = set_commitment(&store, 0, "Review cohort", AT_1);
+    let item_id = set.work_items[0].id.clone();
+    store
+        .apply(
+            1,
+            ProjectCommand::ClearCommitment {
+                work_item_id: item_id.clone(),
+                reason: None,
+            },
+            AT_2,
+        )
+        .unwrap();
+
+    let again = store
+        .apply(
+            2,
+            ProjectCommand::SetCommitmentFromWorkItem {
+                work_item_id: item_id.clone(),
+            },
+            AT_3,
+        )
+        .unwrap()
+        .state;
+
+    assert_eq!(again.current_next_action_id.as_ref(), Some(&item_id));
+    assert_eq!(again.work_items[0].status, WorkItemStatus::Doing);
+    // Every pass appends its own transition, so the log still records both.
+    assert_eq!(again.commitment_transitions.len(), 3);
+}
+
+#[test]
 fn removing_a_task_with_no_commitment_history_deletes_it_outright() {
     let store = TestStore::new("remove-plain-task");
     let added = store

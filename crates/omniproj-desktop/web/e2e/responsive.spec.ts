@@ -116,6 +116,6 @@ test("200% text: no horizontal overflow and actions stay reachable", async ({ pa
   expect(clipped, "no row clips its enlarged text").toBe(false);
 
   await page.getByRole("link", { name: /^billing-worker/ }).click();
-  await expect(page.getByTestId("overview-page").getByRole("button", { name: "Replace" })).toBeVisible();
+  await expect(page.getByTestId("overview-page").getByRole("button", { name: "Switch away" })).toBeVisible();
   await expectNoHorizontalScroll(page);
 });

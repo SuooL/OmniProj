@@ -11,7 +11,6 @@ import { useEffect, useState, type Ref } from "react";
 import type { ProjectOverview as ProjectOverviewDto } from "../../domain/project";
 import { ProjectStateTag } from "../semantic/ProjectStateTag";
 import { CommitmentHistory } from "./CommitmentHistory";
-import { CurrentCommitment } from "./CurrentCommitment";
 import { ObservedActual } from "./ObservedActual";
 import { ProjectFramingForm } from "./ProjectFramingForm";
 import { ProjectLifecycleControl } from "./ProjectLifecycleControl";
@@ -82,7 +81,6 @@ export function ProjectOverview({
       ) : (
         <>
           <div className="op-overview__primary" data-testid="reentry-view">
-            <CurrentCommitment overview={overview} />
             <ReviewReasons reasons={overview.review_reasons} />
             <ReentryContext overview={overview} />
             <SourceRecovery overview={overview} />
@@ -115,9 +113,8 @@ export function ProjectOverview({
             {/* Only the selected panel mounts, preserving the lazy-mount contract. */}
             {tab === "plan" && (
               <div role="tabpanel" id="workspace-panel-plan" aria-labelledby="workspace-tab-plan" data-testid="plan-view">
-                <TaskBoard projectId={overview.project_id} hasCurrentCommitment={overview.current_commitment !== null} />
+                <TaskBoard overview={overview} />
                 <PlanLog projectId={overview.project_id} />
-                <CommitmentHistory transitions={overview.recent_transitions} now={now} />
               </div>
             )}
             {tab === "activity" && (
@@ -132,6 +129,8 @@ export function ProjectOverview({
               <div role="tabpanel" id="workspace-panel-project" aria-labelledby="workspace-tab-project" data-testid="project-view">
                 <ProjectFramingForm overview={overview} />
                 <ProjectLifecycleControl overview={overview} />
+                {/* The audit trail is reference material, not daily working surface. */}
+                <CommitmentHistory transitions={overview.recent_transitions} now={now} />
               </div>
             )}
           </div>

@@ -916,11 +916,9 @@ fn apply_command_in_memory(
                     work_item_id: current,
                 });
             }
-            if work_item_is_referenced(state, &work_item_id) {
-                return Err(ProjectStateError::InvalidCommand(
-                    "a historical commitment cannot be promoted again".into(),
-                ));
-            }
+            // An item may become the commitment more than once. Switching away from a step
+            // and later picking it up again is ordinary planning; each pass appends its own
+            // `set` transition, so the log still records every one of them.
             let item = require_item_mut(state, &work_item_id)?;
             if matches!(
                 item.status,

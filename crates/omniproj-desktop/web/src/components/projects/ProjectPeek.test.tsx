@@ -12,10 +12,10 @@ const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
 import { App } from "../../App";
-import type { ProjectOverview } from "../../domain/project";
+import { transitionId, type ProjectOverview } from "../../domain/project";
 import { queryKeys } from "../../queryKeys";
 import {
-  currentCommitment,
+  commitmentTransition,
   indexItem,
   indexResponse,
   observedActual,
@@ -92,9 +92,10 @@ describe("content order and source", () => {
 
     const order = [
       "overview-identity",
-      "current-commitment",
       "reentry-context",
     ].map((id) => screen.getByTestId(id));
+    // The next step is now the head of the task list rather than a surface of its own.
+    expect(screen.getByTestId("now-doing")).toBeInTheDocument();
 
     for (let i = 1; i < order.length; i++) {
       expect(
@@ -180,41 +181,21 @@ describe("atomic setup", () => {
   });
 });
 
-describe("commitment mutations", () => {
-  it("sets a commitment with the expected revision and announces success", async () => {
-    const user = userEvent.setup();
-    renderOverview(overview({ current_commitment: null, revision: 3 }), {
-      set_commitment: () => overview({ current_commitment: currentCommitment(), revision: 4 }),
-    });
-    await screen.findByTestId("set-form");
+// The commitment is no longer its own surface: it is the head of the task list. Tests for the
+// free-text "set commitment" form and the replace-with-reason form are gone with those forms.
+// The error model, refetch behaviour and Undo gating still apply and are exercised here through
+// the actions that remain.
+describe("the current step, run from the task list", () => {
+  const TASKS = { revision: "1", tasks: [] };
+  const completed = commitmentTransition({ type: "completed", id: transitionId("transition-9") });
 
-    await user.type(screen.getByLabelText("New commitment"), "Do the thing");
-    await user.click(screen.getByRole("button", { name: "Save commitment" }));
-
-    await waitFor(() => expect(callsTo("set_commitment")).toHaveLength(1));
-    const [, arg] = callsTo("set_commitment")[0] as [string, { input: Record<string, unknown> }];
-    expect(arg.input).toMatchObject({ expected_revision: 3, text: "Do the thing" });
-    expect(await screen.findByTestId("live-polite")).toHaveTextContent(/commitment set/i);
-  });
-
-  it("requires a reason to replace", async () => {
-    const user = userEvent.setup();
-    renderOverview(overview());
-    await screen.findByTestId("current-commitment");
-    await user.click(screen.getByRole("button", { name: "Replace" }));
-
-    await user.type(screen.getByLabelText("New commitment"), "New plan");
-    expect(screen.getByRole("button", { name: "Save replacement" })).toBeDisabled();
-    await user.type(screen.getByLabelText("Replace reason"), "scope changed");
-    expect(screen.getByRole("button", { name: "Save replacement" })).toBeEnabled();
-  });
-
-  it("completing a commitment never auto-creates a replacement", async () => {
+  it("completes the current step and never auto-creates a replacement", async () => {
     const user = userEvent.setup();
     renderOverview(overview(), {
+      get_tasks: () => TASKS,
       complete_commitment: () => overview({ current_commitment: null, revision: 2 }),
     });
-    await screen.findByTestId("current-commitment");
+    await screen.findByTestId("now-doing");
     await user.click(screen.getByRole("button", { name: "Complete" }));
 
     await waitFor(() => expect(callsTo("complete_commitment")).toHaveLength(1));
@@ -222,43 +203,54 @@ describe("commitment mutations", () => {
     expect(callsTo("replace_commitment")).toHaveLength(0);
   });
 
-  it("on revision_conflict refetches, keeps the draft, and shows a comparison note", async () => {
+  it("switches away by releasing the step, with no replacement demanded up front", async () => {
     const user = userEvent.setup();
-    renderOverview(overview({ current_commitment: null }), {
-      set_commitment: () => {
+    renderOverview(overview(), {
+      get_tasks: () => TASKS,
+      clear_commitment: () => overview({ current_commitment: null, revision: 2 }),
+    });
+    await screen.findByTestId("now-doing");
+    await user.click(screen.getByRole("button", { name: "Switch away" }));
+
+    await waitFor(() => expect(callsTo("clear_commitment")).toHaveLength(1));
+    expect(callsTo("replace_commitment")).toHaveLength(0);
+  });
+
+  it("on revision_conflict refetches and shows a comparison note", async () => {
+    const user = userEvent.setup();
+    renderOverview(overview(), {
+      get_tasks: () => TASKS,
+      complete_commitment: () => {
         throw { code: "revision_conflict", message: "expected 1 found 2", retryable: false, state_applied: false };
       },
     });
-    await screen.findByTestId("set-form");
-    await user.type(screen.getByLabelText("New commitment"), "kept draft");
-    await user.click(screen.getByRole("button", { name: "Save commitment" }));
+    await screen.findByTestId("now-doing");
+    await user.click(screen.getByRole("button", { name: "Complete" }));
 
     expect(await screen.findByTestId("conflict-note")).toBeInTheDocument();
-    expect(screen.getByLabelText("New commitment")).toHaveValue("kept draft"); // draft retained
-    await waitFor(() => expect(callsTo("get_project_overview").length).toBeGreaterThanOrEqual(2)); // refetched
+    await waitFor(() => expect(callsTo("get_project_overview").length).toBeGreaterThanOrEqual(2));
   });
 
-  it("on store_write_failed keeps the draft and offers Retry and Copy", async () => {
+  it("on store_write_failed offers Retry", async () => {
     const user = userEvent.setup();
-    renderOverview(overview({ current_commitment: null }), {
-      set_commitment: () => {
+    renderOverview(overview(), {
+      get_tasks: () => TASKS,
+      complete_commitment: () => {
         throw { code: "store_write_failed", message: "disk full", retryable: true, state_applied: false };
       },
     });
-    await screen.findByTestId("set-form");
-    await user.type(screen.getByLabelText("New commitment"), "retry me");
-    await user.click(screen.getByRole("button", { name: "Save commitment" }));
+    await screen.findByTestId("now-doing");
+    await user.click(screen.getByRole("button", { name: "Complete" }));
 
     const err = await screen.findByTestId("write-error");
     expect(within(err).getByRole("button", { name: "Retry" })).toBeInTheDocument();
-    expect(within(err).getByRole("button", { name: "Copy text" })).toBeInTheDocument();
-    expect(screen.getByLabelText("New commitment")).toHaveValue("retry me");
   });
 
   it("on audit_commit_failed (state_applied) announces, refetches, and never resends", async () => {
     const user = userEvent.setup();
-    renderOverview(overview({ current_commitment: null }), {
-      set_commitment: () => {
+    renderOverview(overview(), {
+      get_tasks: () => TASKS,
+      complete_commitment: () => {
         throw {
           code: "audit_commit_failed",
           message: "saved as 5 but audit failed",
@@ -268,58 +260,33 @@ describe("commitment mutations", () => {
         };
       },
     });
-    await screen.findByTestId("set-form");
-    await user.type(screen.getByLabelText("New commitment"), "durable");
-    await user.click(screen.getByRole("button", { name: "Save commitment" }));
+    await screen.findByTestId("now-doing");
+    await user.click(screen.getByRole("button", { name: "Complete" }));
 
     expect(await screen.findByTestId("audit-failed-note")).toBeInTheDocument();
     expect(screen.getByTestId("live-assertive")).toHaveTextContent(/state saved; audit commit failed/i);
-    expect(callsTo("set_commitment")).toHaveLength(1); // never resent
+    expect(callsTo("complete_commitment")).toHaveLength(1); // never resent
     await waitFor(() => expect(callsTo("get_project_overview").length).toBeGreaterThanOrEqual(2));
-    expect(screen.getByLabelText("New commitment")).toHaveValue(""); // durable -> draft cleared
   });
 
-  it("resubmits a conflicted mutation with the revision rebuilt from the refetch", async () => {
-    const user = userEvent.setup();
-    let getCount = 0;
-    let setCount = 0;
-    window.history.replaceState(null, "", "/projects/project-1/overview");
-    invokeMock.mockImplementation(async (command: string) => {
-      if (command === "get_project_overview") {
-        getCount += 1;
-        return overview({ current_commitment: null, revision: getCount === 1 ? 3 : 5 });
-      }
-      if (command === "set_commitment") {
-        setCount += 1;
-        if (setCount === 1) {
-          throw { code: "revision_conflict", message: "stale", retryable: false, state_applied: false };
-        }
-        return overview({ current_commitment: currentCommitment(), revision: 6 });
-      }
-      return overview();
-    });
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false, staleTime: Infinity, refetchOnMount: false } },
-    });
-    render(
-      <QueryClientProvider client={client}>
-        <App />
-      </QueryClientProvider>,
+  it("offers Undo for a completed step, but never for a set", async () => {
+    renderOverview(
+      overview({ last_transition: completed, undoable_transition_id: completed.id }),
+      { get_tasks: () => TASKS },
     );
-    await screen.findByTestId("set-form");
-    await user.type(screen.getByLabelText("New commitment"), "do it");
-    await user.click(screen.getByRole("button", { name: "Save commitment" }));
-    await screen.findByTestId("conflict-note");
-
-    await user.click(screen.getByRole("button", { name: "Save commitment" }));
-    await waitFor(() => expect(callsTo("set_commitment")).toHaveLength(2));
-    const [, arg] = callsTo("set_commitment")[1] as [string, { input: Record<string, unknown> }];
-    expect(arg.input).toMatchObject({ expected_revision: 5, text: "do it" });
+    expect(await screen.findByTestId("undo-button")).toBeInTheDocument();
   });
 
-  it("shows Undo only when a newest undoable transition is returned", async () => {
-    renderOverview(overview({ undoable_transition_id: null }));
-    await screen.findByTestId("current-commitment");
+  it("withholds Undo for a set, whose undo would abandon the task", async () => {
+    // `overview()` fixture's newest transition is a `set`.
+    renderOverview(overview(), { get_tasks: () => TASKS });
+    await screen.findByTestId("now-doing");
+    expect(screen.queryByTestId("undo-button")).not.toBeInTheDocument();
+  });
+
+  it("withholds Undo when no undoable transition is returned", async () => {
+    renderOverview(overview({ undoable_transition_id: null }), { get_tasks: () => TASKS });
+    await screen.findByTestId("now-doing");
     expect(screen.queryByTestId("undo-button")).not.toBeInTheDocument();
   });
 });
