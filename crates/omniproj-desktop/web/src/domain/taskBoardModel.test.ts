@@ -16,7 +16,7 @@ function task(id: string, over: Partial<Task> = {}): Task {
     tags: [],
     commits: [],
     adopted_from_proposal_id: null,
-    linked_work_item_id: null,
+    was_committed: false,
     is_current_commitment: false,
     updated_at: "2026-08-01T00:00:00Z",
     ...over,

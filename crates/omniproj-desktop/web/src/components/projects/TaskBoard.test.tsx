@@ -23,7 +23,7 @@ const TASKS = {
     tags: ["论文", "infra"],
     commits: [],
     adopted_from_proposal_id: null,
-    linked_work_item_id: null,
+    was_committed: false,
     is_current_commitment: false,
     updated_at: "2026-08-12T09:00:00Z",
   }, {
@@ -36,7 +36,7 @@ const TASKS = {
     tags: ["infra"],
     commits: [],
     adopted_from_proposal_id: null,
-    linked_work_item_id: null,
+    was_committed: false,
     is_current_commitment: false,
     updated_at: "2026-08-11T09:00:00Z",
   }],
@@ -155,6 +155,29 @@ it("does not send an update when nothing changed", async () => {
   expect(invokeMock.mock.calls.some((call) => call[0] === "update_task")).toBe(false);
 });
 
+it("leaves a former commitment fully editable and off the promote path", async () => {
+  // Regression: `was_committed` records history only. Gating edits on it froze every step
+  // that had ever been the commitment — replaced and completed ones alike stayed in the
+  // list unmovable and undeletable.
+  const historic = {
+    revision: "11",
+    tasks: [{ ...TASKS.tasks[0], id: "h1", text: "Former commitment", unclear: false, tags: [], was_committed: true, is_current_commitment: false }],
+  };
+  invokeMock.mockImplementation(async (command: string) => {
+    if (command === "get_tasks") return historic;
+    if (command === "list_project_index" || command === "get_project_overview") return {};
+    throw new Error(`unexpected command ${command}`);
+  });
+  const user = userEvent.setup();
+  renderBoard();
+
+  expect(await screen.findByLabelText(/task status: Former commitment/i)).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: /Former commitment/ }));
+  expect(screen.getByRole("button", { name: /remove/i })).toBeEnabled();
+  // Core rejects promoting a historical commitment, so the control is not offered at all.
+  expect(screen.queryByRole("button", { name: /make current commitment/i })).not.toBeInTheDocument();
+});
+
 it("parseTagsInput splits comma variants and trims", async () => {
   const { parseTagsInput } = await import("./TaskBoard");
   expect(parseTagsInput("论文, infra、eval ，  x ")).toEqual(["论文", "infra", "eval", "x"]);
@@ -167,7 +190,7 @@ it("board view moves a card via the keyboard-accessible control and locks commit
     revision: "9",
     tasks: [
       { ...TASKS.tasks[0], id: "m1", text: "Movable card", unclear: false, tags: [] },
-      { ...TASKS.tasks[1], id: "l1", text: "Locked card", status: "doing", linked_work_item_id: "l1", tags: [] },
+      { ...TASKS.tasks[1], id: "l1", text: "Locked card", status: "doing", was_committed: true, is_current_commitment: true, tags: [] },
     ],
   };
   invokeMock.mockImplementation(async (command: string, args?: { input?: Record<string, unknown> }) => {

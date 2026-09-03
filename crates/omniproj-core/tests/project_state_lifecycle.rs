@@ -885,7 +885,7 @@ fn lifecycle_complete_marks_item_done_and_clears_pointer() {
 }
 
 #[test]
-fn lifecycle_replace_retains_previous_item_status_and_requires_reason() {
+fn lifecycle_replace_returns_previous_item_to_planned_and_requires_reason() {
     let store = TestStore::new("replace");
     let set = set_commitment(&store, 0, "Old action", AT_1);
     let previous_id = set.work_items[0].id.clone();
@@ -917,8 +917,10 @@ fn lifecycle_replace_retains_previous_item_status_and_requires_reason() {
         )
         .unwrap()
         .state;
-    assert_eq!(replaced.work_items[0].status, WorkItemStatus::Doing);
-    assert_eq!(replaced.work_items[0].updated_at, AT_1);
+    // The replaced step was dropped, not finished: it goes back to the list as planned work
+    // rather than sitting at `doing` with nobody on it.
+    assert_eq!(replaced.work_items[0].status, WorkItemStatus::Planned);
+    assert_eq!(replaced.work_items[0].updated_at, AT_2);
     assert_eq!(replaced.work_items[1].status, WorkItemStatus::Doing);
     assert_eq!(
         replaced.current_next_action_id.as_ref(),
@@ -935,7 +937,7 @@ fn lifecycle_replace_retains_previous_item_status_and_requires_reason() {
 }
 
 #[test]
-fn lifecycle_clear_retains_previous_item_and_status() {
+fn lifecycle_clear_retains_previous_item_and_returns_it_to_planned() {
     let store = TestStore::new("clear");
     let set = set_commitment(&store, 0, "Current action", AT_1);
     let item_id = set.work_items[0].id.clone();
@@ -954,8 +956,9 @@ fn lifecycle_clear_retains_previous_item_and_status() {
 
     assert_eq!(cleared.current_next_action_id, None);
     assert_eq!(cleared.work_items.len(), 1);
-    assert_eq!(cleared.work_items[0].status, WorkItemStatus::Doing);
-    assert_eq!(cleared.work_items[0].updated_at, AT_1);
+    // Clearing drops the commitment, not the work.
+    assert_eq!(cleared.work_items[0].status, WorkItemStatus::Planned);
+    assert_eq!(cleared.work_items[0].updated_at, AT_2);
     assert_eq!(
         cleared.commitment_transitions.last().unwrap().kind,
         omniproj_core::CommitmentTransitionKind::Cleared
@@ -1397,7 +1400,7 @@ fn undo_complete_restores_pointer_and_doing_status() {
 }
 
 #[test]
-fn undo_replace_restores_previous_pointer_without_changing_previous_status() {
+fn undo_replace_restores_previous_pointer_and_previous_status() {
     let store = TestStore::new("undo-replace");
     let set = set_commitment(&store, 0, "Previous", AT_1);
     let previous_id = set.work_items[0].id.clone();
@@ -1428,8 +1431,10 @@ fn undo_replace_restores_previous_pointer_without_changing_previous_status() {
         .state;
 
     assert_eq!(undone.current_next_action_id.as_ref(), Some(&previous_id));
+    // Replace parked it at `planned`; undoing hands the commitment back, so the status
+    // comes back with it.
     assert_eq!(undone.work_items[0].status, WorkItemStatus::Doing);
-    assert_eq!(undone.work_items[0].updated_at, AT_1);
+    assert_eq!(undone.work_items[0].updated_at, AT_3);
     assert_eq!(
         undone
             .work_items
@@ -1452,7 +1457,7 @@ fn undo_replace_restores_previous_pointer_without_changing_previous_status() {
 }
 
 #[test]
-fn undo_clear_restores_pointer_without_changing_item_status() {
+fn undo_clear_restores_pointer_and_item_status() {
     let store = TestStore::new("undo-clear");
     let set = set_commitment(&store, 0, "Current", AT_1);
     let item_id = set.work_items[0].id.clone();
@@ -1481,8 +1486,9 @@ fn undo_clear_restores_pointer_without_changing_item_status() {
         .state;
 
     assert_eq!(undone.current_next_action_id.as_ref(), Some(&item_id));
+    // Clear parked it at `planned`; undoing restores both the pointer and the status.
     assert_eq!(undone.work_items[0].status, WorkItemStatus::Doing);
-    assert_eq!(undone.work_items[0].updated_at, AT_1);
+    assert_eq!(undone.work_items[0].updated_at, AT_3);
     assert!(undone.commitment_transitions.contains(&original));
     assert_eq!(
         undone

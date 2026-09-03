@@ -1025,7 +1025,12 @@ fn apply_command_in_memory(
                 return Err(ProjectStateError::ReasonRequired);
             }
             require_current(state, &previous_work_item_id)?;
-            require_item(state, &previous_work_item_id)?;
+            // A replaced step was not finished, so it goes back to the list as planned work.
+            // Leaving it at `doing` stranded it: nobody was working on it, yet it read as
+            // in progress forever.
+            let previous = require_item_mut(state, &previous_work_item_id)?;
+            previous.status = WorkItemStatus::Planned;
+            previous.updated_at = occurred_at.to_owned();
             let next = new_work_item(project_id, text, occurred_at);
             let next_id = next.id.clone();
             state.work_items.push(next);
@@ -1047,7 +1052,10 @@ fn apply_command_in_memory(
             reason,
         } => {
             require_current(state, &work_item_id)?;
-            require_item(state, &work_item_id)?;
+            // Same reasoning as replace: clearing drops the commitment, not the work.
+            let item = require_item_mut(state, &work_item_id)?;
+            item.status = WorkItemStatus::Planned;
+            item.updated_at = occurred_at.to_owned();
             state.current_next_action_id = None;
             push_transition(
                 state,
@@ -1166,6 +1174,10 @@ fn undo_transition(
             let item_id = target.next_work_item_id.as_ref().ok_or_else(|| {
                 ProjectStateError::InvalidCommand("Set transition has no next item".into())
             })?;
+            // NOTE: undoing a `set` that promoted a pre-existing task abandons that task,
+            // which drops it from the list. Fixing that needs the transition to record
+            // whether it introduced the item, because `apply_status_correction` replays from
+            // transitions alone and cannot otherwise tell the two cases apart. Left as is.
             let item = require_item_mut(state, item_id)?;
             item.status = WorkItemStatus::Abandoned;
             item.updated_at = occurred_at.to_owned();
@@ -1186,8 +1198,23 @@ fn undo_transition(
             let item = require_item_mut(state, item_id)?;
             item.status = WorkItemStatus::Abandoned;
             item.updated_at = occurred_at.to_owned();
+            // The pointer replay hands the commitment back to the previous item, so its
+            // status has to come back with it.
+            let previous_id = target.previous_work_item_id.as_ref().ok_or_else(|| {
+                ProjectStateError::InvalidCommand("Replaced transition has no prior item".into())
+            })?;
+            let previous = require_item_mut(state, previous_id)?;
+            previous.status = WorkItemStatus::Doing;
+            previous.updated_at = occurred_at.to_owned();
         }
-        CommitmentTransitionKind::Cleared => {}
+        CommitmentTransitionKind::Cleared => {
+            let item_id = target.previous_work_item_id.as_ref().ok_or_else(|| {
+                ProjectStateError::InvalidCommand("Cleared transition has no prior item".into())
+            })?;
+            let item = require_item_mut(state, item_id)?;
+            item.status = WorkItemStatus::Doing;
+            item.updated_at = occurred_at.to_owned();
+        }
         CommitmentTransitionKind::Correction => unreachable!("handled above"),
     }
 
@@ -1651,6 +1678,16 @@ fn apply_status_transition(
                 ))
             })?;
             expected_statuses.insert(item_id, WorkItemStatus::Doing);
+            // A replaced step was dropped, not finished: it returns to the list as planned.
+            if transition.kind == CommitmentTransitionKind::Replaced {
+                let previous_id = transition.previous_work_item_id.clone().ok_or_else(|| {
+                    ProjectStateError::InvalidDocument(format!(
+                        "Replaced transition {} has no prior item",
+                        transition.id
+                    ))
+                })?;
+                expected_statuses.insert(previous_id, WorkItemStatus::Planned);
+            }
         }
         CommitmentTransitionKind::Completed => {
             let item_id = transition.previous_work_item_id.clone().ok_or_else(|| {
@@ -1661,7 +1698,17 @@ fn apply_status_transition(
             })?;
             expected_statuses.insert(item_id, WorkItemStatus::Done);
         }
-        CommitmentTransitionKind::Confirmed | CommitmentTransitionKind::Cleared => {}
+        CommitmentTransitionKind::Cleared => {
+            // Clearing drops the commitment, not the work: the item goes back to planned.
+            let item_id = transition.previous_work_item_id.clone().ok_or_else(|| {
+                ProjectStateError::InvalidDocument(format!(
+                    "Cleared transition {} has no prior item",
+                    transition.id
+                ))
+            })?;
+            expected_statuses.insert(item_id, WorkItemStatus::Planned);
+        }
+        CommitmentTransitionKind::Confirmed => {}
         CommitmentTransitionKind::Correction => {
             return invalid(format!(
                 "unexpected Correction transition {}",
@@ -1685,6 +1732,17 @@ fn apply_status_correction(
                 ))
             })?;
             expected_statuses.insert(item_id, WorkItemStatus::Abandoned);
+            // Undoing a replace hands the commitment back to the previous item, so its
+            // status comes back with it.
+            if target.kind == CommitmentTransitionKind::Replaced {
+                let previous_id = target.previous_work_item_id.clone().ok_or_else(|| {
+                    ProjectStateError::InvalidDocument(format!(
+                        "corrected Replaced transition {} has no prior item",
+                        target.id
+                    ))
+                })?;
+                expected_statuses.insert(previous_id, WorkItemStatus::Doing);
+            }
         }
         CommitmentTransitionKind::Completed => {
             let item_id = target.previous_work_item_id.clone().ok_or_else(|| {
@@ -1695,7 +1753,16 @@ fn apply_status_correction(
             })?;
             expected_statuses.insert(item_id, WorkItemStatus::Doing);
         }
-        CommitmentTransitionKind::Confirmed | CommitmentTransitionKind::Cleared => {}
+        CommitmentTransitionKind::Cleared => {
+            let item_id = target.previous_work_item_id.clone().ok_or_else(|| {
+                ProjectStateError::InvalidDocument(format!(
+                    "corrected Cleared transition {} has no prior item",
+                    target.id
+                ))
+            })?;
+            expected_statuses.insert(item_id, WorkItemStatus::Doing);
+        }
+        CommitmentTransitionKind::Confirmed => {}
         CommitmentTransitionKind::Correction => {
             return invalid(format!(
                 "correction cannot target correction transition {}",

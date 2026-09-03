@@ -166,7 +166,8 @@ export interface Task {
   tags: string[];
   commits: string[];
   adopted_from_proposal_id: string | null;
-  linked_work_item_id: string | null;
+  /** History only: this task has been the commitment at some point. Never gate editing on it. */
+  was_committed: boolean;
   is_current_commitment: boolean;
   /** RFC3339 instant of the last mutation, for deterministic board ordering. */
   updated_at: string;
