@@ -119,6 +119,7 @@ export function ProjectLifecycleControl({ overview }: ProjectLifecycleControlPro
           className="op-button op-button--secondary"
           type="button"
           disabled={!canSave}
+          title={canSave ? undefined : t("lifecycle.updateDisabled")}
           onClick={save}
         >
           {t("lifecycle.update")}

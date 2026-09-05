@@ -165,6 +165,15 @@ pub struct WorkItem {
     pub project_id: ProjectId,
     pub text: String,
     pub status: WorkItemStatus,
+    /// The step this one is a sub-step of, or `None` for a top-level step. A document
+    /// written before hierarchy existed has no `parent_id` anywhere, which reads back as
+    /// a flat list — exactly what it was.
+    ///
+    /// `work_items` is kept as a pre-order flattening of this relation (see
+    /// [`normalize_order`]), so document order *is* display order and a subtree is
+    /// always contiguous.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<WorkItemId>,
     #[serde(default)]
     pub unclear: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -204,6 +213,30 @@ pub struct WorkItemDraft {
     pub commits: Vec<String>,
     pub adopted_from_proposal_id: Option<String>,
     pub source_task_id: Option<String>,
+    /// Where the new step lands. `parent_id: None` is top level; `after_id: None` puts it
+    /// first among its siblings. Legacy import leaves both `None` and appends flat.
+    pub parent_id: Option<WorkItemId>,
+    pub after_id: Option<WorkItemId>,
+}
+
+impl WorkItemDraft {
+    /// A plain top-level step — the shape every non-interactive caller (legacy import,
+    /// bulk adoption) wants, without spelling out the placement fields.
+    pub fn new(text: impl Into<String>) -> Self {
+        WorkItemDraft {
+            text: text.into(),
+            status: WorkItemStatus::Planned,
+            unclear: false,
+            due: None,
+            note: None,
+            tags: Vec::new(),
+            commits: Vec::new(),
+            adopted_from_proposal_id: None,
+            source_task_id: None,
+            parent_id: None,
+            after_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -284,12 +317,22 @@ pub enum ProjectCommand {
     },
     UpdateWorkItem {
         work_item_id: WorkItemId,
+        /// `None` leaves the stored text unchanged; `Some` renames the step.
+        text: Option<String>,
         status: WorkItemStatus,
         unclear: bool,
         due: Option<String>,
         note: Option<String>,
         /// `None` leaves the stored tags unchanged; `Some` replaces them (normalized).
         tags: Option<Vec<String>>,
+    },
+    /// Reparent and/or reorder one step, carrying its whole subtree with it. This is the
+    /// single command behind indent, outdent and drag-to-reorder. `parent_id: None` is top
+    /// level; `after_id: None` places it first among its new siblings.
+    MoveWorkItem {
+        work_item_id: WorkItemId,
+        parent_id: Option<WorkItemId>,
+        after_id: Option<WorkItemId>,
     },
     RemoveWorkItem {
         work_item_id: WorkItemId,
@@ -532,6 +575,39 @@ impl ProjectStateDoc {
             }
             validate_aggregate_project_id(&mut aggregate_project_id, &item.project_id)?;
         }
+        // The parent relation has to be a forest: every parent present, and no step
+        // reachable from itself. `normalize_order` degrades a dangling parent gracefully,
+        // but a document that carries one is still wrong and says so here.
+        for item in &self.work_items {
+            let Some(parent) = &item.parent_id else {
+                continue;
+            };
+            if parent == &item.id {
+                return invalid(format!("work item {} is its own parent", item.id));
+            }
+            if !work_item_ids.contains(parent) {
+                return invalid(format!(
+                    "work item {} references missing parent {parent}",
+                    item.id
+                ));
+            }
+        }
+        let by_id: HashMap<&WorkItemId, &WorkItem> = self
+            .work_items
+            .iter()
+            .map(|item| (&item.id, item))
+            .collect();
+        for item in &self.work_items {
+            let mut seen = HashSet::from([&item.id]);
+            let mut cursor = item.parent_id.as_ref();
+            while let Some(parent) = cursor {
+                if !seen.insert(parent) {
+                    return invalid(format!("work item {} is nested inside itself", item.id));
+                }
+                cursor = by_id.get(parent).and_then(|item| item.parent_id.as_ref());
+            }
+        }
+
         if let Some(current) = &self.current_next_action_id {
             if !work_item_ids.contains(current) {
                 return invalid(format!("current next action {current} does not exist"));
@@ -774,10 +850,11 @@ fn apply_command_in_memory(
             desired_outcome,
             phase,
         } => {
-            require_field("objective", &objective)?;
-            require_field("desired_outcome", &desired_outcome)?;
-            state.objective = Some(objective);
-            state.desired_outcome = Some(desired_outcome);
+            // All three are optional notes about the project. Demanding an "objective" and
+            // a "desired outcome" before the tool would let you write anything down was a
+            // gate in front of the only thing the user came to do: list the steps.
+            state.objective = normalize_optional(Some(objective));
+            state.desired_outcome = normalize_optional(Some(desired_outcome));
             state.phase = normalize_optional(phase);
         }
         ProjectCommand::CompleteSetup {
@@ -786,9 +863,9 @@ fn apply_command_in_memory(
             phase,
             first_commitment,
         } => {
-            require_field("objective", &objective)?;
-            require_field("desired_outcome", &desired_outcome)?;
-            require_field("first_commitment", &first_commitment)?;
+            // Only the first step is required: a project with no step in it is the empty
+            // page the user is trying to get past.
+            require_field("first_step", &first_commitment)?;
             if state.status != ProjectStatus::Setup {
                 return Err(ProjectStateError::InvalidCommand(
                     "setup has already been completed".into(),
@@ -797,8 +874,8 @@ fn apply_command_in_memory(
             if let Some(work_item_id) = state.current_next_action_id.clone() {
                 return Err(ProjectStateError::CurrentCommitmentExists { work_item_id });
             }
-            state.objective = Some(objective);
-            state.desired_outcome = Some(desired_outcome);
+            state.objective = normalize_optional(Some(objective));
+            state.desired_outcome = normalize_optional(Some(desired_outcome));
             state.phase = normalize_optional(phase);
             state.status = ProjectStatus::Active;
             state.status_reason = None;
@@ -855,13 +932,34 @@ fn apply_command_in_memory(
             }
             for draft in items {
                 validate_work_item_draft(&draft)?;
-                state
-                    .work_items
-                    .push(work_item_from_draft(project_id, draft, occurred_at));
+                let parent_id = draft.parent_id.clone();
+                let after_id = draft.after_id.clone();
+                if let Some(parent) = &parent_id {
+                    require_item(state, parent)?;
+                }
+                if let Some(after) = &after_id {
+                    require_sibling_of(state, after, parent_id.as_ref())?;
+                }
+                let item = work_item_from_draft(project_id, draft, occurred_at);
+                let id = item.id.clone();
+                state.work_items.push(item);
+                // A draft that names no position appends, which is what every bulk caller
+                // (legacy import, adopting a batch of proposals) means. Only a draft that
+                // asks for a position gets one.
+                if parent_id.is_some() || after_id.is_some() {
+                    place_record(
+                        &mut state.work_items,
+                        &id,
+                        parent_id.as_ref(),
+                        after_id.as_ref(),
+                    );
+                }
+                normalize_order(&mut state.work_items);
             }
         }
         ProjectCommand::UpdateWorkItem {
             work_item_id,
+            text,
             status,
             unclear,
             due,
@@ -870,14 +968,18 @@ fn apply_command_in_memory(
         } => {
             validate_due(due.as_deref())?;
             let tags = tags.map(normalize_tags).transpose()?;
-            // Only the item the commitment points at right now has a status owned by the
-            // commitment actions. A past commitment is the user's to reopen or re-plan.
+            if let Some(text) = &text {
+                require_field("text", text)?;
+            }
+            // Ticking a step off is one click, including when that step happens to be the
+            // current commitment: the commitment closes itself and the log still records
+            // it. Requiring a separate commitment action here meant the checkbox silently
+            // failed on exactly the step the user was working on.
             let is_current = state.current_next_action_id.as_ref() == Some(&work_item_id);
+            let closes_commitment = is_current && status != WorkItemStatus::Doing;
             let item = require_item_mut(state, &work_item_id)?;
-            if is_current && item.status != status {
-                return Err(ProjectStateError::InvalidCommand(
-                    "commitment lifecycle status must be changed through commitment actions".into(),
-                ));
+            if let Some(text) = text {
+                item.text = text.trim().to_owned();
             }
             item.status = status;
             item.unclear = unclear;
@@ -887,28 +989,100 @@ fn apply_command_in_memory(
                 item.tags = tags;
             }
             item.updated_at = occurred_at.to_owned();
+            if closes_commitment {
+                state.current_next_action_id = None;
+                push_transition(
+                    state,
+                    project_id,
+                    if status == WorkItemStatus::Done {
+                        CommitmentTransitionKind::Completed
+                    } else {
+                        CommitmentTransitionKind::Cleared
+                    },
+                    Some(work_item_id),
+                    None,
+                    None,
+                    occurred_at,
+                    accepted_revision,
+                    None,
+                );
+            }
+        }
+        ProjectCommand::MoveWorkItem {
+            work_item_id,
+            parent_id,
+            after_id,
+        } => {
+            require_item(state, &work_item_id)?;
+            let moving = subtree_ids(&state.work_items, &work_item_id);
+            if let Some(parent) = &parent_id {
+                require_item(state, parent)?;
+                if moving.contains(parent) {
+                    return Err(ProjectStateError::InvalidCommand(
+                        "a step cannot be nested under itself".into(),
+                    ));
+                }
+            }
+            if let Some(after) = &after_id {
+                if moving.contains(after) {
+                    return Err(ProjectStateError::InvalidCommand(
+                        "a step cannot be placed after its own sub-steps".into(),
+                    ));
+                }
+                require_sibling_of(state, after, parent_id.as_ref())?;
+            }
+            let item = require_item_mut(state, &work_item_id)?;
+            item.parent_id = parent_id.clone();
+            item.updated_at = occurred_at.to_owned();
+            place_record(
+                &mut state.work_items,
+                &work_item_id,
+                parent_id.as_ref(),
+                after_id.as_ref(),
+            );
+            normalize_order(&mut state.work_items);
         }
         ProjectCommand::RemoveWorkItem { work_item_id } => {
-            if state.current_next_action_id.as_ref() == Some(&work_item_id) {
-                return Err(ProjectStateError::InvalidCommand(
-                    "the current commitment cannot be removed".into(),
-                ));
+            require_item(state, &work_item_id)?;
+            // Deleting a step deletes what it was decomposed into. Leaving orphaned
+            // sub-steps behind at top level would silently promote detail the user meant
+            // to discard.
+            let removing = subtree_ids(&state.work_items, &work_item_id);
+            // A commitment inside the removed subtree is released first, so the history
+            // stays replayable and the document stays valid.
+            if let Some(current) = state.current_next_action_id.clone() {
+                if removing.contains(&current) {
+                    let item = require_item_mut(state, &current)?;
+                    item.status = WorkItemStatus::Planned;
+                    item.updated_at = occurred_at.to_owned();
+                    state.current_next_action_id = None;
+                    push_transition(
+                        state,
+                        project_id,
+                        CommitmentTransitionKind::Cleared,
+                        Some(current),
+                        None,
+                        None,
+                        occurred_at,
+                        accepted_revision,
+                        None,
+                    );
+                }
             }
             // The audit log must keep its subject: every transition names a work item that
             // has to still exist. An item the log mentions is therefore tombstoned rather
             // than deleted — `abandoned` items are filtered out of the task list, so it
             // leaves the user's list either way, and the history stays readable.
-            if work_item_is_referenced(state, &work_item_id) {
-                let item = require_item_mut(state, &work_item_id)?;
-                item.status = WorkItemStatus::Abandoned;
-                item.updated_at = occurred_at.to_owned();
-                return Ok(());
+            for id in &removing {
+                if work_item_is_referenced(state, id) {
+                    let item = require_item_mut(state, id)?;
+                    item.status = WorkItemStatus::Abandoned;
+                    item.updated_at = occurred_at.to_owned();
+                } else {
+                    state.work_items.retain(|item| &item.id != id);
+                }
             }
-            let before = state.work_items.len();
-            state.work_items.retain(|item| item.id != work_item_id);
-            if state.work_items.len() == before {
-                return Err(ProjectStateError::WorkItemNotFound(work_item_id));
-            }
+            normalize_order(&mut state.work_items);
         }
         ProjectCommand::SetCommitmentFromWorkItem { work_item_id } => {
             if let Some(current) = state.current_next_action_id.clone() {
@@ -1258,6 +1432,7 @@ fn new_work_item(project_id: &ProjectId, text: String, occurred_at: &str) -> Wor
         project_id: project_id.clone(),
         text,
         status: WorkItemStatus::Doing,
+        parent_id: None,
         unclear: false,
         due: None,
         note: None,
@@ -1282,6 +1457,9 @@ fn work_item_from_draft(
         project_id: project_id.clone(),
         text: draft.text.trim().to_owned(),
         status: draft.status,
+        // Placement is applied by the caller (`place_record` + `normalize_order`), which
+        // needs the record to exist first.
+        parent_id: draft.parent_id.clone(),
         unclear: draft.unclear,
         due: normalize_optional(draft.due),
         note: normalize_optional(draft.note),
@@ -1413,6 +1591,143 @@ fn push_transition(
         occurred_at: occurred_at.to_owned(),
         corrects_transition_id,
     });
+}
+
+// --- Outline shape -------------------------------------------------------------------
+// `work_items` carries both the parent relation and the order the user sees. These four
+// helpers are the only places that know how the two fit together.
+
+/// `id` and every step nested under it, in document order. An unknown id yields an empty
+/// vector. Defensive against cycles: no id is visited twice.
+fn subtree_ids(items: &[WorkItem], id: &WorkItemId) -> Vec<WorkItemId> {
+    let mut collected = vec![id.clone()];
+    let mut index = 0;
+    while index < collected.len() {
+        let parent = collected[index].clone();
+        for item in items {
+            if item.parent_id.as_ref() == Some(&parent) && !collected.contains(&item.id) {
+                collected.push(item.id.clone());
+            }
+        }
+        index += 1;
+    }
+    if items.iter().any(|item| &item.id == id) {
+        collected
+    } else {
+        Vec::new()
+    }
+}
+
+/// Index just past the last record of `id`'s contiguous subtree. Assumes the vector is
+/// normalized; callers use it to insert a sibling *after* a whole subtree rather than
+/// between a step and its sub-steps.
+fn subtree_end(items: &[WorkItem], id: &WorkItemId) -> usize {
+    let Some(start) = items.iter().position(|item| &item.id == id) else {
+        return items.len();
+    };
+    let owned = subtree_ids(items, id);
+    let mut end = start + 1;
+    while end < items.len() && owned.contains(&items[end].id) {
+        end += 1;
+    }
+    end
+}
+
+/// Move one record so that its position among its siblings is right. Only the record for
+/// `id` moves; [`normalize_order`] afterwards pulls its subtree along.
+fn place_record(
+    items: &mut Vec<WorkItem>,
+    id: &WorkItemId,
+    parent: Option<&WorkItemId>,
+    after: Option<&WorkItemId>,
+) {
+    let Some(from) = items.iter().position(|item| &item.id == id) else {
+        return;
+    };
+    let record = items.remove(from);
+    let at = match after {
+        Some(after_id) => subtree_end(items, after_id),
+        // First among its siblings: directly under the parent, or at the very top.
+        None => match parent {
+            Some(parent_id) => items
+                .iter()
+                .position(|item| &item.id == parent_id)
+                .map_or(0, |index| index + 1),
+            None => 0,
+        },
+    };
+    items.insert(at.min(items.len()), record);
+}
+
+/// Rebuild `work_items` as a pre-order flattening of the parent relation, preserving the
+/// relative order of siblings. Every mutation that touches placement ends with this, so
+/// document order is always display order and a subtree is always contiguous — no caller
+/// has to maintain that by hand.
+fn normalize_order(items: &mut Vec<WorkItem>) {
+    if items.len() < 2 {
+        return;
+    }
+    let known: HashSet<WorkItemId> = items.iter().map(|item| item.id.clone()).collect();
+    let document_order: Vec<WorkItemId> = items.iter().map(|item| item.id.clone()).collect();
+    let mut children: HashMap<Option<WorkItemId>, Vec<WorkItemId>> = HashMap::new();
+    for item in items.iter() {
+        // A parent that no longer exists (or points at itself) degrades to top level
+        // rather than dropping the step off the list.
+        let parent = match &item.parent_id {
+            Some(parent) if parent != &item.id && known.contains(parent) => Some(parent.clone()),
+            _ => None,
+        };
+        children.entry(parent).or_default().push(item.id.clone());
+    }
+
+    let mut order = Vec::with_capacity(items.len());
+    let mut visited = HashSet::new();
+    let mut stack: Vec<WorkItemId> = children.get(&None).cloned().unwrap_or_default();
+    stack.reverse();
+    while let Some(id) = stack.pop() {
+        if !visited.insert(id.clone()) {
+            continue;
+        }
+        order.push(id.clone());
+        if let Some(nested) = children.get(&Some(id)) {
+            for child in nested.iter().rev() {
+                stack.push(child.clone());
+            }
+        }
+    }
+    // A cycle is rejected by `validate`, but ordering must stay total regardless: anything
+    // the walk could not reach keeps its document order at the end.
+    for id in &document_order {
+        if !visited.contains(id) {
+            order.push(id.clone());
+        }
+    }
+
+    let mut by_id: HashMap<WorkItemId, WorkItem> = items
+        .drain(..)
+        .map(|item| (item.id.clone(), item))
+        .collect();
+    for id in order {
+        if let Some(item) = by_id.remove(&id) {
+            items.push(item);
+        }
+    }
+}
+
+/// An `after_id` only means something among siblings: placing a step "after" one that sits
+/// under a different parent has no single answer, so it is rejected rather than guessed.
+fn require_sibling_of(
+    state: &ProjectStateDoc,
+    after_id: &WorkItemId,
+    parent_id: Option<&WorkItemId>,
+) -> Result<(), ProjectStateError> {
+    let after = require_item(state, after_id)?;
+    if after.parent_id.as_ref() != parent_id {
+        return Err(ProjectStateError::InvalidCommand(format!(
+            "step {after_id} is not a sibling of the requested position"
+        )));
+    }
+    Ok(())
 }
 
 fn require_item<'a>(
@@ -1995,6 +2310,8 @@ mod tests {
                     commits: Vec::new(),
                     adopted_from_proposal_id: None,
                     source_task_id: None,
+                    parent_id: None,
+                    after_id: None,
                 }],
             },
             CREATED_AT,
@@ -2039,6 +2356,8 @@ mod tests {
             commits: vec!["abc123".into(), "abc123".into()],
             adopted_from_proposal_id: None,
             source_task_id: Some("legacy-task".into()),
+            parent_id: None,
+            after_id: None,
         };
         apply_command_in_memory(
             &mut state,

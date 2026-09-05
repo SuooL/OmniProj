@@ -6,7 +6,7 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Runtime, State};
 
-use omniproj_core::ids::{CommitmentTransitionId, ProjectId, WorkItemId};
+use omniproj_core::ids::ProjectId;
 use omniproj_core::project_state::ProjectStatus;
 
 use crate::dto::{
@@ -156,142 +156,7 @@ pub fn set_project_status(
 }
 
 // ---------------------------------------------------------------------------
-// Commitment lifecycle
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-pub struct SetCommitmentInput {
-    pub project_id: ProjectId,
-    pub expected_revision: u64,
-    pub text: String,
-}
-
-#[tauri::command]
-pub fn set_commitment(
-    service: State<'_, Service>,
-    input: SetCommitmentInput,
-) -> CommandResult<ProjectOverviewDto> {
-    service.apply_project_mutation(ProjectMutationInput {
-        project_id: input.project_id,
-        expected_revision: input.expected_revision,
-        command: MutationCommand::SetCommitment { text: input.text },
-    })
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ConfirmCommitmentInput {
-    pub project_id: ProjectId,
-    pub expected_revision: u64,
-    pub work_item_id: WorkItemId,
-}
-
-#[tauri::command]
-pub fn confirm_commitment(
-    service: State<'_, Service>,
-    input: ConfirmCommitmentInput,
-) -> CommandResult<ProjectOverviewDto> {
-    service.apply_project_mutation(ProjectMutationInput {
-        project_id: input.project_id,
-        expected_revision: input.expected_revision,
-        command: MutationCommand::ConfirmCommitment {
-            work_item_id: input.work_item_id,
-        },
-    })
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CompleteCommitmentInput {
-    pub project_id: ProjectId,
-    pub expected_revision: u64,
-    pub work_item_id: WorkItemId,
-}
-
-#[tauri::command]
-pub fn complete_commitment(
-    service: State<'_, Service>,
-    input: CompleteCommitmentInput,
-) -> CommandResult<ProjectOverviewDto> {
-    service.apply_project_mutation(ProjectMutationInput {
-        project_id: input.project_id,
-        expected_revision: input.expected_revision,
-        command: MutationCommand::CompleteCommitment {
-            work_item_id: input.work_item_id,
-        },
-    })
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ReplaceCommitmentInput {
-    pub project_id: ProjectId,
-    pub expected_revision: u64,
-    pub previous_work_item_id: WorkItemId,
-    pub text: String,
-    pub reason: String,
-}
-
-#[tauri::command]
-pub fn replace_commitment(
-    service: State<'_, Service>,
-    input: ReplaceCommitmentInput,
-) -> CommandResult<ProjectOverviewDto> {
-    service.apply_project_mutation(ProjectMutationInput {
-        project_id: input.project_id,
-        expected_revision: input.expected_revision,
-        command: MutationCommand::ReplaceCommitment {
-            previous_work_item_id: input.previous_work_item_id,
-            text: input.text,
-            reason: input.reason,
-        },
-    })
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ClearCommitmentInput {
-    pub project_id: ProjectId,
-    pub expected_revision: u64,
-    pub work_item_id: WorkItemId,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
-#[tauri::command]
-pub fn clear_commitment(
-    service: State<'_, Service>,
-    input: ClearCommitmentInput,
-) -> CommandResult<ProjectOverviewDto> {
-    service.apply_project_mutation(ProjectMutationInput {
-        project_id: input.project_id,
-        expected_revision: input.expected_revision,
-        command: MutationCommand::ClearCommitment {
-            work_item_id: input.work_item_id,
-            reason: input.reason,
-        },
-    })
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UndoCommitmentTransitionInput {
-    pub project_id: ProjectId,
-    pub expected_revision: u64,
-    pub transition_id: CommitmentTransitionId,
-}
-
-#[tauri::command]
-pub fn undo_commitment_transition(
-    service: State<'_, Service>,
-    input: UndoCommitmentTransitionInput,
-) -> CommandResult<ProjectOverviewDto> {
-    service.apply_project_mutation(ProjectMutationInput {
-        project_id: input.project_id,
-        expected_revision: input.expected_revision,
-        command: MutationCommand::Undo {
-            transition_id: input.transition_id,
-        },
-    })
-}
-
-// ---------------------------------------------------------------------------
-// MVP Record / Advance
+// Steps, commits, and the Agent breakdown
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -331,6 +196,11 @@ pub struct AddTaskInput {
     pub text: String,
     #[serde(default)]
     pub unclear: bool,
+    /// Where the step lands. Both omitted appends it at top level.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub after_id: Option<String>,
 }
 #[tauri::command]
 pub fn add_task(input: AddTaskInput) -> CommandResult<TaskListDto> {
@@ -339,6 +209,8 @@ pub fn add_task(input: AddTaskInput) -> CommandResult<TaskListDto> {
         input.expected_revision,
         input.text,
         input.unclear,
+        input.parent_id,
+        input.after_id,
     )
 }
 
@@ -347,6 +219,9 @@ pub struct UpdateTaskInput {
     pub project_id: ProjectId,
     pub expected_revision: String,
     pub id: String,
+    /// Omitted/null leaves the stored text unchanged; a string renames the step.
+    #[serde(default)]
+    pub text: Option<String>,
     pub status: String,
     pub due: Option<String>,
     pub note: Option<String>,
@@ -360,10 +235,33 @@ pub fn update_task(input: UpdateTaskInput) -> CommandResult<TaskListDto> {
         input.project_id,
         input.expected_revision,
         input.id,
+        input.text,
         input.status,
         input.due,
         input.note,
         input.tags,
+    )
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MoveTaskInput {
+    pub project_id: ProjectId,
+    pub expected_revision: String,
+    pub id: String,
+    /// Null is top level; null `after_id` puts the step first among its new siblings.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub after_id: Option<String>,
+}
+#[tauri::command]
+pub fn move_task(input: MoveTaskInput) -> CommandResult<TaskListDto> {
+    crate::mvp::move_task(
+        input.project_id,
+        input.expected_revision,
+        input.id,
+        input.parent_id,
+        input.after_id,
     )
 }
 
@@ -424,6 +322,22 @@ pub fn get_git_graph(input: TimelineInput) -> CommandResult<Vec<crate::mvp::Grap
 }
 
 #[derive(Debug, Deserialize)]
+pub struct HeatmapInput {
+    pub project_id: ProjectId,
+    /// Number of daily columns, oldest → newest. Defaults to a year plus the partial
+    /// leading week, so the grid renders as 53 full columns of 7.
+    #[serde(default = "default_heatmap_days")]
+    pub days: usize,
+}
+fn default_heatmap_days() -> usize {
+    371
+}
+#[tauri::command]
+pub fn get_commit_heatmap(input: HeatmapInput) -> CommandResult<crate::mvp::CommitHeatmapDto> {
+    crate::mvp::get_commit_heatmap(input.project_id, input.days)
+}
+
+#[derive(Debug, Deserialize)]
 pub struct AdvanceInput {
     pub project_id: ProjectId,
     pub id: String,
@@ -439,6 +353,9 @@ pub struct AdoptInput {
     pub expected_revision: String,
     pub proposal_id: String,
     pub texts: Vec<String>,
+    /// The step that was broken down. Adopted items become its sub-steps.
+    #[serde(default)]
+    pub parent_id: Option<String>,
 }
 #[tauri::command]
 pub fn adopt_subtasks(input: AdoptInput) -> CommandResult<TaskListDto> {
@@ -447,97 +364,7 @@ pub fn adopt_subtasks(input: AdoptInput) -> CommandResult<TaskListDto> {
         input.expected_revision,
         input.proposal_id,
         input.texts,
-    )
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PromoteTaskInput {
-    pub project_id: ProjectId,
-    pub task_id: String,
-    pub expected_task_revision: String,
-    pub expected_project_revision: u64,
-}
-
-#[tauri::command]
-pub fn promote_task_to_commitment(
-    service: State<'_, Service>,
-    input: PromoteTaskInput,
-) -> CommandResult<ProjectOverviewDto> {
-    if input.expected_task_revision != input.expected_project_revision.to_string() {
-        return Err(crate::error::CommandError::invalid_input(
-            "task and project revisions must match",
-        ));
-    }
-    crate::mvp::promote_work_item_to_commitment(
-        &input.project_id,
-        &input.task_id,
-        &input.expected_task_revision,
-    )?;
-    service.get_project_overview(input.project_id)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PlanInput {
-    pub project_id: ProjectId,
-}
-
-#[tauri::command]
-pub fn get_plan(input: PlanInput) -> CommandResult<crate::mvp::PlanListDto> {
-    crate::mvp::get_plan(input.project_id)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AddPlanEntryInput {
-    pub project_id: ProjectId,
-    pub expected_revision: String,
-    pub title: String,
-    #[serde(default)]
-    pub body: String,
-}
-
-#[tauri::command]
-pub fn add_plan_entry(input: AddPlanEntryInput) -> CommandResult<crate::mvp::PlanListDto> {
-    crate::mvp::add_plan_entry(
-        input.project_id,
-        input.expected_revision,
-        input.title,
-        input.body,
-    )
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SetPlanStatusInput {
-    pub project_id: ProjectId,
-    pub expected_revision: String,
-    pub id: String,
-    pub status: String,
-}
-
-#[tauri::command]
-pub fn set_plan_status(input: SetPlanStatusInput) -> CommandResult<crate::mvp::PlanListDto> {
-    crate::mvp::set_plan_status(
-        input.project_id,
-        input.expected_revision,
-        input.id,
-        input.status,
-    )
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SetPlanCommitInput {
-    pub project_id: ProjectId,
-    pub expected_revision: String,
-    pub id: String,
-    pub commit: Option<String>,
-}
-
-#[tauri::command]
-pub fn set_plan_commit(input: SetPlanCommitInput) -> CommandResult<crate::mvp::PlanListDto> {
-    crate::mvp::set_plan_commit(
-        input.project_id,
-        input.expected_revision,
-        input.id,
-        input.commit,
+        input.parent_id,
     )
 }
 
@@ -577,22 +404,10 @@ pub fn test_reminder<R: Runtime>(app: AppHandle<R>) -> CommandResult<()> {
         })
 }
 
-#[tauri::command]
-pub fn get_dogfood_summary() -> CommandResult<crate::mvp::DogfoodSummaryDto> {
-    crate::mvp::dogfood_summary()
-}
-
 #[derive(Debug, Deserialize)]
 pub struct RecordReentryEventInput {
     pub project_id: ProjectId,
     pub duration_seconds: u64,
-}
-
-#[tauri::command]
-pub fn record_reentry_event(
-    input: RecordReentryEventInput,
-) -> CommandResult<crate::mvp::DogfoodSummaryDto> {
-    crate::mvp::record_reentry_event(input.project_id, input.duration_seconds)
 }
 
 #[tauri::command]

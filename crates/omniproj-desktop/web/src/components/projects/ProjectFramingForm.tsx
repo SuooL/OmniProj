@@ -1,8 +1,11 @@
-// Framing = the Human's intent: objective, desired outcome, optional phase, and (in setup) the
-// first commitment. In `setup` this is ONE atomic `complete_project_setup` that promotes the
-// project to active in a single revision — there is no intermediate framing write. For an
-// already-active project it is `save_project_framing`. Either way the save is explicit (a
-// button, never blur) and the draft survives a failed write.
+// Two jobs, one form.
+//
+// In `setup` it asks for the first step and nothing else, and completes setup in a single
+// atomic write — the project goes from registered to usable in one revision. For a project
+// that is already active it edits the optional one-line note under the project name.
+//
+// It used to demand an "objective" and a "desired outcome" before it would let you write
+// anything down. That was a questionnaire in front of a to-do list.
 
 import { useState } from "react";
 
@@ -19,10 +22,8 @@ export function ProjectFramingForm({ overview }: ProjectFramingFormProps) {
   const { locale, t } = useI18n();
   const mutation = useOverviewMutation();
   const isSetup = overview.status === "setup";
-  const [objective, setObjective] = useState(overview.objective ?? "");
-  const [desiredOutcome, setDesiredOutcome] = useState(overview.desired_outcome ?? "");
-  const [phase, setPhase] = useState(overview.phase ?? "");
-  const [firstCommitment, setFirstCommitment] = useState("");
+  const [note, setNote] = useState(overview.objective ?? "");
+  const [firstStep, setFirstStep] = useState("");
   const [failed, setFailed] = useState(false);
 
   const pid = overview.project_id;
@@ -30,7 +31,6 @@ export function ProjectFramingForm({ overview }: ProjectFramingFormProps) {
 
   async function save() {
     setFailed(false);
-    const phaseValue = phase.trim() === "" ? null : phase.trim();
     const result = isSetup
       ? await mutation.run(
           pid,
@@ -38,10 +38,10 @@ export function ProjectFramingForm({ overview }: ProjectFramingFormProps) {
             api.completeProjectSetup({
               project_id: pid,
               expected_revision: rev,
-              objective: objective.trim(),
-              desired_outcome: desiredOutcome.trim(),
-              phase: phaseValue,
-              first_commitment: firstCommitment.trim(),
+              objective: note.trim(),
+              desired_outcome: "",
+              phase: null,
+              first_commitment: firstStep.trim(),
             }),
           t("framing.setupSuccess"),
         )
@@ -51,20 +51,16 @@ export function ProjectFramingForm({ overview }: ProjectFramingFormProps) {
             api.saveProjectFraming({
               project_id: pid,
               expected_revision: rev,
-              objective: objective.trim(),
-              desired_outcome: desiredOutcome.trim(),
-              phase: phaseValue,
+              objective: note.trim(),
+              desired_outcome: overview.desired_outcome ?? "",
+              phase: overview.phase,
             }),
           t("framing.saveSuccess"),
         );
     if (result.status !== "success") setFailed(true);
   }
 
-  const canSubmit =
-    objective.trim() !== "" &&
-    desiredOutcome.trim() !== "" &&
-    (!isSetup || firstCommitment.trim() !== "") &&
-    !mutation.pending;
+  const canSubmit = (!isSetup || firstStep.trim() !== "") && !mutation.pending;
 
   return (
     <section
@@ -73,51 +69,31 @@ export function ProjectFramingForm({ overview }: ProjectFramingFormProps) {
       data-testid="framing-form"
     >
       <div className="op-section__header">
-        <div>
-          <p className="op-section__kicker">{t("framing.kicker")}</p>
-          <h3 id="framing-heading">{isSetup ? t("framing.setupTitle") : t("framing.title")}</h3>
-        </div>
+        <h3 id="framing-heading">{isSetup ? t("framing.setupTitle") : t("framing.title")}</h3>
       </div>
-      {isSetup && (
-        <p className="op-section__intro">
-          {t("framing.setupIntro")}
-        </p>
-      )}
+      {isSetup && <p className="op-section__intro">{t("framing.setupIntro")}</p>}
       <div className="op-form-grid">
-        <label className="op-field op-field--wide">
-          <span>{t("framing.objective")}</span>
-          {/* Setup focuses the objective first (spec 9.4 order). */}
-          <input
-            aria-label={t("framing.objective")}
-            autoFocus={isSetup}
-            value={objective}
-            onChange={(e) => setObjective(e.target.value)}
-          />
-        </label>
-        <label className="op-field op-field--wide">
-          <span>{t("framing.desiredOutcome")}</span>
-          <input
-            aria-label={t("framing.desiredOutcome")}
-            value={desiredOutcome}
-            onChange={(e) => setDesiredOutcome(e.target.value)}
-          />
-        </label>
-        <label className="op-field">
-          <span>
-            {t("framing.phase")} <small>{t("framing.optional")}</small>
-          </span>
-          <input aria-label={t("framing.phase")} value={phase} onChange={(e) => setPhase(e.target.value)} />
-        </label>
         {isSetup && (
           <label className="op-field op-field--wide">
-            <span>{t("framing.firstCommitment")}</span>
+            <span>{t("framing.firstStep")}</span>
             <input
-              aria-label={t("framing.firstCommitment")}
-              value={firstCommitment}
-              onChange={(e) => setFirstCommitment(e.target.value)}
+              aria-label={t("framing.firstStep")}
+              autoFocus
+              value={firstStep}
+              onChange={(event) => setFirstStep(event.target.value)}
             />
           </label>
         )}
+        <label className="op-field op-field--wide">
+          <span>
+            {t("framing.note")} <small>{t("framing.optional")}</small>
+          </span>
+          <input
+            aria-label={t("framing.note")}
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </label>
       </div>
       <div className="op-section__footer">
         <button

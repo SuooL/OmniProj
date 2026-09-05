@@ -90,7 +90,6 @@ export function ProjectsIndexPage() {
       {data && (
         <ProjectsIndex
           projects={data.projects}
-          reviewPolicy={data.review_policy}
           now={now}
           onAddProject={openAddProject}
         />

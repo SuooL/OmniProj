@@ -8,18 +8,16 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
-import type { ReviewPolicy } from "../domain/project";
 import { indexItem } from "../test/fixtures";
 import { ProjectsIndex } from "../components/projects/ProjectsIndex";
 import { I18nProvider } from "./I18nProvider";
 import type { Locale } from "./I18nProvider";
 
 const NOW = new Date("2026-08-12T12:00:00Z");
-const POLICY: ReviewPolicy = { commitment_review_days: 7, rule_version: "r1-v1" };
 
 // A long, unique, always-rendered string, so the assertion can't collide with a badge.
-const GROUP_LABEL_ZH = "其他项目";
-const GROUP_LABEL_EN = "Other projects";
+const SORT_ZH = "排序";
+const SORT_EN = "Sort";
 
 function renderLocalizedIndex(locale: Locale) {
   return render(
@@ -27,7 +25,6 @@ function renderLocalizedIndex(locale: Locale) {
       <MemoryRouter initialEntries={["/projects"]}>
         <ProjectsIndex
           projects={[indexItem()]}
-          reviewPolicy={POLICY}
           now={NOW}
           onAddProject={() => {}}
         />
@@ -39,15 +36,15 @@ function renderLocalizedIndex(locale: Locale) {
 describe("localized rendering of a real component tree", () => {
   it("renders the Chinese catalog under the zh-CN default", () => {
     renderLocalizedIndex("zh-CN");
-    expect(screen.getByText(GROUP_LABEL_ZH)).toBeInTheDocument();
-    expect(screen.getByText("全部")).toBeInTheDocument();
-    expect(screen.queryByText(GROUP_LABEL_EN)).not.toBeInTheDocument();
+    expect(screen.getByText(SORT_ZH)).toBeInTheDocument();
+    expect(screen.getByText("已归档")).toBeInTheDocument();
+    expect(screen.queryByText(SORT_EN)).not.toBeInTheDocument();
   });
 
   it("renders the English catalog under en", () => {
     renderLocalizedIndex("en");
-    expect(screen.getByText(GROUP_LABEL_EN)).toBeInTheDocument();
-    expect(screen.getByText("All")).toBeInTheDocument();
-    expect(screen.queryByText(GROUP_LABEL_ZH)).not.toBeInTheDocument();
+    expect(screen.getByText(SORT_EN)).toBeInTheDocument();
+    expect(screen.getByText("Archived")).toBeInTheDocument();
+    expect(screen.queryByText(SORT_ZH)).not.toBeInTheDocument();
   });
 });

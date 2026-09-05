@@ -1,8 +1,9 @@
 import { useI18n } from "../../i18n/I18nProvider";
 
-export function ActivitySparkline({ weeks }: { weeks: number[] }) {
+/** Sixteen weekly commit counts as a compact strip: has this project been touched lately? */
+export function ActivitySparkline({ weeks }: { weeks: number[] | undefined }) {
   const { t } = useI18n();
-  const normalized = [...weeks.slice(-16)];
+  const normalized = Array.isArray(weeks) ? [...weeks.slice(-16)] : [];
   while (normalized.length < 16) normalized.unshift(0);
   const max = Math.max(1, ...normalized);
   const total = normalized.reduce((sum, count) => sum + count, 0);

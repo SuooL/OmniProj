@@ -507,6 +507,7 @@ fn work_item(id: &str, status: WorkItemStatus, due: Option<&str>) -> WorkItem {
         project_id: project_id(),
         text: format!("task {id}"),
         status,
+        parent_id: None,
         unclear: false,
         due: due.map(str::to_owned),
         note: None,

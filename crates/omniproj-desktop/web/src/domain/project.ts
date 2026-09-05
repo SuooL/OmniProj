@@ -125,6 +125,9 @@ export interface ProjectIndexItem {
   observed_actual: ObservedActual | null;
   review_reasons: ReviewReason[];
   source_status: ProjectSourceStatus;
+  /** Steps not yet done, and steps in total. */
+  open_steps: number;
+  total_steps: number;
   revision: number;
   source_revision: number;
 }
@@ -160,6 +163,10 @@ export interface Task {
   id: string;
   text: string;
   status: "open" | "doing" | "done";
+  /** The step this is a sub-step of; null at top level. */
+  parent_id: string | null;
+  /** How deep this step sits (0 = top level). Derived server-side from `parent_id`. */
+  depth: number;
   unclear: boolean;
   due: string | null;
   note: string | null;
@@ -189,6 +196,9 @@ export interface TimelineCommit {
   attributed_task_ids: string[];
 }
 export interface GraphCommit { sha: string; short_sha: string; parents: string[]; refs: string[]; committed_at: string; author: string; subject: string; }
+
+/** Daily commit counts, oldest → newest; `last_day` (YYYY-MM-DD) labels the final entry. */
+export interface CommitHeatmap { days: number[]; last_day: string; }
 
 export type PlanStatus = "planned" | "doing" | "done" | "abandoned";
 export interface PlanEntry { id: string | null; date: string; title: string; status: PlanStatus; commit: string | null; body: string; }

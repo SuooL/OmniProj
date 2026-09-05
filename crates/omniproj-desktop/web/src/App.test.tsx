@@ -206,9 +206,7 @@ describe("filter/sort in search params", () => {
     renderAppAt("/projects?q=alpha&sort=name", [indexItem({ name: "Alpha" })]);
     await screen.findByTestId("projects-index");
     expect(screen.getByLabelText(/filter projects/i)).toHaveValue("alpha");
-    expect(screen.getByRole("combobox", { name: /review order/i })).toHaveValue(
-      "name",
-    );
+    expect(screen.getByRole("combobox", { name: /sort/i })).toHaveValue("name");
   });
 });
 

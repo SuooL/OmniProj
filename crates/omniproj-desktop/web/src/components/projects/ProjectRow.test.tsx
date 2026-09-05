@@ -1,17 +1,12 @@
-// Row-level contract: four fields, the badge budget, the observed-fact edge cases, and the
-// absence of forbidden row content (no CommitmentStateTag in the Index, no path, no ranking).
+// Row-level contract: what the row reports, the observed-fact edge cases, and the absence
+// of the signals the redesign removed (no review badge, no commitment text, no ranking).
 
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import { projectId } from "../../domain/project";
-import {
-  currentCommitment,
-  indexItem,
-  observedActual,
-  reviewReason,
-} from "../../test/fixtures";
+import { indexItem, observedActual, reviewReason } from "../../test/fixtures";
 import { ProjectRow } from "./ProjectRow";
 
 const NOW = new Date("2026-08-12T12:00:00Z");
@@ -26,23 +21,22 @@ function renderRow(item = indexItem()) {
   );
 }
 
-describe("four fields behind one canonical link", () => {
-  it("links to the canonical Overview with the project name as its accessible name", () => {
+describe("what the row reports", () => {
+  it("links to the canonical Overview, and its accessible name conveys the whole row", () => {
     renderRow(indexItem({ project_id: projectId("p-42"), name: "Atlas" }));
     const link = screen.getByRole("link", { name: /^Atlas\b/ });
     expect(link).toHaveAttribute("href", "/projects/p-42/overview");
-    // The composed accessible name conveys the whole row, not just the project name.
-    expect(link).toHaveAccessibleName(/Atlas\. .*Commitment/);
+    expect(link).toHaveAccessibleName(/Atlas\. .*steps left/);
   });
 
-  it("shows the commitment and compact delta without leaking raw commit detail", () => {
+  it("shows how much is left, the branch, and when it was last touched", () => {
     renderRow(
       indexItem({
         name: "Atlas",
-        current_commitment: currentCommitment({ text: "Wire the service" }),
+        open_steps: 3,
+        total_steps: 7,
         observed_actual: observedActual({
           head: { kind: "attached", branch: "feature/x" },
-          commits_since_commitment: 3,
           last_commit: {
             sha: "b".repeat(40),
             short_sha: "bbbbbbb",
@@ -52,54 +46,32 @@ describe("four fields behind one canonical link", () => {
         }),
       }),
     );
-    expect(screen.getByText("Wire the service")).toBeInTheDocument();
+    expect(screen.getByText("3 of 7 steps left")).toBeInTheDocument();
     expect(screen.getByText("feature/x")).toBeInTheDocument();
-    expect(screen.getByText("3 commit(s) since")).toBeInTheDocument();
-    expect(screen.getByText("clean")).toBeInTheDocument();
-    expect(screen.queryByText(/bbbbbbb add thing/)).not.toBeInTheDocument();
+    // Commit subjects belong on the project page, not in a list row.
+    expect(screen.queryByText(/add thing/)).not.toBeInTheDocument();
   });
-});
 
-describe("badge budget", () => {
-  it("renders at most one state tag, one review badge, three fact labels, and no commitment tag", () => {
+  it("says so plainly when a project has no steps at all", () => {
+    renderRow(indexItem({ open_steps: 0, total_steps: 0 }));
+    expect(screen.getByText("No steps yet")).toBeInTheDocument();
+  });
+
+  it("carries a compact activity strip drawn from the observed weekly counts", () => {
     const { container } = renderRow(
-      indexItem({
-        status: "waiting",
-        review_reasons: [
-          reviewReason("needs_commitment"),
-          reviewReason("review_action"),
-        ],
-      }),
+      indexItem({ observed_actual: observedActual({ commit_activity_weeks: [0, 1, 4, 2] }) }),
     );
-    expect(container.querySelectorAll("[data-state]")).toHaveLength(1); // ProjectStateTag
-    expect(container.querySelectorAll("[data-reason]")).toHaveLength(1); // primary ReviewSignalBadge
-    expect(container.querySelectorAll(".op-fact").length).toBeLessThanOrEqual(3);
-    expect(container.querySelectorAll("[data-commit-status]")).toHaveLength(0); // NOT in Index
-  });
-
-  it("shows a plain +N for extra review reasons, not a second badge", () => {
-    renderRow(
-      indexItem({
-        review_reasons: [
-          reviewReason("needs_commitment"),
-          reviewReason("review_action"),
-          reviewReason("scheduled_review"),
-        ],
-      }),
-    );
-    const plusN = screen.getByText("+2");
-    expect(plusN).not.toHaveClass("op-badge");
-    expect(plusN).toHaveAttribute("aria-label", expect.stringContaining("2 more review reasons"));
+    expect(container.querySelector("[data-testid='activity-sparkline']")).not.toBeNull();
   });
 });
 
 describe("observed-actual edge cases", () => {
   it("labels a detached HEAD", () => {
     renderRow(indexItem({ observed_actual: observedActual({ head: { kind: "detached" } }) }));
-    expect(screen.getByText("detached HEAD")).toBeInTheDocument();
+    expect(screen.getByText("Detached HEAD")).toBeInTheDocument();
   });
 
-  it("labels an unborn branch and no commits", () => {
+  it("labels an unborn branch", () => {
     renderRow(
       indexItem({
         observed_actual: observedActual({
@@ -108,44 +80,38 @@ describe("observed-actual edge cases", () => {
         }),
       }),
     );
-    expect(screen.getByText("main (unborn)")).toBeInTheDocument();
-    expect(screen.getByText("no commits")).toBeInTheDocument();
+    expect(screen.getByText("main (unborn, no commits yet)")).toBeInTheDocument();
   });
 
   it("carries the exact observed timestamp as a title", () => {
     renderRow(
-      indexItem({
-        observed_actual: observedActual({ observed_at: "2026-08-10T08:30:00Z" }),
-      }),
+      indexItem({ observed_actual: observedActual({ observed_at: "2026-08-10T08:30:00Z" }) }),
     );
     expect(screen.getByTitle("2026-08-10T08:30:00Z")).toBeInTheDocument();
   });
 
   it("says Not yet observed when there is no observation", () => {
-    renderRow(indexItem({ observed_actual: null, current_commitment: null }));
+    renderRow(indexItem({ observed_actual: null }));
     expect(screen.getByText("Not yet observed")).toBeInTheDocument();
   });
 });
 
-describe("commitment states", () => {
-  it("shows a missing-commitment placeholder", () => {
-    renderRow(indexItem({ current_commitment: null }));
-    expect(screen.getByText("No current commitment")).toBeInTheDocument();
-  });
-
-});
-
-describe("re-entry signal budget", () => {
-  it("keeps charts, source paths, and health ranking out of the default row", () => {
+describe("signals the row must not carry", () => {
+  it("shows no review badge, no commitment text, no source path, and no ranking", () => {
     const { container } = renderRow(
-      indexItem({ name: "Atlas" }),
+      indexItem({
+        name: "Atlas",
+        status: "waiting",
+        review_reasons: [reviewReason("needs_commitment"), reviewReason("review_action")],
+      }),
     );
-    // The Index DTO carries no source location; assert none leaked into the row.
     const row = within(container.querySelector("li") as HTMLElement);
+    expect(container.querySelectorAll("[data-reason]")).toHaveLength(0);
+    expect(row.queryByText(/commitment/i)).not.toBeInTheDocument();
     expect(row.queryByText(/\/Users\//)).not.toBeInTheDocument();
-    expect(container.querySelector("[data-testid='activity-sparkline']")).toBeNull();
-    expect(screen.queryByRole("img", { name: /commits in the last 16 weeks/i })).not.toBeInTheDocument();
     expect(container.querySelector("[data-testid='health']")).toBeNull();
     expect(container.querySelector("[data-testid='git-graph']")).toBeNull();
+    // One lifecycle tag is still allowed; it is a fact the user set, not a judgement.
+    expect(container.querySelectorAll("[data-state]")).toHaveLength(1);
   });
 });

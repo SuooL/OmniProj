@@ -12,6 +12,8 @@ import type {
   ReviewPolicy,
   ReviewReason,
   ReviewReasonCode,
+  Task,
+  TaskList,
 } from "../domain/project";
 import {
   projectId,
@@ -125,6 +127,8 @@ export function indexItem(
     observed_actual: observedActual(),
     review_reasons: [],
     source_status: "available",
+    open_steps: 2,
+    total_steps: 5,
     revision: 1,
     source_revision: 1,
     ...overrides,
@@ -162,4 +166,30 @@ export function overview(
     revision: 1,
     ...overrides,
   };
+}
+
+/** One step in the outline. `depth` and `parent_id` are the backend's, mirrored here. */
+export function task(overrides: Partial<Task> = {}): Task {
+  return {
+    id: "task-1",
+    text: "Extract reports",
+    status: "open",
+    parent_id: null,
+    depth: 0,
+    unclear: false,
+    due: null,
+    note: null,
+    tags: [],
+    commits: [],
+    adopted_from_proposal_id: null,
+    was_committed: false,
+    is_current_commitment: false,
+    updated_at: "2026-08-10T12:00:00Z",
+    ...overrides,
+  };
+}
+
+/** A flat list of steps plus the revision every write is checked against. */
+export function taskList(tasks: Task[], revision = "1"): TaskList {
+  return { revision, tasks };
 }

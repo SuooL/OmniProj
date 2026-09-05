@@ -1,5 +1,5 @@
-// Project Overview contract: content order, atomic setup, source-failure recovery,
-// commitment mutations with the full error model, Undo gating, focus, and responsive behavior.
+// Project page contract: content order, the outline's keyboard model and write path,
+// atomic setup, source-failure recovery, lifecycle, focus, and responsive behavior.
 // Exercised through <App/> so routing, the announcer live regions, and the query cache all run
 // exactly as they ship.
 
@@ -12,10 +12,9 @@ const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
 import { App } from "../../App";
-import { transitionId, type ProjectOverview } from "../../domain/project";
+import type { ProjectOverview } from "../../domain/project";
 import { queryKeys } from "../../queryKeys";
 import {
-  commitmentTransition,
   indexItem,
   indexResponse,
   observedActual,
@@ -23,6 +22,8 @@ import {
   projectSource,
   reviewPolicy,
   reviewReason,
+  task,
+  taskList,
 } from "../../test/fixtures";
 import { mediaState } from "../../test/setup";
 
@@ -85,69 +86,55 @@ beforeEach(() => {
 afterEach(() => invokeMock.mockReset());
 
 describe("content order and source", () => {
-  it("starts with the current next step and reveals repository detail only on demand", async () => {
+  it("puts the steps on the page itself and hides repository detail behind a disclosure", async () => {
     const user = userEvent.setup();
-    renderOverview(overview({ source: projectSource({ location: "/Users/dev/omni" }) }));
+    renderOverview(overview({ source: projectSource({ location: "/Users/dev/omni" }) }), {
+      get_tasks: () => taskList([task()]),
+    });
     await screen.findByTestId("project-overview");
 
-    const order = [
-      "overview-identity",
-      "reentry-context",
-    ].map((id) => screen.getByTestId(id));
-    // The next step is now the head of the task list rather than a surface of its own.
-    expect(screen.getByTestId("now-doing")).toBeInTheDocument();
+    // The list is the page. It is not behind a tab, an accordion, or a second click.
+    expect(await screen.findByTestId("task-outline")).toBeInTheDocument();
+    const identity = screen.getByTestId("overview-identity");
+    const outline = screen.getByTestId("task-outline");
+    expect(
+      identity.compareDocumentPosition(outline) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
 
-    for (let i = 1; i < order.length; i++) {
-      expect(
-        order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
+    // Reference material stays collapsed until asked for.
+    const commits = screen.getByText("Commits and branch graph").closest("details")!;
+    expect(commits).not.toHaveAttribute("open");
+    await user.click(screen.getByText("Commits and branch graph"));
+    expect(commits).toHaveAttribute("open");
+    expect(await screen.findByText("/Users/dev/omni")).toBeInTheDocument();
+  });
+
+  it("carries none of the vocabulary the redesign removed", async () => {
+    renderOverview(overview(), { get_tasks: () => taskList([task()]) });
+    await screen.findByTestId("project-overview");
+
+    for (const gone of [/commitment/i, /re-enter/i, /observed actual/i, /needs review/i]) {
+      expect(screen.queryByText(gone)).not.toBeInTheDocument();
     }
-    expect(screen.queryByTestId("source-path")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("observed-actual")).not.toBeInTheDocument();
-
-    await user.click(screen.getByText("Planning and tasks"));
-    expect(screen.queryByTestId("source-path")).not.toBeInTheDocument();
-
-    await user.click(screen.getByText("View observed change"));
-    expect(await screen.findByTestId("observed-actual")).toBeInTheDocument();
-    expect(screen.getByTestId("source-path")).toHaveTextContent("/Users/dev/omni");
+    expect(screen.queryByTestId("now-doing")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("reentry-context")).not.toBeInTheDocument();
   });
 
-  it("shows the server-provided review-action evidence (interval + last set) verbatim", async () => {
-    renderOverview(
-      overview({
-        review_reasons: [
-          reviewReason("review_action", [
-            "Commitment review interval: 7 days",
-            "Last confirmed 2026-08-01T00:00:00Z",
-          ]),
-        ],
-      }),
-    );
-    await screen.findByTestId("review-reasons");
-    expect(screen.getByText("Commitment review interval: 7 days")).toBeInTheDocument();
-    expect(screen.getByText("Last confirmed 2026-08-01T00:00:00Z")).toBeInTheDocument();
-  });
-
-  it("on source failure shows cached facts with a timestamp and recovery, never inactivity wording", async () => {
-    const user = userEvent.setup();
+  it("on source failure offers recovery instead of stale-fact wording", async () => {
     renderOverview(
       overview({
         source: projectSource({ status: "missing" }),
         observed_actual: observedActual({ observed_at: "2026-08-10T09:00:00Z" }),
       }),
+      { get_tasks: () => taskList([]) },
     );
     expect(await screen.findByTestId("source-recovery")).toBeInTheDocument();
-    expect(screen.queryByTestId("observed-actual")).not.toBeInTheDocument();
     expect(screen.queryByText(/inactiv/i)).not.toBeInTheDocument();
-
-    await user.click(screen.getByText("View observed change"));
-    expect(await screen.findByTestId("observed-stale")).toBeInTheDocument();
   });
 });
 
 describe("atomic setup", () => {
-  it("focuses objective and completes setup in one call with expected revision, no prior framing write", async () => {
+  it("asks only for the first step, and completes setup in one call", async () => {
     const user = userEvent.setup();
     const ov = overview({
       status: "setup",
@@ -162,132 +149,110 @@ describe("atomic setup", () => {
     });
     await screen.findByTestId("framing-form");
 
-    expect(screen.getByLabelText("Objective")).toHaveFocus();
+    // The one required field takes focus; nothing else stands between the user and a list.
+    expect(screen.getByLabelText("First step")).toHaveFocus();
+    expect(screen.queryByLabelText("Objective")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Desired outcome")).not.toBeInTheDocument();
 
-    await user.type(screen.getByLabelText("Objective"), "Ship R0");
-    await user.type(screen.getByLabelText("Desired outcome"), "Dogfood");
-    await user.type(screen.getByLabelText("First commitment"), "Wire the service");
-    await user.click(screen.getByRole("button", { name: "Complete setup" }));
+    await user.type(screen.getByLabelText("First step"), "Wire the service");
+    await user.click(screen.getByRole("button", { name: "Start this project" }));
 
     await waitFor(() => expect(callsTo("complete_project_setup")).toHaveLength(1));
     expect(callsTo("save_project_framing")).toHaveLength(0);
     const [, arg] = callsTo("complete_project_setup")[0] as [string, { input: Record<string, unknown> }];
     expect(arg.input).toMatchObject({
       expected_revision: 0,
-      objective: "Ship R0",
-      desired_outcome: "Dogfood",
       first_commitment: "Wire the service",
     });
   });
 });
 
-// The commitment is no longer its own surface: it is the head of the task list. Tests for the
-// free-text "set commitment" form and the replace-with-reason form are gone with those forms.
-// The error model, refetch behaviour and Undo gating still apply and are exercised here through
-// the actions that remain.
-describe("the current step, run from the task list", () => {
-  const TASKS = { revision: "1", tasks: [] };
-  const completed = commitmentTransition({ type: "completed", id: transitionId("transition-9") });
+// The outline is the only place work is edited, so its keyboard model and its write path
+// are contract, not detail. The error model these tests exercise (conflict, refetch) used to
+// live on the commitment actions; it applies to every step write now.
+describe("the outline", () => {
+  const PARENT = task({ id: "step-1", text: "Extract reports" });
+  const CHILD = task({ id: "step-2", text: "OCR", parent_id: "step-1", depth: 1 });
+  const SECOND = task({ id: "step-3", text: "Build the framework" });
 
-  it("completes the current step and never auto-creates a replacement", async () => {
-    const user = userEvent.setup();
-    renderOverview(overview(), {
-      get_tasks: () => TASKS,
-      complete_commitment: () => overview({ current_commitment: null, revision: 2 }),
-    });
-    await screen.findByTestId("now-doing");
-    await user.click(screen.getByRole("button", { name: "Complete" }));
+  it("numbers top-level steps and nests sub-steps under them", async () => {
+    renderOverview(overview(), { get_tasks: () => taskList([PARENT, CHILD, SECOND]) });
+    const rows = await screen.findAllByTestId("outline-row");
 
-    await waitFor(() => expect(callsTo("complete_commitment")).toHaveLength(1));
-    expect(callsTo("set_commitment")).toHaveLength(0);
-    expect(callsTo("replace_commitment")).toHaveLength(0);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent("1.");
+    expect(rows[1]).toHaveAttribute("data-depth", "1");
+    // The sub-step is not numbered; numbering continues past it at the top level.
+    expect(rows[2]).toHaveTextContent("2.");
   });
 
-  it("switches away by releasing the step, with no replacement demanded up front", async () => {
+  it("ticks a step off in one click", async () => {
     const user = userEvent.setup();
     renderOverview(overview(), {
-      get_tasks: () => TASKS,
-      clear_commitment: () => overview({ current_commitment: null, revision: 2 }),
+      get_tasks: () => taskList([PARENT]),
+      update_task: () => taskList([{ ...PARENT, status: "done" }], "2"),
     });
-    await screen.findByTestId("now-doing");
-    await user.click(screen.getByRole("button", { name: "Switch away" }));
+    await screen.findByTestId("task-outline");
 
-    await waitFor(() => expect(callsTo("clear_commitment")).toHaveLength(1));
-    expect(callsTo("replace_commitment")).toHaveLength(0);
+    await user.click(screen.getByRole("checkbox", { name: /Extract reports/ }));
+
+    await waitFor(() => expect(callsTo("update_task")).toHaveLength(1));
+    const [, arg] = callsTo("update_task")[0] as [string, { input: Record<string, unknown> }];
+    expect(arg.input).toMatchObject({ id: "step-1", status: "done", expected_revision: "1" });
   });
 
-  it("on revision_conflict refetches and shows a comparison note", async () => {
+  it("Tab nests a step under the one above it", async () => {
     const user = userEvent.setup();
     renderOverview(overview(), {
-      get_tasks: () => TASKS,
-      complete_commitment: () => {
+      get_tasks: () => taskList([PARENT, SECOND]),
+      move_task: () => taskList([PARENT, { ...SECOND, parent_id: "step-1", depth: 1 }], "2"),
+    });
+    await screen.findByTestId("task-outline");
+
+    await user.click(screen.getByRole("button", { name: "Build the framework" }));
+    await user.keyboard("{Tab}");
+
+    await waitFor(() => expect(callsTo("move_task")).toHaveLength(1));
+    const [, arg] = callsTo("move_task")[0] as [string, { input: Record<string, unknown> }];
+    expect(arg.input).toMatchObject({ id: "step-3", parent_id: "step-1", after_id: null });
+  });
+
+  it("Enter adds the next step as a sibling, right after this one", async () => {
+    const user = userEvent.setup();
+    renderOverview(overview(), {
+      get_tasks: () => taskList([PARENT, CHILD]),
+      add_task: () => taskList([PARENT, CHILD, task({ id: "step-9", text: "", parent_id: "step-1", depth: 1 })], "2"),
+    });
+    await screen.findByTestId("task-outline");
+
+    await user.click(screen.getByRole("button", { name: "OCR" }));
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(callsTo("add_task")).toHaveLength(1));
+    const [, arg] = callsTo("add_task")[0] as [string, { input: Record<string, unknown> }];
+    expect(arg.input).toMatchObject({ parent_id: "step-1", after_id: "step-2" });
+  });
+
+  it("on a write conflict says so and reloads the list rather than retrying blind", async () => {
+    const user = userEvent.setup();
+    let reads = 0;
+    renderOverview(overview(), {
+      get_tasks: () => {
+        reads += 1;
+        return taskList([PARENT]);
+      },
+      update_task: () => {
         throw { code: "revision_conflict", message: "expected 1 found 2", retryable: false, state_applied: false };
       },
     });
-    await screen.findByTestId("now-doing");
-    await user.click(screen.getByRole("button", { name: "Complete" }));
+    await screen.findByTestId("task-outline");
+    const before = reads;
 
-    expect(await screen.findByTestId("conflict-note")).toBeInTheDocument();
-    await waitFor(() => expect(callsTo("get_project_overview").length).toBeGreaterThanOrEqual(2));
-  });
+    await user.click(screen.getByRole("checkbox", { name: /Extract reports/ }));
 
-  it("on store_write_failed offers Retry", async () => {
-    const user = userEvent.setup();
-    renderOverview(overview(), {
-      get_tasks: () => TASKS,
-      complete_commitment: () => {
-        throw { code: "store_write_failed", message: "disk full", retryable: true, state_applied: false };
-      },
-    });
-    await screen.findByTestId("now-doing");
-    await user.click(screen.getByRole("button", { name: "Complete" }));
-
-    const err = await screen.findByTestId("write-error");
-    expect(within(err).getByRole("button", { name: "Retry" })).toBeInTheDocument();
-  });
-
-  it("on audit_commit_failed (state_applied) announces, refetches, and never resends", async () => {
-    const user = userEvent.setup();
-    renderOverview(overview(), {
-      get_tasks: () => TASKS,
-      complete_commitment: () => {
-        throw {
-          code: "audit_commit_failed",
-          message: "saved as 5 but audit failed",
-          retryable: false,
-          state_applied: true,
-          durable_revision: 5,
-        };
-      },
-    });
-    await screen.findByTestId("now-doing");
-    await user.click(screen.getByRole("button", { name: "Complete" }));
-
-    expect(await screen.findByTestId("audit-failed-note")).toBeInTheDocument();
-    expect(screen.getByTestId("live-assertive")).toHaveTextContent(/state saved; audit commit failed/i);
-    expect(callsTo("complete_commitment")).toHaveLength(1); // never resent
-    await waitFor(() => expect(callsTo("get_project_overview").length).toBeGreaterThanOrEqual(2));
-  });
-
-  it("offers Undo for a completed step, but never for a set", async () => {
-    renderOverview(
-      overview({ last_transition: completed, undoable_transition_id: completed.id }),
-      { get_tasks: () => TASKS },
-    );
-    expect(await screen.findByTestId("undo-button")).toBeInTheDocument();
-  });
-
-  it("withholds Undo for a set, whose undo would abandon the task", async () => {
-    // `overview()` fixture's newest transition is a `set`.
-    renderOverview(overview(), { get_tasks: () => TASKS });
-    await screen.findByTestId("now-doing");
-    expect(screen.queryByTestId("undo-button")).not.toBeInTheDocument();
-  });
-
-  it("withholds Undo when no undoable transition is returned", async () => {
-    renderOverview(overview({ undoable_transition_id: null }), { get_tasks: () => TASKS });
-    await screen.findByTestId("now-doing");
-    expect(screen.queryByTestId("undo-button")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("outline-error")).toBeInTheDocument();
+    await waitFor(() => expect(reads).toBeGreaterThan(before));
+    expect(callsTo("update_task")).toHaveLength(1); // never resent
   });
 });
 
@@ -298,7 +263,7 @@ describe("lifecycle and source recovery", () => {
       set_project_status: () => overview({ status: "waiting", revision: 2 }),
     });
     await screen.findByTestId("project-overview");
-    await user.click(screen.getByText("Project management"));
+    await user.click(screen.getByText("Project settings"));
     const control = within(await screen.findByTestId("lifecycle-control"));
     await user.selectOptions(control.getByLabelText("Set status"), "waiting");
     const save = control.getByRole("button", { name: "Update status" });
@@ -325,7 +290,7 @@ describe("lifecycle and source recovery", () => {
       set_project_status: () => overview({ status: "active", revision: 2 }),
     });
     await screen.findByTestId("project-overview");
-    await user.click(screen.getByText("Project management"));
+    await user.click(screen.getByText("Project settings"));
     const control = within(await screen.findByTestId("lifecycle-control"));
 
     await user.selectOptions(control.getByLabelText("Set status"), "archived");
