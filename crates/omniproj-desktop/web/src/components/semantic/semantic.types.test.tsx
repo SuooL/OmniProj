@@ -4,10 +4,9 @@
 
 import { expect, it } from "vitest";
 
-import { CommitmentStateTag } from "./CommitmentStateTag";
+import { DateField } from "./DateField";
 import { FilterChip } from "./FilterChip";
 import { ProjectStateTag } from "./ProjectStateTag";
-import { ReviewSignalBadge } from "./ReviewSignalBadge";
 
 // Exported so noUnusedLocals does not flag it; never rendered.
 export function _rejectedUsages() {
@@ -19,12 +18,10 @@ export function _rejectedUsages() {
       <ProjectStateTag status="active" tone="danger" />
       {/* @ts-expect-error raw color is not a public prop */}
       <ProjectStateTag status="active" color="#ff0000" />
-      {/* @ts-expect-error unknown review reason code */}
-      <ReviewSignalBadge reason={{ code: "bogus", label: "x" }} />
-      {/* @ts-expect-error unknown commitment status */}
-      <CommitmentStateTag status="paused" />
       {/* @ts-expect-error tone is not a public prop */}
       <FilterChip label="All" pressed={false} onClick={() => {}} tone="info" />
+      {/* @ts-expect-error a date is a string, never a Date object */}
+      <DateField value={new Date()} today="2026-09-05" ariaLabel="Due" onChange={() => {}} />
     </>
   );
 }

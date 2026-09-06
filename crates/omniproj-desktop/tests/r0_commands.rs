@@ -185,6 +185,8 @@ fn mvp_task_writes_are_revision_checked_atomic_and_path_scoped() {
         initial.revision.clone(),
         "Validate cohort labels".into(),
         true,
+        None,
+        None,
     )
     .unwrap();
     assert_eq!(first.tasks.len(), 1);
@@ -196,6 +198,8 @@ fn mvp_task_writes_are_revision_checked_atomic_and_path_scoped() {
         initial.revision,
         "This must not overwrite".into(),
         false,
+        None,
+        None,
     )
     .unwrap_err();
     assert_eq!(stale.code, ErrorCode::RevisionConflict);
@@ -243,6 +247,7 @@ fn mvp_plan_link_and_advance_adoption_preserve_provenance() {
         tasks.revision,
         "proposal-1234".into(),
         vec!["Define the external cohort".into()],
+        None,
     )
     .unwrap();
     assert_eq!(
@@ -1030,7 +1035,24 @@ fn handler_rejects_deferred_commands_and_accepts_the_r0_surface() {
     };
 
     // Commands outside the reviewed surface remain rejected as unregistered.
-    for deferred in ["get_graph", "get_attention"] {
+    for deferred in [
+        "get_graph",
+        "get_attention",
+        // Retired with the commitment lifecycle, the decision log and the dogfood timer.
+        "set_commitment",
+        "confirm_commitment",
+        "complete_commitment",
+        "replace_commitment",
+        "clear_commitment",
+        "undo_commitment_transition",
+        "promote_task_to_commitment",
+        "get_plan",
+        "add_plan_entry",
+        "set_plan_status",
+        "set_plan_commit",
+        "get_dogfood_summary",
+        "record_reentry_event",
+    ] {
         let error = invoke(deferred, json!({})).expect_err("deferred command must be rejected");
         assert!(
             error
@@ -1053,33 +1075,22 @@ fn handler_rejects_deferred_commands_and_accepts_the_r0_surface() {
         "complete_project_setup",
         "save_project_framing",
         "set_project_status",
-        "set_commitment",
-        "confirm_commitment",
-        "complete_commitment",
-        "replace_commitment",
-        "clear_commitment",
-        "undo_commitment_transition",
         "get_tasks",
         "get_attention_summary",
         "get_focus_agenda",
         "add_task",
         "update_task",
+        "move_task",
         "remove_task",
         "attribute_commit",
         "unattribute_commit",
         "get_commit_timeline",
+        "get_commit_heatmap",
         "get_git_graph",
         "advance_task",
         "adopt_subtasks",
-        "promote_task_to_commitment",
-        "get_plan",
-        "add_plan_entry",
-        "set_plan_status",
-        "set_plan_commit",
         "get_reminder_settings",
         "set_reminder_settings",
-        "get_dogfood_summary",
-        "record_reentry_event",
     ];
     for command in r0_commands {
         let response = invoke(command, json!({}));
@@ -1125,6 +1136,8 @@ fn service_index_reports_overdue_work_and_orders_it_into_the_decision_queue() {
         tasks.revision,
         "Ship the overdue milestone".into(),
         false,
+        None,
+        None,
     )
     .unwrap();
     let late = tasks
@@ -1138,6 +1151,7 @@ fn service_index_reports_overdue_work_and_orders_it_into_the_decision_queue() {
         record.id.clone(),
         tasks.revision,
         late,
+        None,
         "open".into(),
         Some("2026-08-01".into()),
         None,
@@ -1204,7 +1218,15 @@ fn attention_summary_counts_projects_with_overdue_work() {
     }
 
     let tasks = mvp::get_tasks(record.id.clone()).unwrap();
-    let tasks = mvp::add_task(record.id.clone(), tasks.revision, "late".into(), false).unwrap();
+    let tasks = mvp::add_task(
+        record.id.clone(),
+        tasks.revision,
+        "late".into(),
+        false,
+        None,
+        None,
+    )
+    .unwrap();
     let late = tasks
         .tasks
         .iter()
@@ -1216,6 +1238,7 @@ fn attention_summary_counts_projects_with_overdue_work() {
         record.id.clone(),
         tasks.revision,
         late,
+        None,
         "open".into(),
         // A frozen past date: relative to any real wall clock this stays overdue.
         Some("2026-08-01".into()),
@@ -1243,6 +1266,8 @@ fn task_tags_normalize_persist_and_reject_invalid_sets() {
         tasks.revision,
         "write eval".into(),
         false,
+        None,
+        None,
     )
     .unwrap();
     let id = tasks.tasks[0].id.clone();
@@ -1252,6 +1277,7 @@ fn task_tags_normalize_persist_and_reject_invalid_sets() {
         record.id.clone(),
         tasks.revision,
         id.clone(),
+        None,
         "open".into(),
         None,
         None,
@@ -1284,6 +1310,7 @@ fn task_tags_normalize_persist_and_reject_invalid_sets() {
         record.id.clone(),
         reloaded.revision.clone(),
         id.clone(),
+        None,
         "open".into(),
         None,
         None,
@@ -1301,6 +1328,7 @@ fn task_tags_normalize_persist_and_reject_invalid_sets() {
         record.id,
         reloaded.revision,
         id,
+        None,
         "doing".into(),
         None,
         None,
@@ -1348,7 +1376,15 @@ fn focus_agenda_aggregates_overdue_and_today_across_active_projects_only() {
 
     for (project, text) in [(&late.id, "ship it"), (&parked.id, "ignored while parked")] {
         let tasks = mvp::get_tasks(project.clone()).unwrap();
-        let tasks = mvp::add_task(project.clone(), tasks.revision, text.into(), false).unwrap();
+        let tasks = mvp::add_task(
+            project.clone(),
+            tasks.revision,
+            text.into(),
+            false,
+            None,
+            None,
+        )
+        .unwrap();
         let id = tasks
             .tasks
             .iter()
@@ -1360,6 +1396,7 @@ fn focus_agenda_aggregates_overdue_and_today_across_active_projects_only() {
             project.clone(),
             tasks.revision,
             id,
+            None,
             "open".into(),
             Some("2026-08-01".into()),
             None,
@@ -1380,4 +1417,75 @@ fn focus_agenda_aggregates_overdue_and_today_across_active_projects_only() {
     // The clean Active project and the parked one never appear.
     assert!(!agenda.projects.iter().any(|p| p.project_id == clean.id));
     assert!(!agenda.projects.iter().any(|p| p.project_id == parked.id));
+}
+
+#[test]
+fn the_task_list_carries_the_outline_shape_the_view_renders() {
+    let _guard = env_guard();
+    let _home = Home::new("mvp-task-outline");
+    let repo = repo_with_commit("mvp-task-outline-repo");
+    let record = register(&repo, "Outline project");
+
+    let empty = mvp::get_tasks(record.id.clone()).unwrap();
+    let after_parent = mvp::add_task(
+        record.id.clone(),
+        empty.revision,
+        "Extract reports".into(),
+        false,
+        None,
+        None,
+    )
+    .unwrap();
+    let parent_id = after_parent.tasks[0].id.clone();
+
+    // A sub-step names its parent explicitly …
+    let nested = mvp::add_task(
+        record.id.clone(),
+        after_parent.revision,
+        "OCR".into(),
+        false,
+        Some(parent_id.clone()),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        nested.tasks[1].parent_id.as_deref(),
+        Some(parent_id.as_str())
+    );
+    assert_eq!(nested.tasks[1].depth, 1);
+    assert_eq!(nested.tasks[0].depth, 0);
+
+    // … and outdenting it back to top level is one move.
+    let flattened = mvp::move_task(
+        record.id.clone(),
+        nested.revision,
+        nested.tasks[1].id.clone(),
+        None,
+        Some(parent_id.clone()),
+    )
+    .unwrap();
+    assert_eq!(flattened.tasks[1].parent_id, None);
+    assert_eq!(flattened.tasks[1].depth, 0);
+    assert_eq!(
+        flattened
+            .tasks
+            .iter()
+            .map(|t| t.text.as_str())
+            .collect::<Vec<_>>(),
+        ["Extract reports", "OCR"]
+    );
+
+    // Renaming goes through the same update path as every other field.
+    let renamed = mvp::update_task(
+        record.id.clone(),
+        flattened.revision,
+        parent_id,
+        Some("Extract reports (structured)".into()),
+        "open".into(),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(renamed.tasks[0].text, "Extract reports (structured)");
 }

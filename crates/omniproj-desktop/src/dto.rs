@@ -206,6 +206,10 @@ pub struct ProjectIndexItemDto {
     pub observed_actual: Option<ObservedActualDto>,
     pub review_reasons: Vec<ReviewReasonDto>,
     pub source_status: ProjectSourceStatus,
+    /// Steps not yet done, and steps in total. The row answers "how much is left here"
+    /// without opening the project.
+    pub open_steps: u32,
+    pub total_steps: u32,
     /// Human-state revision (mutation conflict detection).
     pub revision: u64,
     /// Source-envelope revision (refresh/relink conflict detection).
@@ -453,9 +457,24 @@ pub fn assemble_index_item(
         source_status: source
             .map(|source| source.status)
             .unwrap_or(ProjectSourceStatus::Missing),
+        open_steps: step_count(state, |status| {
+            !matches!(status, WorkItemStatus::Done | WorkItemStatus::Abandoned)
+        }),
+        // Abandoned items are tombstones the task list already hides; they are not steps.
+        total_steps: step_count(state, |status| status != WorkItemStatus::Abandoned),
         revision: state.revision,
         source_revision: source.map(|source| source.revision).unwrap_or(0),
     }
+}
+
+fn step_count(state: &ProjectStateDoc, keep: impl Fn(WorkItemStatus) -> bool) -> u32 {
+    state
+        .work_items
+        .iter()
+        .filter(|item| keep(item.status))
+        .count()
+        .try_into()
+        .unwrap_or(u32::MAX)
 }
 
 /// Assemble the full Overview shared by Peek and full-page.

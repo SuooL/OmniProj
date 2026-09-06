@@ -5,11 +5,10 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
 import { api } from "./api";
 import { AppError } from "./domain/errors";
-import { projectId, transitionId, workItemId } from "./domain/project";
+import { projectId, workItemId } from "./domain/project";
 
 const pid = projectId("project-1");
 const wid = workItemId("work-1");
-const tid = transitionId("transition-1");
 
 afterEach(() => {
   invokeMock.mockReset();
@@ -104,55 +103,47 @@ describe("command names and the single snake_case input", () => {
       },
     },
     {
-      name: "set_commitment",
-      run: () => api.setCommitment({ project_id: pid, expected_revision: 1, text: "do it" }),
-      input: { project_id: pid, expected_revision: 1, text: "do it" },
-    },
-    {
-      name: "confirm_commitment",
+      name: "add_task",
       run: () =>
-        api.confirmCommitment({ project_id: pid, expected_revision: 1, work_item_id: wid }),
-      input: { project_id: pid, expected_revision: 1, work_item_id: wid },
-    },
-    {
-      name: "complete_commitment",
-      run: () =>
-        api.completeCommitment({ project_id: pid, expected_revision: 1, work_item_id: wid }),
-      input: { project_id: pid, expected_revision: 1, work_item_id: wid },
-    },
-    {
-      name: "replace_commitment",
-      run: () =>
-        api.replaceCommitment({
+        api.addTask({
           project_id: pid,
-          expected_revision: 1,
-          previous_work_item_id: wid,
-          text: "new",
-          reason: "changed my mind",
+          expected_revision: "1",
+          text: "OCR",
+          unclear: false,
+          parent_id: wid,
+          after_id: null,
         }),
       input: {
         project_id: pid,
-        expected_revision: 1,
-        previous_work_item_id: wid,
-        text: "new",
-        reason: "changed my mind",
+        expected_revision: "1",
+        text: "OCR",
+        unclear: false,
+        parent_id: wid,
+        after_id: null,
       },
     },
     {
-      name: "clear_commitment",
+      name: "move_task",
       run: () =>
-        api.clearCommitment({ project_id: pid, expected_revision: 1, work_item_id: wid }),
-      input: { project_id: pid, expected_revision: 1, work_item_id: wid },
+        api.moveTask({
+          project_id: pid,
+          expected_revision: "1",
+          id: wid,
+          parent_id: null,
+          after_id: null,
+        }),
+      input: {
+        project_id: pid,
+        expected_revision: "1",
+        id: wid,
+        parent_id: null,
+        after_id: null,
+      },
     },
     {
-      name: "undo_commitment_transition",
-      run: () =>
-        api.undoCommitmentTransition({
-          project_id: pid,
-          expected_revision: 2,
-          transition_id: tid,
-        }),
-      input: { project_id: pid, expected_revision: 2, transition_id: tid },
+      name: "get_commit_heatmap",
+      run: () => api.getCommitHeatmap(pid, 371),
+      input: { project_id: pid, days: 371 },
     },
   ];
 
@@ -180,9 +171,8 @@ describe("error classification", () => {
       retryable: false,
       state_applied: false,
     });
-    const error = await api
-      .setCommitment({ project_id: pid, expected_revision: 1, text: "x" })
-      .catch((e) => e);
+    const error = (await api.removeTask({ project_id: pid, expected_revision: "1", id: wid })
+      .catch((cause) => cause)) as AppError;
     expect(error).toBeInstanceOf(AppError);
     expect(error.code).toBe("revision_conflict");
     expect(error.recovery).toBe("refetch");
@@ -196,9 +186,8 @@ describe("error classification", () => {
       state_applied: true,
       durable_revision: 5,
     });
-    const error = await api
-      .confirmCommitment({ project_id: pid, expected_revision: 4, work_item_id: wid })
-      .catch((e) => e);
+    const error = (await api.removeTask({ project_id: pid, expected_revision: "1", id: wid })
+      .catch((cause) => cause)) as AppError;
     expect(error).toBeInstanceOf(AppError);
     expect(error.stateApplied).toBe(true);
     expect(error.durableRevision).toBe(5);
@@ -214,16 +203,16 @@ describe("error classification", () => {
       state_applied: false,
       existing_project_id: "project-2",
     });
-    const error = await api
+    const error = (await api
       .registerProject({ location: "/repo", name: "R" })
-      .catch((e) => e);
+      .catch((cause) => cause)) as AppError;
     expect(error.code).toBe("duplicate_source");
     expect(error.existingProjectId).toBe("project-2");
   });
 
   it("flattens an unknown rejection to a safe generic message", async () => {
     invokeMock.mockRejectedValue(new Error("stack trace: at foo (bar.rs:1)"));
-    const error = await api.listProjectIndex().catch((e) => e);
+    const error = (await api.listProjectIndex().catch((cause) => cause)) as AppError;
     expect(error).toBeInstanceOf(AppError);
     expect(error.code).toBe("unknown");
     expect(error.recovery).toBe("none");
@@ -237,9 +226,8 @@ describe("error classification", () => {
       retryable: true,
       state_applied: false,
     });
-    const error = await api
-      .setCommitment({ project_id: pid, expected_revision: 1, text: "x" })
-      .catch((e) => e);
+    const error = (await api.removeTask({ project_id: pid, expected_revision: "1", id: wid })
+      .catch((cause) => cause)) as AppError;
     expect(error.recovery).toBe("retry");
   });
 });

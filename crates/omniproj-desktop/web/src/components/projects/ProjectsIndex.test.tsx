@@ -1,6 +1,9 @@
-// Index-level contract: visible column headers, the review-order label and DTO-sourced review
-// interval, deterministic order preservation (NEVER re-ranked), transparent opt-in sort, the
-// text/review filters, the empty-state recovery action, and archived recovery view.
+// Index-level contract: a plain list of projects with search, an opt-in sort, the
+// empty-state recovery action, and archived kept out of the way.
+//
+// What this file no longer asserts, because the surface no longer does it: the
+// "needs a decision" grouping, review-reason badges, and the review-interval line. The
+// list reports the projects; it does not rank them.
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -8,22 +11,19 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import { projectId } from "../../domain/project";
-import type { ReviewPolicy } from "../../domain/project";
-import { indexItem, reviewReason } from "../../test/fixtures";
+import { indexItem } from "../../test/fixtures";
 import { ProjectsIndex } from "./ProjectsIndex";
 
 const NOW = new Date("2026-08-12T12:00:00Z");
-const POLICY: ReviewPolicy = { commitment_review_days: 7, rule_version: "r1-v1" };
 
 function renderIndex(
   projects = [indexItem()],
-  opts: { url?: string; policy?: ReviewPolicy; onAddProject?: () => void } = {},
+  opts: { url?: string; onAddProject?: () => void } = {},
 ) {
   return render(
     <MemoryRouter initialEntries={[opts.url ?? "/projects"]}>
       <ProjectsIndex
         projects={projects}
-        reviewPolicy={opts.policy ?? POLICY}
         now={NOW}
         onAddProject={opts.onAddProject ?? (() => {})}
       />
@@ -38,59 +38,48 @@ function linkOrder(): string[] {
     .map((l) => l.querySelector(".op-row__name")?.textContent ?? "");
 }
 
-describe("headers and policy", () => {
-  it("shows a semantic Projects list without browser-style table headers", () => {
+describe("the list itself", () => {
+  it("is a plain semantic list with no table chrome and no ranking control", () => {
     const { container } = renderIndex();
-    expect(screen.getByRole("list", { name: "Other projects" })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Projects" })).toBeInTheDocument();
     expect(container.querySelector(".op-index__head")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /priority|review order/i })).not.toBeInTheDocument();
   });
 
-  it("keeps sorting secondary and never presents it as priority", () => {
+  it("shows how much of each project is left, without opening it", () => {
+    renderIndex([indexItem({ name: "Atlas", open_steps: 3, total_steps: 7 })]);
+    expect(screen.getByText("3 of 7 steps left")).toBeInTheDocument();
+  });
+
+  it("carries none of the review vocabulary the redesign removed", () => {
     renderIndex();
-    expect(screen.getByText("More filters and sorting")).toBeInTheDocument();
-    expect(
-      screen.getByRole("combobox", { name: /review order/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("combobox", { name: /priority/i }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("shows the review interval from the DTO review_policy, not a frontend constant", () => {
-    renderIndex([indexItem()], { policy: { commitment_review_days: 5, rule_version: "r1-v1" } });
-    expect(screen.getByText("Commitment review interval: 5 days")).toBeInTheDocument();
+    for (const gone of [/needs your decision/i, /other projects/i, /needs review/i, /review interval/i]) {
+      expect(screen.queryByText(gone)).not.toBeInTheDocument();
+    }
   });
 });
 
-describe("deterministic order and transparent sort", () => {
+describe("sort", () => {
   const projects = [
     indexItem({ project_id: projectId("c"), name: "Charlie" }),
     indexItem({ project_id: projectId("a"), name: "Alpha" }),
     indexItem({ project_id: projectId("b"), name: "Bravo" }),
   ];
 
-  it("preserves the backend attention order by default (no re-ranking)", () => {
-    renderIndex(projects);
-    expect(linkOrder()).toEqual(["Charlie", "Alpha", "Bravo"]);
-  });
-
-  it("applies a transparent name sort only when opted in", () => {
+  it("sorts by name when opted in", () => {
     renderIndex(projects, { url: "/projects?sort=name" });
     expect(linkOrder()).toEqual(["Alpha", "Bravo", "Charlie"]);
   });
 
-  it("groups projects needing a decision first without reordering within either group", () => {
-    const outOfOrder = [
-      indexItem({ project_id: projectId("x"), name: "Xray", review_reasons: [] }),
-      indexItem({ project_id: projectId("y"), name: "Yankee", review_reasons: [] }),
-      indexItem({
-        project_id: projectId("z"),
-        name: "Zulu",
-        review_reasons: [reviewReason("source_unavailable")],
-      }),
-    ];
-    renderIndex(outOfOrder);
-    expect(linkOrder()).toEqual(["Zulu", "Xray", "Yankee"]);
+  it("sorts by how much work is left when opted in", () => {
+    renderIndex(
+      [
+        indexItem({ project_id: projectId("few"), name: "Few", open_steps: 1 }),
+        indexItem({ project_id: projectId("many"), name: "Many", open_steps: 9 }),
+      ],
+      { url: "/projects?sort=remaining" },
+    );
+    expect(linkOrder()).toEqual(["Many", "Few"]);
   });
 });
 
@@ -103,17 +92,6 @@ describe("filters", () => {
     expect(linkOrder()).toEqual(["Zephyr"]);
   });
 
-  it("filters to needs-review via the chip", async () => {
-    const user = userEvent.setup();
-    renderIndex([
-      indexItem({ project_id: projectId("needs"), name: "Needs", review_reasons: [reviewReason("review_action")] }),
-      indexItem({ project_id: projectId("clean"), name: "Clean", review_reasons: [] }),
-    ]);
-    expect(linkOrder()).toEqual(["Needs", "Clean"]);
-
-    await user.click(screen.getByRole("button", { name: "Needs review" }));
-    expect(linkOrder()).toEqual(["Needs"]);
-  });
 });
 
 describe("empty and archived", () => {
@@ -135,7 +113,7 @@ describe("empty and archived", () => {
       indexItem({ project_id: projectId("gone"), name: "Gone", status: "archived" }),
     ]);
     expect(linkOrder()).toEqual(["Live"]);
-    await user.click(screen.getByRole("button", { name: "Archived" }));
+    await user.click(screen.getByRole("checkbox", { name: "Archived" }));
     expect(linkOrder()).toEqual(["Gone"]);
   });
 });

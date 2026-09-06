@@ -42,9 +42,9 @@ async function readPair(page: Page, selector: string): Promise<{ fg: string; bg:
 
 const TEXT_PAIRS = [
   { label: "ProjectStateTag", selector: ".op-tag", min: 4.5 },
-  { label: "ReviewSignalBadge", selector: ".op-badge", min: 4.5 },
   { label: "row name", selector: ".op-row__name", min: 4.5 },
   { label: "row metadata", selector: ".op-row__metadata", min: 4.5 },
+  { label: "row steps left", selector: ".op-row__steps", min: 4.5 },
 ];
 
 for (const scheme of ["light", "dark"] as const) {
@@ -100,11 +100,11 @@ test("axe: project navigation and the Add Project dialog have no critical/seriou
   await expectNoSeriousAxe(page, "add-project-dialog");
 });
 
-test("Overview text (definition terms, source path) meets >=4.5:1 contrast", async ({ page }) => {
+test("Project page text (git facts, source path, step markers) meets >=4.5:1 contrast", async ({ page }) => {
   await page.goto("/projects/p04/overview");
-  await page.getByText("View observed change", { exact: true }).click();
-  await expect(page.getByTestId("observed-actual")).toBeVisible();
-  for (const selector of [".op-dl dt", ".op-source-path"]) {
+  await expect(page.getByTestId("task-outline")).toBeVisible();
+  await page.getByText("Commits and branch graph", { exact: true }).click();
+  for (const selector of [".op-project__facts", ".op-source-path", ".op-outline__marker", ".op-heatmap__caption"]) {
     if ((await page.locator(selector).count()) === 0) continue;
     const { fg, bg } = await readPair(page, selector);
     const ratio = contrastRatio(fg, bg);
@@ -113,13 +113,13 @@ test("Overview text (definition terms, source path) meets >=4.5:1 contrast", asy
   }
 });
 
-test("prefers-contrast: more keeps the review signal readable", async ({ page }) => {
+test("prefers-contrast: more keeps the lifecycle tag readable", async ({ page }) => {
   await page.emulateMedia({ contrast: "more" });
   await page.goto("/projects");
-  await expect(page.getByText("Source unavailable").first()).toBeVisible();
-  const { fg, bg } = await readPair(page, ".op-badge");
+  await expect(page.locator(".op-tag").first()).toBeVisible();
+  const { fg, bg } = await readPair(page, ".op-tag");
   const ratio = contrastRatio(fg, bg);
-  test.info().annotations.push({ type: "contrast", description: `high-contrast badge: ${fg} on ${bg} = ${ratio.toFixed(2)}:1` });
+  test.info().annotations.push({ type: "contrast", description: `high-contrast tag: ${fg} on ${bg} = ${ratio.toFixed(2)}:1` });
   expect(ratio).toBeGreaterThanOrEqual(4.5);
 });
 
@@ -128,8 +128,9 @@ test("color-vision deficiency: signals stay legible because colour is redundant 
   const cdp = await page.context().newCDPSession(page);
   for (const type of ["deuteranopia", "protanopia", "tritanopia", "achromatopsia"] as const) {
     await cdp.send("Emulation.setEmulatedVisionDeficiency", { type });
-    await expect(page.getByText("Source unavailable").first()).toBeVisible();
-    await expect(page.getByText("Review action").first()).toBeVisible();
+    // Every signal on the row is words, not colour: the lifecycle tag and the step count.
+    await expect(page.locator(".op-tag", { hasText: "Waiting" })).toBeVisible();
+    await expect(page.getByText("No steps yet").first()).toBeVisible();
   }
   await cdp.send("Emulation.setEmulatedVisionDeficiency", { type: "none" });
 });
@@ -155,22 +156,22 @@ test("non-color semantics survive grayscale: badge text stays readable", async (
   });
   await page.goto("/projects");
   // Colour is stripped, but every signal is redundant with visible text.
-  await expect(page.getByText("Source unavailable").first()).toBeVisible();
   await expect(page.locator(".op-tag", { hasText: "Waiting" })).toBeVisible();
-  await expect(page.getByText("Complete setup").first()).toBeVisible();
+  await expect(page.locator(".op-tag", { hasText: "Setup" })).toBeVisible();
+  await expect(page.getByText("No steps yet").first()).toBeVisible();
 });
 
 test("forced-colors and reduced-motion keep labels and boundaries", async ({ page }) => {
   await page.emulateMedia({ forcedColors: "active", reducedMotion: "reduce" });
   await page.goto("/projects");
   await expect(page.getByRole("list", { name: "Projects" })).toBeVisible();
-  await expect(page.getByText("Source unavailable").first()).toBeVisible();
+  await expect(page.locator(".op-tag", { hasText: "Waiting" })).toBeVisible();
 
-  // Reduced motion genuinely collapses transitions (the chip normally animates on hover/press).
+  // Reduced motion genuinely collapses transitions (a row normally animates on hover).
   const durationMs = await page.evaluate(() => {
-    const chip = document.querySelector(".op-chip");
-    if (!chip) return null;
-    return getComputedStyle(chip)
+    const link = document.querySelector(".op-row__link");
+    if (!link) return null;
+    return getComputedStyle(link)
       .transitionDuration.split(",")
       .map((d) => (d.trim().endsWith("ms") ? parseFloat(d) : parseFloat(d) * 1000))
       .reduce((max, v) => Math.max(max, v), 0);
@@ -180,7 +181,9 @@ test("forced-colors and reduced-motion keep labels and boundaries", async ({ pag
 
   // Open a project page: its heading and primary action remain reachable.
   await page.getByRole("link", { name: /^billing-worker/ }).click();
-  await expect(page.getByTestId("overview-page").getByRole("button", { name: "Switch away" })).toBeVisible();
+  const outline = page.getByTestId("overview-page").getByTestId("task-outline");
+  await expect(outline.getByRole("button", { name: "Idempotent retries" })).toBeVisible();
+  await expect(outline.getByRole("button", { name: "Add step" })).toBeVisible();
 });
 
 // --- Interaction audit gates ------------------------------------------------
@@ -235,11 +238,11 @@ for (const [label, url] of [
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(url);
     if (url.includes("overview")) {
-      // Include the planning surface and one open task editor in the sweep.
-      await page.getByRole("tab", { name: "Planning and tasks" }).click();
-      await page.getByTestId("task-board").getByLabel("New task").fill("Audited task");
-      await page.getByTestId("task-board").getByRole("button", { name: "Add task" }).click();
-      await page.getByRole("button", { name: /Audited task/ }).click();
+      // Include the outline and one open step's detail panel in the sweep.
+      const outline = page.getByTestId("task-outline");
+      await outline.getByLabel("Add step").fill("Audited step");
+      await outline.getByRole("button", { name: "Add step" }).click();
+      await outline.getByTestId("outline-row").last().getByRole("button", { name: "Details" }).click();
     }
     const findings = await page.evaluate(AUDIT);
     expect(findings, `audit findings on ${label}:\n${findings.join("\n")}`).toEqual([]);

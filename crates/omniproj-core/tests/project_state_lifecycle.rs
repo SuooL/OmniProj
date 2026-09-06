@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use omniproj_core::{
-    apply_project_command, ensure_home, ProjectCommand, ProjectId, ProjectStateDoc,
-    ProjectStateError, ProjectStatus, WorkItemDraft, WorkItemStatus,
+    apply_project_command, ensure_home, CommitmentTransitionKind, ProjectCommand, ProjectId,
+    ProjectStateDoc, ProjectStateError, ProjectStatus, WorkItemDraft, WorkItemStatus,
 };
 
 const AT_0: &str = "2026-08-10T12:00:00Z";
@@ -899,6 +899,7 @@ fn a_completed_commitment_can_be_reopened_and_then_removed() {
             2,
             ProjectCommand::UpdateWorkItem {
                 work_item_id: item_id.clone(),
+                text: None,
                 status: WorkItemStatus::Planned,
                 unclear: false,
                 due: None,
@@ -971,17 +972,7 @@ fn removing_a_task_with_no_commitment_history_deletes_it_outright() {
         .apply(
             0,
             ProjectCommand::AddWorkItems {
-                items: vec![WorkItemDraft {
-                    text: "Plain task".into(),
-                    status: WorkItemStatus::Planned,
-                    unclear: false,
-                    due: None,
-                    note: None,
-                    tags: Vec::new(),
-                    commits: Vec::new(),
-                    adopted_from_proposal_id: None,
-                    source_task_id: None,
-                }],
+                items: vec![WorkItemDraft::new("Plain task")],
             },
             AT_1,
         )
@@ -1003,16 +994,17 @@ fn removing_a_task_with_no_commitment_history_deletes_it_outright() {
 }
 
 #[test]
-fn the_current_commitment_still_resists_status_edits_and_removal() {
-    let store = TestStore::new("current-still-locked");
+fn ticking_off_the_current_commitment_closes_it_and_logs_the_completion() {
+    let store = TestStore::new("current-ticked-off");
     let set = set_commitment(&store, 0, "Review cohort", AT_1);
     let item_id = set.work_items[0].id.clone();
 
-    let status_error = store
+    let done = store
         .apply(
             1,
             ProjectCommand::UpdateWorkItem {
                 work_item_id: item_id.clone(),
+                text: None,
                 status: WorkItemStatus::Done,
                 unclear: false,
                 due: None,
@@ -1021,10 +1013,24 @@ fn the_current_commitment_still_resists_status_edits_and_removal() {
             },
             AT_2,
         )
-        .unwrap_err();
-    assert!(matches!(status_error, ProjectStateError::InvalidCommand(_)));
+        .unwrap()
+        .state;
 
-    let remove_error = store
+    assert_eq!(done.work_items[0].status, WorkItemStatus::Done);
+    assert_eq!(done.current_next_action_id, None);
+    assert_eq!(
+        done.commitment_transitions.last().map(|t| t.kind),
+        Some(CommitmentTransitionKind::Completed)
+    );
+}
+
+#[test]
+fn removing_the_current_commitment_releases_it_first() {
+    let store = TestStore::new("current-removed");
+    let set = set_commitment(&store, 0, "Review cohort", AT_1);
+    let item_id = set.work_items[0].id.clone();
+
+    let removed = store
         .apply(
             1,
             ProjectCommand::RemoveWorkItem {
@@ -1032,8 +1038,16 @@ fn the_current_commitment_still_resists_status_edits_and_removal() {
             },
             AT_2,
         )
-        .unwrap_err();
-    assert!(matches!(remove_error, ProjectStateError::InvalidCommand(_)));
+        .unwrap()
+        .state;
+
+    assert_eq!(removed.current_next_action_id, None);
+    // The transition log named this item, so it is tombstoned rather than deleted — and
+    // `abandoned` items are filtered out of the task list the user sees.
+    assert!(removed
+        .work_items
+        .iter()
+        .all(|item| item.status == WorkItemStatus::Abandoned));
 }
 
 #[test]
@@ -1266,16 +1280,17 @@ fn lifecycle_incomplete_setup_is_typed_error_and_byte_identical() {
         .apply(
             0,
             ProjectCommand::CompleteSetup {
+                // Blank notes are fine; a blank first step is not.
                 objective: "  ".into(),
-                desired_outcome: "Outcome".into(),
+                desired_outcome: "  ".into(),
                 phase: None,
-                first_commitment: "First".into(),
+                first_commitment: "  ".into(),
             },
             AT_1,
         )
         .unwrap_err();
 
-    assert!(matches!(error, ProjectStateError::FieldRequired { field } if field == "objective"));
+    assert!(matches!(error, ProjectStateError::FieldRequired { field } if field == "first_step"));
     assert_eq!(store.bytes(), before);
 }
 
@@ -1998,4 +2013,250 @@ fn preserves_markdown_body_bytes_during_domain_mutation() {
         .unwrap();
 
     assert_eq!(store.load().markdown_body().as_bytes(), body);
+}
+
+// --- The outline: sub-steps, order, and what a move carries with it ------------------
+//
+// The list the user reads *is* `work_items` in document order. These tests pin that:
+// display order and the parent relation never disagree, and a subtree is never split.
+
+/// Hourly timestamps after `AT_0`, so a test can apply more commands than the four
+/// module-level constants allow. Each must be strictly later than the last.
+fn at(step: u32) -> String {
+    format!("2026-08-11T{:02}:00:00Z", step)
+}
+
+/// Apply `texts` as top-level steps in order, and return their ids in that order.
+fn seed_steps(store: &TestStore, texts: &[&str]) -> Vec<omniproj_core::WorkItemId> {
+    let state = store
+        .apply(
+            0,
+            ProjectCommand::AddWorkItems {
+                items: texts.iter().copied().map(WorkItemDraft::new).collect(),
+            },
+            &at(0),
+        )
+        .unwrap()
+        .state;
+    state
+        .work_items
+        .iter()
+        .map(|item| item.id.clone())
+        .collect()
+}
+
+fn texts_in_order(state: &ProjectStateDoc) -> Vec<&str> {
+    state
+        .work_items
+        .iter()
+        .map(|item| item.text.as_str())
+        .collect()
+}
+
+#[test]
+fn bulk_added_steps_keep_the_order_they_were_given() {
+    let store = TestStore::new("outline-append");
+    seed_steps(&store, &["one", "two", "three"]);
+    assert_eq!(texts_in_order(&store.load()), ["one", "two", "three"]);
+}
+
+#[test]
+fn a_new_sub_step_lands_under_its_parent_not_at_the_end() {
+    let store = TestStore::new("outline-add-child");
+    let ids = seed_steps(&store, &["extract reports", "build the framework"]);
+
+    let mut draft = WorkItemDraft::new("OCR");
+    draft.parent_id = Some(ids[0].clone());
+    let state = store
+        .apply(
+            1,
+            ProjectCommand::AddWorkItems { items: vec![draft] },
+            &at(1),
+        )
+        .unwrap()
+        .state;
+
+    assert_eq!(
+        texts_in_order(&state),
+        ["extract reports", "OCR", "build the framework"]
+    );
+    assert_eq!(state.work_items[1].parent_id.as_ref(), Some(&ids[0]));
+}
+
+#[test]
+fn indenting_a_step_carries_its_own_sub_steps_along() {
+    let store = TestStore::new("outline-indent-subtree");
+    let ids = seed_steps(&store, &["plan", "extract reports", "tail"]);
+
+    // "extract reports" gets a sub-step of its own …
+    let mut child = WorkItemDraft::new("OCR");
+    child.parent_id = Some(ids[1].clone());
+    store
+        .apply(
+            1,
+            ProjectCommand::AddWorkItems { items: vec![child] },
+            &at(1),
+        )
+        .unwrap();
+
+    // … and is then indented under "plan". The sub-step must come with it.
+    let state = store
+        .apply(
+            2,
+            ProjectCommand::MoveWorkItem {
+                work_item_id: ids[1].clone(),
+                parent_id: Some(ids[0].clone()),
+                after_id: None,
+            },
+            &at(2),
+        )
+        .unwrap()
+        .state;
+
+    assert_eq!(
+        texts_in_order(&state),
+        ["plan", "extract reports", "OCR", "tail"]
+    );
+    let ocr = &state.work_items[2];
+    assert_eq!(ocr.parent_id.as_ref(), Some(&ids[1]));
+    assert_eq!(state.work_items[1].parent_id.as_ref(), Some(&ids[0]));
+}
+
+#[test]
+fn a_step_can_be_reordered_among_its_siblings() {
+    let store = TestStore::new("outline-reorder");
+    let ids = seed_steps(&store, &["one", "two", "three"]);
+
+    // Move "three" to the very top.
+    let top = store
+        .apply(
+            1,
+            ProjectCommand::MoveWorkItem {
+                work_item_id: ids[2].clone(),
+                parent_id: None,
+                after_id: None,
+            },
+            &at(1),
+        )
+        .unwrap()
+        .state;
+    assert_eq!(texts_in_order(&top), ["three", "one", "two"]);
+
+    // And back down, to just after "one".
+    let back = store
+        .apply(
+            2,
+            ProjectCommand::MoveWorkItem {
+                work_item_id: ids[2].clone(),
+                parent_id: None,
+                after_id: Some(ids[0].clone()),
+            },
+            &at(2),
+        )
+        .unwrap()
+        .state;
+    assert_eq!(texts_in_order(&back), ["one", "three", "two"]);
+}
+
+#[test]
+fn a_step_cannot_be_nested_under_its_own_sub_step() {
+    let store = TestStore::new("outline-cycle");
+    let ids = seed_steps(&store, &["parent"]);
+    let mut child = WorkItemDraft::new("child");
+    child.parent_id = Some(ids[0].clone());
+    let state = store
+        .apply(
+            1,
+            ProjectCommand::AddWorkItems { items: vec![child] },
+            &at(1),
+        )
+        .unwrap()
+        .state;
+    let child_id = state.work_items[1].id.clone();
+
+    let error = store
+        .apply(
+            2,
+            ProjectCommand::MoveWorkItem {
+                work_item_id: ids[0].clone(),
+                parent_id: Some(child_id),
+                after_id: None,
+            },
+            &at(2),
+        )
+        .unwrap_err();
+    assert!(matches!(error, ProjectStateError::InvalidCommand(_)));
+}
+
+#[test]
+fn deleting_a_step_deletes_what_it_was_broken_into() {
+    let store = TestStore::new("outline-cascade-delete");
+    let ids = seed_steps(&store, &["extract reports", "keep me"]);
+    let mut child = WorkItemDraft::new("OCR");
+    child.parent_id = Some(ids[0].clone());
+    let mut grandchild = WorkItemDraft::new("batch structuring");
+    grandchild.parent_id = Some(ids[0].clone());
+    store
+        .apply(
+            1,
+            ProjectCommand::AddWorkItems {
+                items: vec![child, grandchild],
+            },
+            &at(1),
+        )
+        .unwrap();
+
+    let state = store
+        .apply(
+            2,
+            ProjectCommand::RemoveWorkItem {
+                work_item_id: ids[0].clone(),
+            },
+            &at(2),
+        )
+        .unwrap()
+        .state;
+
+    // Nothing is promoted to top level behind the user's back.
+    assert_eq!(texts_in_order(&state), ["keep me"]);
+}
+
+#[test]
+fn a_step_can_be_renamed_without_touching_anything_else() {
+    let store = TestStore::new("outline-rename");
+    let ids = seed_steps(&store, &["tpyo"]);
+
+    let state = store
+        .apply(
+            1,
+            ProjectCommand::UpdateWorkItem {
+                work_item_id: ids[0].clone(),
+                text: Some("  typo fixed  ".into()),
+                status: WorkItemStatus::Planned,
+                unclear: false,
+                due: None,
+                note: None,
+                tags: None,
+            },
+            &at(1),
+        )
+        .unwrap()
+        .state;
+
+    assert_eq!(state.work_items[0].text, "typo fixed");
+}
+
+#[test]
+fn a_document_written_before_hierarchy_reads_back_as_a_flat_list() {
+    let store = TestStore::new("outline-legacy-doc");
+    seed_steps(&store, &["one", "two"]);
+    let raw = String::from_utf8(store.bytes()).unwrap();
+
+    // Nothing is written for a top-level step, so an older store is byte-identical here.
+    assert!(!raw.contains("parent_id"));
+    assert!(store
+        .load()
+        .work_items
+        .iter()
+        .all(|item| item.parent_id.is_none()));
 }

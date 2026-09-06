@@ -10,6 +10,8 @@ function task(id: string, over: Partial<Task> = {}): Task {
     id,
     text: `task ${id}`,
     status: "open",
+    parent_id: null,
+    depth: 0,
     unclear: false,
     due: null,
     note: null,

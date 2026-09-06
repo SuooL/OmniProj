@@ -827,6 +827,61 @@ pub fn commit_weeks(path: &Path, n_weeks: usize, now_epoch: i64) -> Vec<u32> {
     weeks
 }
 
+/// Daily commit histogram for the last `n_days` (oldest → newest), for the contribution
+/// heatmap. Same contract as [`commit_weeks`]: raw counts, a neutral activity fact rather
+/// than a score, and `now_epoch` passed in so this stays clock-free and testable.
+///
+/// Buckets are cut on *local* midnights via `%cs` (the committer date git already renders
+/// in local time), not on 86_400-second boundaries from `now`. A column has to line up
+/// with the calendar day the user remembers working, and a fixed-width bucket drifts off
+/// it by the local offset and again at every DST change.
+pub fn commit_days(path: &Path, n_days: usize, now_epoch: i64) -> Vec<u32> {
+    let mut days = vec![0u32; n_days];
+    if n_days == 0 || !is_git_repo(path) {
+        return days;
+    }
+    // One extra day of slack: a commit made later today than `now_epoch` still belongs to
+    // today's column, and `--since` is compared against the commit's own timestamp.
+    let since = now_epoch - (n_days as i64) * 86_400;
+    let out = git(
+        path,
+        &["log", &format!("--since={since}"), "--pretty=%cs", "--all"],
+    )
+    .unwrap_or_default();
+
+    let today = days_from_civil_epoch(now_epoch);
+    for line in out.lines() {
+        let Some(day) = parse_civil_day(line.trim()) else {
+            continue;
+        };
+        let age = today - day;
+        if age >= 0 && (age as usize) < n_days {
+            days[n_days - 1 - age as usize] += 1;
+        }
+    }
+    days
+}
+
+/// Days since the civil epoch (1970-01-01) for the reference date used by both sides of
+/// the bucket arithmetic.
+const CIVIL_EPOCH: chrono::NaiveDate = match chrono::NaiveDate::from_ymd_opt(1970, 1, 1) {
+    Some(date) => date,
+    None => unreachable!(),
+};
+
+/// `YYYY-MM-DD` → days since the civil epoch, or `None` if unparseable.
+fn parse_civil_day(text: &str) -> Option<i64> {
+    chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d")
+        .ok()
+        .map(|date| date.signed_duration_since(CIVIL_EPOCH).num_days())
+}
+
+/// `now_epoch` → days since the civil epoch, in UTC. Local-vs-UTC can disagree by at most
+/// one column at the newest edge, which the caller's slack already covers.
+fn days_from_civil_epoch(now_epoch: i64) -> i64 {
+    now_epoch.div_euclid(86_400)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -993,6 +1048,52 @@ mod tests {
         );
         assert_eq!(weeks[..15].iter().sum::<u32>(), 0, "older weeks empty");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn commit_days_buckets_todays_commits_into_the_newest_column() {
+        let dir = unique_tmpdir("days");
+        init_repo(&dir);
+        write(&dir, "a.txt", "a\n");
+        run_git(&dir, &["add", "-A"]);
+        run_git(&dir, &["commit", "-q", "-m", "c1"]);
+        run_git(&dir, &["commit", "-q", "--allow-empty", "-m", "c2"]);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let days = commit_days(&dir, 371, now);
+        assert_eq!(days.len(), 371);
+        assert_eq!(days.iter().sum::<u32>(), 2, "both commits land somewhere");
+        // Committed just now, so they belong to today's column — the newest one. A run
+        // straddling local midnight can only push them one column back.
+        assert!(
+            days[days.len() - 1] == 2 || days[days.len() - 2] == 2,
+            "fresh commits belong to today's column, got tail {:?}",
+            &days[days.len() - 3..]
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn commit_days_dates_land_on_the_calendar_day_not_a_fixed_window() {
+        // 2026-01-01 is 20454 days after the epoch; the arithmetic has to agree.
+        assert_eq!(parse_civil_day("2026-01-01"), Some(20454));
+        assert_eq!(parse_civil_day("1970-01-01"), Some(0));
+        assert_eq!(parse_civil_day("2024-02-29"), Some(19782), "leap day");
+        assert_eq!(parse_civil_day("not-a-date"), None);
+        assert_eq!(parse_civil_day("2026-13-01"), None, "month out of range");
+    }
+
+    #[test]
+    fn commit_days_is_all_zero_for_non_git_dir() {
+        let dir = unique_tmpdir("days-nongit");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(commit_days(&dir, 7, 0), vec![0; 7]);
+        assert!(commit_days(&dir, 0, 0).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

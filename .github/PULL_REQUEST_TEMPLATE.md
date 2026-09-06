@@ -13,4 +13,4 @@
 - [ ] `cargo fmt --all --check` is clean
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` is clean
 - [ ] Added/updated tests for behavior changes
-- [ ] Updated the relevant `docs/` spec (charter/requirements/desktop-design) and/or `README.md` if behavior changed
+- [ ] Updated the relevant `docs/` file (charter/design) and/or `README.md` if behavior changed

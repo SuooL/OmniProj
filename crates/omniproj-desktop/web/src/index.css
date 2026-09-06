@@ -1288,6 +1288,171 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .op-activity-sparkline__bar { width:3px; min-height:2px; border-radius:1px; background:var(--op-interactive-fg); opacity:.78; }
 .op-activity-sparkline__bar[data-empty="true"] { background:var(--op-border-strong); opacity:.55; }
 
+/* -- The outline ------------------------------------------------------------
+   One list, nested, edited in place. Depth is carried by indentation and a
+   hairline spine rather than by boxes: the page has to read like a written
+   page, where a sub-step is a sub-step because of where it sits. ----------- */
+.op-project { display: grid; gap: var(--op-space-5); align-content: start; }
+.op-project__head { display: grid; gap: var(--op-space-1); }
+.op-project__name { margin: 0; font-size: var(--op-text-size-title); line-height: 1.2; }
+.op-project__facts {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--op-space-3);
+  color: var(--op-text-tertiary);
+  font-size: var(--op-text-size-micro);
+}
+.op-project__note { margin: 0; color: var(--op-text-secondary); }
+.op-project__branch { font-family: var(--op-font-mono); color: var(--op-text-secondary); }
+.op-project__more > summary {
+  cursor: pointer;
+  padding: var(--op-space-2) 0;
+  color: var(--op-text-secondary);
+  font-size: var(--op-text-size-micro);
+  border-top: 1px solid var(--op-border-hairline);
+}
+.op-project__more-body { display: grid; gap: var(--op-space-4); padding-top: var(--op-space-3); }
+
+.op-outline { display: grid; gap: var(--op-space-3); }
+.op-outline__list { list-style: none; margin: 0; padding: 0; }
+.op-outline__row {
+  /* Each level steps in by one marker width, and the spine makes the column visible. */
+  padding-left: calc(var(--op-outline-depth, 0) * 22px);
+  border-bottom: 1px solid var(--op-border-hairline);
+}
+.op-outline__row[data-depth="0"] { border-bottom-color: var(--op-border-subtle); }
+.op-outline__line {
+  display: flex;
+  align-items: center;
+  gap: var(--op-space-2);
+  min-height: 34px;
+}
+.op-outline__check { flex: none; width: 15px; height: 15px; margin: 0; }
+.op-outline__marker {
+  flex: none;
+  min-width: 18px;
+  font-family: var(--op-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--op-text-size-micro);
+  color: var(--op-text-tertiary);
+}
+.op-outline__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 26px;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 4px;
+  margin-left: -4px;
+  border-radius: var(--op-radius-sm, 3px);
+  color: inherit;
+  font: inherit;
+  cursor: text;
+}
+.op-outline__text:hover { background: var(--op-bg-subtle); }
+.op-outline__input { flex: 1 1 auto; min-width: 0; min-height: 26px; font: inherit; padding: 4px; }
+/* A finished step stays legible — it is the record of what was done, not debris. */
+.op-outline__row[data-status="done"] .op-outline__text { color: var(--op-text-tertiary); text-decoration: line-through; }
+.op-outline__flag { flex: none; color: var(--op-status-warning-fg); font-weight: 600; }
+.op-outline__progress,
+.op-outline__commits {
+  flex: none;
+  font-size: var(--op-text-size-micro);
+  color: var(--op-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.op-outline__disclose {
+  flex: none;
+  min-height: 26px;
+  min-width: 26px;
+  background: none;
+  border: 0;
+  padding: 4px;
+  color: var(--op-text-tertiary);
+  font-size: var(--op-text-size-micro);
+  cursor: pointer;
+  opacity: 0;
+}
+/* Revealed on hover or focus — never hidden from the keyboard. */
+.op-outline__row:hover .op-outline__disclose,
+.op-outline__disclose:focus-visible,
+.op-outline__disclose[aria-expanded="true"] { opacity: 1; }
+.op-outline__note {
+  margin: 0 0 var(--op-space-2) 44px;
+  color: var(--op-text-tertiary);
+  font-size: var(--op-text-size-micro);
+}
+.op-outline__details {
+  display: grid;
+  gap: var(--op-space-3);
+  padding: var(--op-space-3) 0 var(--op-space-3) 44px;
+}
+.op-outline__notefield { width: 100%; font: inherit; }
+.op-outline__detail-actions { display: flex; gap: var(--op-space-2); flex-wrap: wrap; }
+.op-outline__compose { display: flex; gap: var(--op-space-2); }
+.op-outline__compose input { flex: 1 1 auto; min-height: 32px; }
+.op-outline__hint { margin: 0; color: var(--op-text-tertiary); font-size: var(--op-text-size-micro); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .op-outline__disclose { transition: opacity 120ms ease; }
+}
+
+/* -- Commit heatmap ---------------------------------------------------------
+   A year of daily commit counts. The four filled steps are one hue at rising
+   mixes of the accent, so the ramp reads as a single quantity in both themes
+   and degrades to plain borders under forced colors. Level 0 is a surface, not
+   a faint version of the accent: "nothing happened" must not look like "a
+   little happened". -------------------------------------------------------- */
+.op-heatmap { --op-heatmap-cell: 10px; margin: 0; display: grid; gap: var(--op-space-2); }
+.op-heatmap__grid {
+  display: grid;
+  grid-template-rows: auto repeat(7, var(--op-heatmap-cell));
+  gap: 2px;
+  justify-content: start;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.op-heatmap__month {
+  font-size: var(--op-text-size-micro);
+  color: var(--op-text-tertiary);
+  line-height: 1;
+  white-space: nowrap;
+  align-self: end;
+  padding-bottom: 2px;
+}
+.op-heatmap__cell {
+  width: var(--op-heatmap-cell);
+  height: var(--op-heatmap-cell);
+  border-radius: 2px;
+  background: var(--op-bg-subtle);
+  border: 1px solid var(--op-border-hairline);
+}
+.op-heatmap__cell[data-level="1"] { background: color-mix(in srgb, var(--op-interactive-fg) 24%, var(--op-bg-surface)); border-color: transparent; }
+.op-heatmap__cell[data-level="2"] { background: color-mix(in srgb, var(--op-interactive-fg) 48%, var(--op-bg-surface)); border-color: transparent; }
+.op-heatmap__cell[data-level="3"] { background: color-mix(in srgb, var(--op-interactive-fg) 72%, var(--op-bg-surface)); border-color: transparent; }
+.op-heatmap__cell[data-level="4"] { background: var(--op-interactive-fg); border-color: transparent; }
+.op-heatmap__caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--op-space-3);
+  flex-wrap: wrap;
+  font-size: var(--op-text-size-micro);
+  color: var(--op-text-tertiary);
+}
+.op-heatmap__legend { display: inline-flex; align-items: center; gap: 3px; }
+
+@media (forced-colors: active) {
+  /* Colour is gone; carry the ramp on the border weight instead of losing it. */
+  .op-heatmap__cell { background: Canvas; border: 1px solid GrayText; }
+  .op-heatmap__cell[data-level="1"] { border-color: CanvasText; }
+  .op-heatmap__cell[data-level="2"],
+  .op-heatmap__cell[data-level="3"],
+  .op-heatmap__cell[data-level="4"] { background: CanvasText; border-color: CanvasText; }
+}
+
 .op-row__review-text {
   align-self: center;
   justify-self: end;
@@ -1541,6 +1706,7 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .op-task-edit { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:var(--op-space-2) var(--op-space-3); max-width:min(100%, 720px); padding:0 0 var(--op-space-3); }
 .op-field { display:grid; gap:2px; min-width:0; }
 .op-field > span { color:var(--op-text-tertiary); font-size:var(--op-text-size-micro); }
+.op-field > span small { font-size: inherit; }
 .op-field input { min-height:30px; width:100%; }
 .op-field--wide { grid-column:1 / -1; }
 .op-task-autosave { margin-right:auto; font-size:var(--op-text-size-micro); }

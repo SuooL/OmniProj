@@ -176,7 +176,7 @@ export function ProjectRail({ projects, activeId }: ProjectRailProps) {
         <ul className="app-rail__list" ref={listRef} onKeyDown={onListKeyDown}>
           {visible.map((project) => {
             const active = project.project_id === activeId;
-            const needsDecision = project.review_reasons.length > 0;
+            const unfinished = project.open_steps > 0;
             return (
               <li key={project.project_id}>
                 <button
@@ -188,11 +188,15 @@ export function ProjectRail({ projects, activeId }: ProjectRailProps) {
                 >
                   {/* Non-color redundancy: the dot is accompanied by an accessible label. */}
                   <span
-                    className={`app-rail__dot${needsDecision ? " is-flagged" : ""}`}
+                    className={`app-rail__dot${unfinished ? " is-flagged" : ""}`}
                     aria-hidden="true"
                   />
                   <span className="app-rail__name">{project.name}</span>
-                  {needsDecision && <span className="op-visually-hidden">{t("rail.needsDecision")}</span>}
+                  {unfinished && (
+                    <span className="op-visually-hidden">
+                      {t("rail.stepsLeft", { count: project.open_steps })}
+                    </span>
+                  )}
                 </button>
               </li>
             );

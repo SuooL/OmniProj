@@ -69,6 +69,10 @@ export function applyOverviewToCaches(
           observed_actual: overview.observed_actual,
           review_reasons: overview.review_reasons,
           source_status: source?.status ?? "missing",
+          // A project registered this instant has no steps yet; the next Index
+          // fetch replaces these with the counted values.
+          open_steps: 0,
+          total_steps: 0,
           revision: overview.revision,
           source_revision: source?.revision ?? 0,
         },

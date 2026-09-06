@@ -1,179 +1,110 @@
 # OmniProj
 
-**Re-enter any project in under five minutes.** OmniProj is a local-first, single-user
-desktop environment for researchers and independent developers. It holds your **human-authored
-intent** next to the **machine-observed actual** state of each repository, and lets you reconcile
-them — confirm, complete, replace, or clear one explicit next action — without leaving your real
-tools.
+**一本能自己对上 git 的笔记本。** 一个本地优先的桌面 app：每个项目一页带层级的步骤清单，旁边是这个仓库真实的 git 活动。
 
-> The core contract: *human-authored intent + machine-observed actual, reconciled locally and
-> audibly, with the human keeping judgment.* OmniProj never writes to your source repositories; it
-> only reads them, and it records its own state in a local store you control.
-
-The current desktop loop (MVP foundation):
-
-```text
-Projects Index  →  re-enter one project  →  see the current commitment and the observed actual
-                →  confirm / complete / replace / clear one action  →  work in your real repo
-                →  observed activity flows back on the next refresh
+```
+前列腺癌穿刺优化 MRI 预测 <FM>          dev · 12 commits · 3 天前
+▁▃▅▂▁▁▇▅▃▁▂▆▅▃▁▁
+────────────────────────────────────────
+ 1 ✓ 方案拟定
+ 2 ✓ Down Stream Task 定义
+ 3 ✓ 报告提取
+     ✓ OCR
+     ✓ 结构化批量
+ 4 ✓ CT 数据 DICOM 批处理转换管线
+ 5 □ 论文框架搭建                    09-20
+ + 新增一步…
 ```
 
-The current development desktop includes a Human planning task list (`notes/next.md`) whose items
-can be explicitly promoted to the single project-level Current Commitment, a read-only Git commit
-timeline with task attribution, selective Advance proposal adoption with retained provenance, an
-append-only decision log (`plan.md`), deduplicated configurable reminders, and a local re-entry
-timer for the dogfood gate. The Index shows a neutral sixteen-week commit activity strip and is
-ordered by factual silence; the menu-bar icon carries the current non-zero attention count. Advance
-has an in-app provider/model setup, explicit remote-transmission consent, and stores API keys only
-in the operating-system credential store. The source repository remains read-only throughout.
+产品定义见 [`docs/omniproj-charter.md`](docs/omniproj-charter.md)，界面约定见 [`docs/design.md`](docs/design.md)。
 
 ---
 
-## Platform & privacy
+## 能做什么
 
-- **Platform:** the Tauri desktop app targets **macOS** as the R0 acceptance platform (Linux is
-  used for CI). Rust + React inside a native webview.
-- **Local by default:** all persistent state lives under `~/.omniproj` (override with the
-  `OMNIPROJ_HOME` environment variable). Advance sends only the selected task text and problem
-  note, and only after explicit consent when a remote provider is selected. API keys stay in the
-  operating-system credential store and are never written to `~/.omniproj`.
-- **Source repositories are read-only.** OmniProj runs read-only Git commands against your repos
-  and writes only to its own store. A move/rename never corrupts a project — you relink it.
+- **带层级的清单。** 顶层步骤自动编号，子步骤跟着父步骤走。回车新起一行，Tab 缩进，Shift+Tab 退回上层，⌥↑/⌥↓ 调序，点文字就地改。
+- **git 活动自动派生。** 一年的每日提交热图、提交时间线、分支图，全部只读；步骤可以关联 commit（多对一）。
+- **可选的 AI 拆解。** 一步想不清就让它给候选，你勾选采纳成子步骤。不勾就不写。
+- **本地优先。** 状态全在 `~/.omniproj`，人类可读，本身是个 git 仓库，每次写入可回退。
 
-## Local file layout
+## 不做什么
 
-Each project gets a stable, permanent `ProjectId` and its own directory:
+自主执行的 agent、通用笔记库、通用 git 客户端、优先级/健康分排序、多人协作、云同步。理由见 charter §6。
 
-```text
+## 平台与隐私
+
+- **平台：** Tauri 桌面 app，macOS 为验收平台（CI 跑 Linux）。Rust + React。
+- **对你的仓库零写入。** 只跑只读 git 命令；不写文件、不加 hook、不改配置。移动或改名不会毁掉项目，重新关联即可。
+- **数据在本地。** `~/.omniproj`（用 `OMNIPROJ_HOME` 可改）。AI 拆解只在你显式同意后发送该步骤的文字与备注；API key 存系统钥匙串，不写进数据目录。
+
+## 键盘
+
+清单里（点开某一行的文字后）：
+
+| 键 | 作用 |
+|---|---|
+| `Enter` | 在下面新起一行 |
+| `Tab` / `Shift+Tab` | 缩进成子步骤 / 退回上一层 |
+| `⌥↑` / `⌥↓` | 与上/下一个同级步骤交换位置 |
+| `↑` / `↓` | 移到上/下一行继续编辑 |
+| `Backspace`（空行） | 删除这一行 |
+| `Esc` | 放弃本次改写 |
+
+全局：`Cmd/Ctrl+F` 聚焦搜索，`Cmd/Ctrl+N` 新建项目，`Cmd/Ctrl+R` 重新观测仓库。
+
+## 本地文件
+
+```
 ~/.omniproj/
-  meta.toml                        # (schema v2) registry — not per project
+  meta.toml                        # 项目登记表
   projects/<ProjectId>/
-    meta.toml                      # this project's registry record + ProjectSource envelope
-    notes/project.md               # your single human-state document: TOML front matter +
-                                   #   a byte-preserved Markdown body. OmniProj never rewrites
-                                   #   your prose; it only edits the front matter atomically.
-    notes/next.md                  # Human planning tasks; content-revision protected
-    plan.md                        # Human plan/decision log with optional commit anchors
-    auto/advance/                  # Agent proposals; Human adoption retains provenance
-    cache/r0-observation.json      # last successful repository observation (derived, regenerable)
-    learned.md                     # legacy pre-R0 document — preserved untouched
-  dogfood/reentry-events.jsonl     # local append-only product-validation events
+    meta.toml                      # 登记信息 + 仓库位置
+    notes/project.md               # 步骤清单：TOML front matter + 你的正文
+    auto/advance/                  # AI 候选（未采纳前不进清单）
+    cache/r0-observation.json      # 最近一次仓库观测（派生，可重建）
 ```
 
-- **`ProjectId` is permanent.** Relinking a moved repository changes only
-  `ProjectSource.location`, never the identity — every cache and index entry stays keyed by
-  `ProjectId`, so history and search survive a move.
-- Replaceable Human documents are written **atomically**, audited with the exact paths touched,
-  and protected by an expected revision. Append-only dogfood events are serialized under the
-  store lock. Commitment mutations additionally append to an immutable transition history.
+`notes/project.md` 的正文是逐字节保留的：OmniProj 只改 front matter，从不重写你的文字。
 
-## Migration & recovery
+## 写入的可靠性
 
-- A pre-R0 (schema v1) store migrates **idempotently** to schema v2: running it twice produces an
-  identical tree, and it **never changes your legacy human/agent documents** (`notes/`, `plan.md`,
-  `auto/`, `learned.md` are byte-preserved).
-- If a source repository is **missing, moved, unreadable, non-Git, bare, or has an unborn/detached
-  HEAD**, OmniProj keeps showing the **last successful observation** with its timestamp and offers
-  a **Relink** action — it never claims "no activity" when it simply could not read the source.
+每次改动都是一次显式的、带版本号校验的写入。如果保存时发现文件已被更新，OmniProj 会拉回最新状态并提示，不会盲目覆盖；如果状态已经落盘但审计提交失败，它会重新加载已保存的状态，绝不重发你的改动。
 
-## Using it
-
-### Canonical routes
-
-R0 uses real path-based routes (never hash routes):
-
-| Route | What it shows |
-|---|---|
-| `/` | redirects to `/projects` |
-| `/projects` | the dense operating **Index** (one row per project) |
-| `/projects/:projectId` | redirects to that project's canonical Overview |
-| `/projects/:projectId/overview` | the full-page **Project Overview** |
-
-On restart, OmniProj returns you to the last canonical URL; an explicit deep link always wins.
-
-### Keyboard shortcuts
-
-| Key | Action |
-|---|---|
-| `Cmd/Ctrl + F` | focus the local project filter |
-| `Cmd/Ctrl + N` | open **Add Project** |
-| `Cmd/Ctrl + R` | pull-refresh (re-observe sources); prevents the browser reload only while the OmniProj window is focused |
-| `Enter` | open the focused project |
-| `Esc` | close the Add Project modal, or close the sidebar drawer on a narrow window |
-| `Tab` / `Shift+Tab` | standard control navigation |
-
-### The Index, activity, and the seven-day review rule
-
-The default Index order is a factual **attention order**: operating projects with readable Git
-observations are ordered by whole silent days, most silent first. A repository with no commits is
-shown explicitly; an unavailable source is marked unknown rather than assigned fabricated
-inactivity. Waiting/parked/archived projects remain available through filters. This is explicitly
-not a priority or health ranking, and transparent opt-in sorts (name, recent commit) remain.
-
-Every observed row carries exactly sixteen UTC calendar-week commit counts, oldest to newest,
-rendered as a compact activity strip with an accessible text summary. The silence text states the
-current reminder threshold beside the observed fact.
-
-The default operating view omits archived projects, but the **Archived** filter and sidebar
-section keep them discoverable so they can be opened and restored. OmniProj renders the persisted
-last-successful observation immediately, then refreshes repositories in the background at startup;
-completed rows update progressively and failures retain the last known facts.
-
-Beside the order label the Index shows **`Commitment review interval: 7 days`**, read from the
-backend `review_policy` (never a hard-coded frontend constant). A commitment with no confirmed
-activity within that window surfaces a *Review action* signal. All color is redundant with visible
-text, and there is no arbitrary-color badge.
-
-### Editing state
-
-Every human change is an **explicit Save** — a blur never persists anything. Setup completes
-atomically (objective + desired outcome + first commitment in one write). Commitment actions (set,
-confirm, complete, replace, clear) and **Undo** append to history. If a save conflicts with a newer
-revision, OmniProj refetches and keeps your draft; if a write's audit commit fails after the state
-is durable, it reloads the saved state and never re-sends your change.
-
-## Build, run, and test
+## 开发
 
 ```bash
-# Rust workspace
+# Rust
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo build --workspace --locked
 cargo test --workspace --locked
 
-# Frontend (crates/omniproj-desktop/web)
+# 前端（crates/omniproj-desktop/web）
 npm ci
-npm run build          # tsc + vite
-npm test               # Vitest unit tests
-npx playwright install chromium
-npm run test:e2e       # Playwright: core loop, responsive, accessibility
+npm test               # Vitest
+npm run build          # tsc + vite，重建内嵌的 dist/
+npm run test:e2e       # Playwright（需先 npx playwright install chromium）
 
-# Desktop app (from crates/omniproj-desktop)
-cargo tauri dev        # run the app in development
-cargo tauri build      # production bundle
+# 桌面 app（crates/omniproj-desktop）
+cargo tauri dev        # 开发运行；直接 cargo run 会得到空白窗口
+cargo tauri build      # 打包
 ```
 
-CI runs the frontend unit/build job, a separate Playwright e2e job, and the Rust workspace job on
-every PR to `dev`/`main`.
+`crates/omniproj-desktop/web/dist/` 是**提交进仓库的**（会嵌进二进制，`cargo install` 的用户没有 npm）。改完前端记得重新 build 再提交。
 
-## Dogfood gate
+CI 在每个到 `dev`/`main` 的 PR 上跑前端单测/构建、Playwright e2e、以及 Rust workspace 三个 job。
 
-Passing the engineering gates only **begins** dogfood — it does not declare success. R1 (Agent
-capabilities, deeper surfaces) stays blocked until the re-entry loop earns it in real use:
+### 仓库结构
 
-- **2–4 weeks** of daily use,
-- across **at least five real projects**,
-- producing **at least twenty re-entry events**, with the agreed re-entry metrics recorded.
+```
+crates/
+  omniproj-core/       状态文档、步骤树、校验、审计写入
+  omniproj-capture/    只读 git 观测（提交、分支、热图分桶）
+  omniproj-distill/    AI 拆解的 provider 层
+  omniproj-index/      跨项目索引
+  omniproj-desktop/    Tauri 命令层 + React 前端（web/）
+  omniproj-cli/        命令行入口
+```
 
-Use the Overview's **Re-entry timer**: start it when opening a project and finish when the next
-action is clear enough to begin real work. Events are stored locally in
-`~/.omniproj/dogfood/reentry-events.jsonl`; the UI reports event count, distinct projects, and
-median re-entry time. See [`docs/dogfood.md`](docs/dogfood.md) for the interpretation rules.
+### 分支约定
 
-These are **product-learning thresholds to force honest evaluation — not scientific universals.**
-Navigation and features are earned by a repeated, durable workflow, not added speculatively.
-
----
-
-*A trimmed command-line interface (`omniproj`) also exists for registering and inspecting projects;
-the desktop app is the R0 product.*
+`main` / `dev` 双干线，PR-only，CI 门禁。实际开发在 `feature/<topic>`（从最新 `dev` 切出），完成后 PR 回 `dev`。提交用 Conventional Commits。

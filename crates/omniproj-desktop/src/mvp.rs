@@ -20,6 +20,13 @@ pub struct TaskDto {
     pub id: String,
     pub text: String,
     pub status: String,
+    /// The step this is a sub-step of, or null at top level.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// How deep this step sits (0 = top level). Derived from `parent_id`, sent along so
+    /// the view can render indentation without walking the list itself.
+    #[serde(default)]
+    pub depth: u32,
     pub unclear: bool,
     pub due: Option<String>,
     pub note: Option<String>,
@@ -619,7 +626,23 @@ fn mutate_plan(
     Ok(plan_list(rendered.as_bytes()))
 }
 
+/// Depth of every work item, keyed by id. `work_items` is a pre-order flattening, so a
+/// parent is always already resolved by the time its children are reached.
+fn depths(state: &ProjectStateDoc) -> std::collections::HashMap<&WorkItemId, u32> {
+    let mut depths = std::collections::HashMap::new();
+    for item in &state.work_items {
+        let depth = item
+            .parent_id
+            .as_ref()
+            .and_then(|parent| depths.get(parent).copied())
+            .map_or(0, |parent_depth| parent_depth + 1);
+        depths.insert(&item.id, depth);
+    }
+    depths
+}
+
 fn task_list(state: &ProjectStateDoc) -> TaskListDto {
+    let depth_by_id = depths(state);
     let referenced = state
         .commitment_transitions
         .iter()
@@ -646,6 +669,8 @@ fn task_list(state: &ProjectStateDoc) -> TaskListDto {
                     WorkItemStatus::Done | WorkItemStatus::Abandoned => "done",
                 }
                 .to_owned(),
+                parent_id: item.parent_id.as_ref().map(|id| id.as_str().to_owned()),
+                depth: depth_by_id.get(&item.id).copied().unwrap_or(0),
                 unclear: item.unclear,
                 due: item.due.clone(),
                 note: item.note.clone(),
@@ -725,6 +750,9 @@ pub fn migrate_legacy_tasks() -> CommandResult<()> {
                     commits: item.commits.clone(),
                     adopted_from_proposal_id: item.adopted_from_proposal_id.clone(),
                     source_task_id: Some(source_task_id),
+                    // The legacy file was a flat checklist; it imports as one.
+                    parent_id: None,
+                    after_id: None,
                 })
             })
             .collect::<Vec<_>>();
@@ -741,15 +769,29 @@ pub fn migrate_legacy_tasks() -> CommandResult<()> {
     Ok(())
 }
 
+/// Optional placement, shared by add and move. `None` for both means "top level, first" on
+/// a move and "top level, appended" on an add.
+fn parse_placement(
+    parent_id: Option<String>,
+    after_id: Option<String>,
+) -> CommandResult<(Option<WorkItemId>, Option<WorkItemId>)> {
+    let parent = parent_id.as_deref().map(parse_work_item_id).transpose()?;
+    let after = after_id.as_deref().map(parse_work_item_id).transpose()?;
+    Ok((parent, after))
+}
+
 pub fn add_task(
     project_id: ProjectId,
     expected_revision: String,
     text: String,
     unclear: bool,
+    parent_id: Option<String>,
+    after_id: Option<String>,
 ) -> CommandResult<TaskListDto> {
     if text.trim().is_empty() {
         return Err(CommandError::invalid_input("task text is required"));
     }
+    let (parent_id, after_id) = parse_placement(parent_id, after_id)?;
     apply_work_command(
         &project_id,
         &expected_revision,
@@ -764,15 +806,19 @@ pub fn add_task(
                 commits: Vec::new(),
                 adopted_from_proposal_id: None,
                 source_task_id: None,
+                parent_id,
+                after_id,
             }],
         },
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_task(
     project_id: ProjectId,
     expected_revision: String,
     id: String,
+    text: Option<String>,
     status: String,
     due: Option<String>,
     note: Option<String>,
@@ -787,11 +833,15 @@ pub fn update_task(
         .iter()
         .find(|item| item.id == work_item_id)
         .ok_or_else(|| CommandError::invalid_input("task not found"))?;
+    if text.as_ref().is_some_and(|text| text.trim().is_empty()) {
+        return Err(CommandError::invalid_input("task text is required"));
+    }
     apply_work_command(
         &project_id,
         &expected_revision,
         ProjectCommand::UpdateWorkItem {
             work_item_id,
+            text,
             status: match parsed {
                 TaskStatus::Open => WorkItemStatus::Planned,
                 TaskStatus::Doing => WorkItemStatus::Doing,
@@ -801,6 +851,27 @@ pub fn update_task(
             due,
             note,
             tags,
+        },
+    )
+}
+
+/// Indent, outdent and reorder are all one operation: put this step under that parent,
+/// after that sibling. The whole subtree comes along.
+pub fn move_task(
+    project_id: ProjectId,
+    expected_revision: String,
+    id: String,
+    parent_id: Option<String>,
+    after_id: Option<String>,
+) -> CommandResult<TaskListDto> {
+    let (parent_id, after_id) = parse_placement(parent_id, after_id)?;
+    apply_work_command(
+        &project_id,
+        &expected_revision,
+        ProjectCommand::MoveWorkItem {
+            work_item_id: parse_work_item_id(&id)?,
+            parent_id,
+            after_id,
         },
     )
 }
@@ -879,6 +950,35 @@ pub fn get_timeline(project_id: ProjectId, limit: usize) -> CommandResult<Vec<Ti
             subject: commit.subject,
         })
         .collect())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitHeatmapDto {
+    /// Daily commit counts, oldest → newest. The last entry is today.
+    pub days: Vec<u32>,
+    /// The calendar day the last bucket covers, `YYYY-MM-DD`, so the view can label
+    /// columns without re-deriving "today" from its own clock.
+    pub last_day: String,
+}
+
+/// A year of daily commit counts for the project's repository. Read-only, like every
+/// other observation: OmniProj never writes to the source repo.
+pub fn get_commit_heatmap(project_id: ProjectId, days: usize) -> CommandResult<CommitHeatmapDto> {
+    let record = load_project(&project_id)?;
+    let source = record.primary_git_source().ok_or_else(|| {
+        CommandError::new(crate::error::ErrorCode::SourceMissing, "no Git source")
+    })?;
+    let now = Utc::now();
+    // A year plus the leading partial week, so the grid is always full columns.
+    let days = days.clamp(1, 400);
+    Ok(CommitHeatmapDto {
+        days: omniproj_capture::git::commit_days(
+            Path::new(&source.location),
+            days,
+            now.timestamp(),
+        ),
+        last_day: now.format("%Y-%m-%d").to_string(),
+    })
 }
 
 pub fn get_graph(project_id: ProjectId, limit: usize) -> CommandResult<Vec<GraphCommitDto>> {
@@ -981,10 +1081,14 @@ pub fn adopt_subtasks(
     expected_revision: String,
     proposal_id: String,
     texts: Vec<String>,
+    parent_id: Option<String>,
 ) -> CommandResult<TaskListDto> {
     if proposal_id.trim().is_empty() {
         return Err(CommandError::invalid_input("proposal id is required"));
     }
+    // A breakdown of one step belongs *under* that step. Adopting it flat was how the
+    // structure the user drew by hand got lost.
+    let parent_id = parent_id.as_deref().map(parse_work_item_id).transpose()?;
     let items = texts
         .into_iter()
         .filter(|text| !text.trim().is_empty())
@@ -998,6 +1102,8 @@ pub fn adopt_subtasks(
             commits: Vec::new(),
             adopted_from_proposal_id: Some(proposal_id.clone()),
             source_task_id: None,
+            parent_id: parent_id.clone(),
+            after_id: None,
         })
         .collect::<Vec<_>>();
     if items.is_empty() {
